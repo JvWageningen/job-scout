@@ -466,14 +466,17 @@
                         </div>
                         <div id="detect-models-message" style="margin-top: 0.5rem; font-size: 0.9rem;"></div>
                     </div>
-                    <datalist id="models-list"></datalist>
                     <div class="form-group">
                         <label for="local-model">Local Model:</label>
-                        <input type="text" id="local-model" value="llama3.1" list="models-list">
+                        <select id="local-model">
+                            <option value="llama3.1">llama3.1</option>
+                        </select>
                     </div>
                     <div class="form-group">
                         <label for="local-screen-model">Screening Model (optional):</label>
-                        <input type="text" id="local-screen-model" list="models-list">
+                        <select id="local-screen-model">
+                            <option value="">(use evaluation model)</option>
+                        </select>
                     </div>
 
                     <button type="submit" class="btn btn-primary">Save LLM Settings</button>

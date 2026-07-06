@@ -1104,8 +1104,24 @@ async function loadLLMSettings() {
         document.getElementById('quick-eval-provider').value = config.quick_eval_provider || '';
         document.getElementById('keywords-provider').value = config.keywords_provider || '';
         document.getElementById('local-base-url').value = config.local_base_url || 'http://localhost:11434/v1';
-        document.getElementById('local-model').value = config.local_model || 'llama3.1';
-        document.getElementById('local-screen-model').value = config.local_screening_model || '';
+
+        // Populate local model dropdown with saved value
+        const localModel = config.local_model || 'llama3.1';
+        const localModelSelect = document.getElementById('local-model');
+        localModelSelect.innerHTML = `<option value="${localModel}">${localModel}</option>`;
+        localModelSelect.value = localModel;
+
+        // Populate screening model dropdown with saved value and empty option
+        const screeningModel = config.local_screening_model || '';
+        const screeningModelSelect = document.getElementById('local-screen-model');
+        screeningModelSelect.innerHTML = '<option value="">(use evaluation model)</option>';
+        if (screeningModel) {
+            const option = document.createElement('option');
+            option.value = screeningModel;
+            option.textContent = screeningModel;
+            screeningModelSelect.appendChild(option);
+            screeningModelSelect.value = screeningModel;
+        }
     } catch (error) {
         console.error('Error loading LLM settings:', error);
     }
@@ -1175,13 +1191,56 @@ async function detectLocalModels() {
             messageDiv.style.color = 'green';
             messageDiv.textContent = `Found ${result.models.length} model(s)`;
 
-            const modelsList = document.getElementById('models-list');
-            modelsList.innerHTML = '';
+            // Store currently selected values before updating
+            const localModelSelect = document.getElementById('local-model');
+            const screeningModelSelect = document.getElementById('local-screen-model');
+            const currentLocalModel = localModelSelect.value;
+            const currentScreeningModel = screeningModelSelect.value;
+
+            // Populate local model dropdown
+            localModelSelect.innerHTML = '';
+            const detectedSet = new Set(result.models);
+
+            // Add detected models
             result.models.forEach((model) => {
                 const option = document.createElement('option');
                 option.value = model;
-                modelsList.appendChild(option);
+                option.textContent = model;
+                localModelSelect.appendChild(option);
             });
+
+            // If currently selected model is not in detected list, add it as extra option
+            if (currentLocalModel && !detectedSet.has(currentLocalModel)) {
+                const option = document.createElement('option');
+                option.value = currentLocalModel;
+                option.textContent = `${currentLocalModel} (not detected)`;
+                localModelSelect.appendChild(option);
+            }
+
+            // Restore selection for local model
+            localModelSelect.value = currentLocalModel;
+
+            // Populate screening model dropdown
+            screeningModelSelect.innerHTML = '<option value="">(use evaluation model)</option>';
+
+            // Add detected models
+            result.models.forEach((model) => {
+                const option = document.createElement('option');
+                option.value = model;
+                option.textContent = model;
+                screeningModelSelect.appendChild(option);
+            });
+
+            // If currently selected screening model is not in detected list and not empty, add it as extra option
+            if (currentScreeningModel && !detectedSet.has(currentScreeningModel)) {
+                const option = document.createElement('option');
+                option.value = currentScreeningModel;
+                option.textContent = `${currentScreeningModel} (not detected)`;
+                screeningModelSelect.appendChild(option);
+            }
+
+            // Restore selection for screening model
+            screeningModelSelect.value = currentScreeningModel;
         } else if (result.ok) {
             messageDiv.style.color = 'orange';
             messageDiv.textContent = 'No models found on server';
