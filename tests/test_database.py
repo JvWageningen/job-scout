@@ -98,6 +98,31 @@ def test_log_stats(
     assert stats.get("rejected", 0) == 1
 
 
+def test_compensation_reasoning_persists(tmp_db: Database) -> None:
+    """Compensation reasoning is saved and retrieved from the database."""
+    job = JobListing(
+        title="Data Scientist",
+        company="TechCorp",
+        url="https://example.com/jobs/science",
+        source="indeed",
+        status=JobStatus.MATCHED,
+        fit_score=80,
+        fit_reasoning="Good match for analytics background",
+        salary_min=5000,
+        salary_max=6500,
+        salary_period="monthly",
+        vacation_days=25,
+        compensation_reasoning="Competitive salary with market rate",
+        seen_at=datetime.now(UTC),
+    )
+    job_id = tmp_db.save_job(job)
+    assert job_id > 0
+
+    results = tmp_db.get_recent_matches(10)
+    assert len(results) == 1
+    assert results[0].compensation_reasoning == "Competitive salary with market rate"
+
+
 def test_get_recent_matches_respects_limit(tmp_db: Database) -> None:
     """get_recent_matches returns at most `limit` records."""
     for i in range(5):

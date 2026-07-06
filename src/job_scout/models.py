@@ -53,6 +53,7 @@ class JobListing(BaseModel):
     salary_max: int | None = None
     salary_period: str | None = None
     vacation_days: int | None = None
+    compensation_reasoning: str | None = None
     distance_km: float | None = None
     travel_times: list[TravelTime] = Field(default_factory=list)
     notified: bool = False

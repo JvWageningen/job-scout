@@ -81,6 +81,7 @@ class Database:
                     salary_max INTEGER,
                     salary_period TEXT,
                     vacation_days INTEGER,
+                    compensation_reasoning TEXT,
                     distance_km REAL,
                     travel_times_json TEXT DEFAULT '[]',
                     notified INTEGER DEFAULT 0,
@@ -96,6 +97,7 @@ class Database:
                 ("salary_max", "INTEGER"),
                 ("salary_period", "TEXT"),
                 ("vacation_days", "INTEGER"),
+                ("compensation_reasoning", "TEXT"),
                 ("distance_km", "REAL"),
                 ("dedup_key", "TEXT"),
             ]:
@@ -160,7 +162,8 @@ class Database:
         Returns:
             (fit_score, evaluation_dict) if cached, or (None, None) if not found.
             evaluation_dict contains: fit_reasoning, negative_match, negative_reasoning,
-            salary_min, salary_max, salary_period, vacation_days.
+            salary_min, salary_max, salary_period, vacation_days,
+            compensation_reasoning.
         """
         key = _dedup_key(job.title, job.company)
         with self._conn() as conn:
@@ -168,7 +171,7 @@ class Database:
                 """
                 SELECT fit_score, fit_reasoning, negative_match,
                        negative_reasoning, salary_min, salary_max,
-                       salary_period, vacation_days
+                       salary_period, vacation_days, compensation_reasoning
                 FROM jobs
                 WHERE dedup_key = ? AND fit_score IS NOT NULL
                 ORDER BY seen_at DESC
@@ -186,6 +189,7 @@ class Database:
             "salary_max": row[5],
             "salary_period": row[6],
             "vacation_days": row[7],
+            "compensation_reasoning": row[8],
         }
         return row[0], evaluation_dict
 
@@ -219,6 +223,7 @@ class Database:
             job.salary_max,
             job.salary_period,
             job.vacation_days,
+            job.compensation_reasoning,
             job.distance_km,
             travel_json,
             int(job.notified),
@@ -236,9 +241,10 @@ class Database:
                       (title, company, location, url, description, source, date_posted,
                        fit_score, fit_reasoning, negative_match, negative_reasoning,
                        salary_min, salary_max, salary_period, vacation_days,
+                       compensation_reasoning,
                        distance_km, travel_times_json, notified, notification_pending,
                        seen_at, status, location_unknown, dedup_key)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                     ON CONFLICT(url) DO UPDATE SET
                       fit_score=excluded.fit_score,
                       fit_reasoning=excluded.fit_reasoning,
@@ -248,6 +254,7 @@ class Database:
                       salary_max=excluded.salary_max,
                       salary_period=excluded.salary_period,
                       vacation_days=excluded.vacation_days,
+                      compensation_reasoning=excluded.compensation_reasoning,
                       distance_km=excluded.distance_km,
                       travel_times_json=excluded.travel_times_json,
                       status=excluded.status,
@@ -265,9 +272,10 @@ class Database:
                   (title, company, location, url, description, source, date_posted,
                    fit_score, fit_reasoning, negative_match, negative_reasoning,
                    salary_min, salary_max, salary_period, vacation_days,
+                   compensation_reasoning,
                    distance_km, travel_times_json, notified, notification_pending,
                    seen_at, status, location_unknown, dedup_key)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 params,
             )
@@ -312,6 +320,7 @@ class Database:
                 job.salary_max,
                 job.salary_period,
                 job.vacation_days,
+                job.compensation_reasoning,
                 job.distance_km,
                 travel_json,
                 int(job.notified),
@@ -331,9 +340,10 @@ class Database:
                       (title, company, location, url, description, source, date_posted,
                        fit_score, fit_reasoning, negative_match, negative_reasoning,
                        salary_min, salary_max, salary_period, vacation_days,
+                       compensation_reasoning,
                        distance_km, travel_times_json, notified, notification_pending,
                        seen_at, status, location_unknown, dedup_key)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                     ON CONFLICT(url) DO UPDATE SET
                       fit_score=excluded.fit_score,
                       fit_reasoning=excluded.fit_reasoning,
@@ -343,6 +353,7 @@ class Database:
                       salary_max=excluded.salary_max,
                       salary_period=excluded.salary_period,
                       vacation_days=excluded.vacation_days,
+                      compensation_reasoning=excluded.compensation_reasoning,
                       distance_km=excluded.distance_km,
                       travel_times_json=excluded.travel_times_json,
                       status=excluded.status,
@@ -360,9 +371,10 @@ class Database:
                       (title, company, location, url, description, source, date_posted,
                        fit_score, fit_reasoning, negative_match, negative_reasoning,
                        salary_min, salary_max, salary_period, vacation_days,
+                       compensation_reasoning,
                        distance_km, travel_times_json, notified, notification_pending,
                        seen_at, status, location_unknown, dedup_key)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                     """
                 for params in all_params:
                     cursor = conn.execute(sql, params)
@@ -466,6 +478,7 @@ class Database:
             salary_max=raw.get("salary_max"),
             salary_period=raw.get("salary_period"),
             vacation_days=raw.get("vacation_days"),
+            compensation_reasoning=raw.get("compensation_reasoning"),
             distance_km=raw.get("distance_km"),
             travel_times=travel_times,
             notified=bool(raw.get("notified", 0)),

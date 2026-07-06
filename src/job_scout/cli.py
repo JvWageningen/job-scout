@@ -176,6 +176,7 @@ def _evaluate_job(
     job.salary_max = comp.salary_max
     job.salary_period = comp.salary_period
     job.vacation_days = comp.vacation_days
+    job.compensation_reasoning = comp.reasoning
     if neg.matches_negative:
         return False
     if fit.fit_score < config.fit_score_threshold:
@@ -425,6 +426,7 @@ def _eval_job_full_parallel(
             job.salary_max = cached_data["salary_max"]
             job.salary_period = cached_data["salary_period"]
             job.vacation_days = cached_data["vacation_days"]
+            job.compensation_reasoning = cached_data["compensation_reasoning"]
             # Reapply filters with cached data
             if job.negative_match:
                 return job, False, None
@@ -991,6 +993,8 @@ def _print_job(job: JobListing) -> None:
     click.echo(f"Company:  {job.company}")
     click.echo(f"Score:    {job.fit_score}/100 — {job.fit_reasoning}")
     click.echo(f"Salary:   {_format_salary(job)}")
+    if job.compensation_reasoning:
+        click.echo(f"Comp:     {job.compensation_reasoning}")
     if job.vacation_days is not None:
         click.echo(f"Vacation: {job.vacation_days} days/year")
     loc = job.location or "Unknown"
@@ -1018,7 +1022,13 @@ def _print_rejected_job(job: JobListing) -> None:
     elif job.fit_score is not None and job.fit_score < 60:
         click.echo(f"Reason:  Score {job.fit_score}/100 — {job.fit_reasoning}")
     else:
-        click.echo("Reason:  Travel, salary, or vacation filter")
+        reason_parts = []
+        if job.compensation_reasoning:
+            reason_parts.append(f"Compensation: {job.compensation_reasoning}")
+        if reason_parts:
+            click.echo(f"Reason:  {'; '.join(reason_parts)}")
+        else:
+            click.echo("Reason:  Travel, salary, or vacation filter")
     click.echo(f"URL:     {job.url}")
 
 

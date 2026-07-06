@@ -281,6 +281,7 @@ function renderJobCard(job, rejected) {
             <p><strong>${escapeHtml(job.company)}</strong></p>
             ${job.fit_reasoning ? `<p><em>${escapeHtml(job.fit_reasoning)}</em></p>` : ''}
             ${job.negative_reasoning ? `<p><em>Reason: ${escapeHtml(job.negative_reasoning)}</em></p>` : ''}
+            ${job.compensation_reasoning ? `<p><em>Compensation: ${escapeHtml(job.compensation_reasoning)}</em></p>` : ''}
             <div class="job-meta">
                 ${meta}
             </div>
