@@ -2102,6 +2102,133 @@ def approval_approve(job_id: int, notes: str | None, user_name: str | None) -> N
     click.echo(f"Job {job_id} approved by {user_name}")
 
 
+@cli.group("company")
+def company_group() -> None:
+    """Research companies and discover hiring managers."""
+
+
+@company_group.command("research")
+@click.argument("job_id", type=int)
+@click.option("--user", "user_name", default=None, help="User researching")
+def company_research_cmd(job_id: int, user_name: str | None) -> None:
+    """Research a company and suggest hiring managers for a job."""
+    from job_scout.company_research import research_company
+
+    user_name = _require_single_user(user_name)
+    config = _require_llm()
+    db = _get_db()
+
+    job = db.get_job(job_id)
+    if not job:
+        click.echo(f"Job {job_id} not found", err=True)
+        return
+
+    click.echo(f"Researching {job.company}...")
+    research = research_company(job, config)
+
+    if not research:
+        click.echo("Research failed or timed out", err=True)
+        return
+
+    # Save to database
+    import json
+
+    research_json = json.dumps(research.model_dump())
+    db.save_company_research(job_id, research_json)
+
+    # Display results
+    click.echo(f"\nCompany Research for {research.company_name}")
+    click.echo("=" * 50)
+    if research.industry:
+        click.echo(f"Industry: {research.industry}")
+    if research.company_size:
+        click.echo(f"Company Size: {research.company_size}")
+    if research.culture_indicators:
+        click.echo(f"Culture Indicators: {', '.join(research.culture_indicators)}")
+    if research.tech_stack_hints:
+        click.echo(f"Tech Stack Hints: {', '.join(research.tech_stack_hints)}")
+    if research.growth_signals:
+        click.echo(f"Growth Signals: {research.growth_signals}")
+    if research.research_notes:
+        click.echo(f"Notes: {research.research_notes}")
+
+    click.echo("\nSuggested Hiring Managers:")
+    click.echo("-" * 50)
+    if research.hiring_managers:
+        for i, manager in enumerate(research.hiring_managers, 1):
+            click.echo(f"{i}. {manager.name}")
+            if manager.role:
+                click.echo(f"   Role: {manager.role}")
+            if manager.email:
+                click.echo(f"   Email: {manager.email}")
+            if manager.linkedin_url:
+                click.echo(f"   LinkedIn: {manager.linkedin_url}")
+            click.echo(f"   Confidence: {manager.confidence}%")
+            if manager.reasoning:
+                click.echo(f"   Reasoning: {manager.reasoning}")
+            click.echo()
+    else:
+        click.echo("No hiring managers suggested")
+
+
+@company_group.command("view")
+@click.argument("job_id", type=int)
+@click.option("--user", "user_name", default=None, help="User viewing")
+def company_view_cmd(job_id: int, user_name: str | None) -> None:
+    """View saved company research for a job."""
+    import json
+
+    user_name = _require_single_user(user_name)
+    db = _get_db()
+
+    job = db.get_job(job_id)
+    if not job:
+        click.echo(f"Job {job_id} not found", err=True)
+        return
+
+    research_json = db.get_company_research(job_id)
+    if not research_json:
+        click.echo(f"No research found for job {job_id}", err=True)
+        return
+
+    from job_scout.models import CompanyResearch
+
+    research = CompanyResearch.model_validate(json.loads(research_json))
+
+    click.echo(f"Company Research for {research.company_name}")
+    click.echo("=" * 50)
+    if research.industry:
+        click.echo(f"Industry: {research.industry}")
+    if research.company_size:
+        click.echo(f"Company Size: {research.company_size}")
+    if research.culture_indicators:
+        click.echo(f"Culture Indicators: {', '.join(research.culture_indicators)}")
+    if research.tech_stack_hints:
+        click.echo(f"Tech Stack Hints: {', '.join(research.tech_stack_hints)}")
+    if research.growth_signals:
+        click.echo(f"Growth Signals: {research.growth_signals}")
+    if research.research_notes:
+        click.echo(f"Notes: {research.research_notes}")
+
+    click.echo("\nSuggested Hiring Managers:")
+    click.echo("-" * 50)
+    if research.hiring_managers:
+        for i, manager in enumerate(research.hiring_managers, 1):
+            click.echo(f"{i}. {manager.name}")
+            if manager.role:
+                click.echo(f"   Role: {manager.role}")
+            if manager.email:
+                click.echo(f"   Email: {manager.email}")
+            if manager.linkedin_url:
+                click.echo(f"   LinkedIn: {manager.linkedin_url}")
+            click.echo(f"   Confidence: {manager.confidence}%")
+            if manager.reasoning:
+                click.echo(f"   Reasoning: {manager.reasoning}")
+            click.echo()
+    else:
+        click.echo("No hiring managers suggested")
+
+
 @cli.group("schedule")
 def schedule_group() -> None:
     """Manage the automated daily run schedule."""

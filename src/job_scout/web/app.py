@@ -1585,6 +1585,109 @@ def create_app() -> FastAPI:
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc  # noqa: B904
 
+    @app.post("/api/company/research/{job_id}")
+    def research_company_endpoint(
+        job_id: int, user: str | None = None
+    ) -> dict[str, Any]:
+        """Research a company and discover hiring managers.
+
+        Args:
+            job_id: ID of the job to research.
+            user: User name (required).
+
+        Returns:
+            Dictionary with company research data.
+
+        Raises:
+            HTTPException: If user not provided or research fails.
+        """
+        if not user:
+            raise HTTPException(status_code=400, detail="User is required")
+        if user not in list_users():
+            raise HTTPException(status_code=404, detail=f"User '{user}' not found")
+
+        try:
+            from job_scout.company_research import research_company  # noqa: PLC0415
+            from job_scout.config import (  # noqa: PLC0415
+                build_effective_config,
+                user_db_path,
+            )
+            from job_scout.database import Database  # noqa: PLC0415
+
+            config = build_effective_config(user)
+            db = Database(user_db_path(user))
+
+            job = db.get_job(job_id)
+            if not job:
+                raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+
+            research = research_company(job, config)
+            if not research:
+                raise HTTPException(
+                    status_code=500,
+                    detail="Company research failed or timed out",
+                )
+
+            # Save to database
+            import json
+
+            research_json = json.dumps(research.model_dump())
+            db.save_company_research(job_id, research_json)
+
+            return research.model_dump()
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc  # noqa: B904
+
+    @app.get("/api/company/research/{job_id}")
+    def get_company_research_endpoint(
+        job_id: int, user: str | None = None
+    ) -> dict[str, Any]:
+        """Get saved company research for a job.
+
+        Args:
+            job_id: ID of the job.
+            user: User name (required).
+
+        Returns:
+            Dictionary with company research data.
+
+        Raises:
+            HTTPException: If user not provided or research not found.
+        """
+        if not user:
+            raise HTTPException(status_code=400, detail="User is required")
+        if user not in list_users():
+            raise HTTPException(status_code=404, detail=f"User '{user}' not found")
+
+        try:
+            import json
+
+            from job_scout.config import user_db_path  # noqa: PLC0415
+            from job_scout.database import Database  # noqa: PLC0415
+            from job_scout.models import CompanyResearch  # noqa: PLC0415
+
+            db = Database(user_db_path(user))
+
+            job = db.get_job(job_id)
+            if not job:
+                raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+
+            research_json = db.get_company_research(job_id)
+            if not research_json:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"No research found for job {job_id}",
+                )
+
+            research = CompanyResearch.model_validate(json.loads(research_json))
+            return research.model_dump()
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc  # noqa: B904
+
     return app
 
 

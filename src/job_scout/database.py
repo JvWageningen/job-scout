@@ -210,6 +210,22 @@ class Database:
                 "CREATE INDEX IF NOT EXISTS idx_job_id_screening ON "
                 "screening_questions(job_id)"
             )
+            # Create company research table
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS company_research (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    job_id INTEGER NOT NULL,
+                    company_name TEXT NOT NULL,
+                    research_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY (job_id) REFERENCES jobs(id)
+                )
+            """)
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_job_id_research ON "
+                "company_research(job_id)"
+            )
 
     def _backfill_dedup_keys(self, conn: sqlite3.Connection) -> None:
         """Populate dedup_key for rows written before the column existed.
@@ -1158,3 +1174,65 @@ class Database:
             Normalized address key.
         """
         return " ".join(address.lower().split())
+
+    def save_company_research(self, job_id: int, research_json: str) -> None:
+        """Save or update company research for a job.
+
+        Args:
+            job_id: ID of the job.
+            research_json: JSON string of CompanyResearch object.
+        """
+        from datetime import UTC, datetime
+
+        now_iso = datetime.now(UTC).isoformat()
+        with self._conn() as conn:
+            # Check if research already exists
+            cursor = conn.execute(
+                "SELECT id FROM company_research WHERE job_id = ?",
+                (job_id,),
+            )
+            existing = cursor.fetchone()
+
+            if existing:
+                conn.execute(
+                    """
+                    UPDATE company_research
+                    SET research_json = ?, updated_at = ?
+                    WHERE job_id = ?
+                    """,
+                    (research_json, now_iso, job_id),
+                )
+            else:
+                # Get company name from job
+                cursor = conn.execute(
+                    "SELECT company FROM jobs WHERE id = ?", (job_id,)
+                )
+                row = cursor.fetchone()
+                company_name = row[0] if row else "Unknown"
+
+                conn.execute(
+                    """
+                    INSERT INTO company_research
+                    (job_id, company_name, research_json, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (job_id, company_name, research_json, now_iso, now_iso),
+                )
+            conn.commit()
+
+    def get_company_research(self, job_id: int) -> str | None:
+        """Get company research JSON for a job.
+
+        Args:
+            job_id: ID of the job.
+
+        Returns:
+            JSON string of CompanyResearch, or None if not found.
+        """
+        with self._conn() as conn:
+            cursor = conn.execute(
+                "SELECT research_json FROM company_research WHERE job_id = ?",
+                (job_id,),
+            )
+            row = cursor.fetchone()
+            return row[0] if row else None

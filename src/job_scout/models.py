@@ -41,6 +41,31 @@ class TravelTime(BaseModel):
     error: str | None = None
 
 
+class HiringManagerSuggestion(BaseModel):
+    """A suggested hiring manager contact for a job listing."""
+
+    name: str
+    role: str | None = None
+    email: str | None = None
+    linkedin_url: str | None = None
+    confidence: int = Field(default=50, ge=0, le=100)
+    reasoning: str = ""
+
+
+class CompanyResearch(BaseModel):
+    """Company research and signals for a job listing."""
+
+    company_name: str
+    industry: str | None = None
+    company_size: str | None = None
+    culture_indicators: list[str] = Field(default_factory=list)
+    tech_stack_hints: list[str] = Field(default_factory=list)
+    growth_signals: str | None = None
+    research_notes: str = ""
+    hiring_managers: list[HiringManagerSuggestion] = Field(default_factory=list)
+    research_timestamp: datetime | None = None
+
+
 class JobListing(BaseModel):
     """A single job listing with evaluation metadata."""
 
@@ -76,6 +101,7 @@ class JobListing(BaseModel):
     applied_at: datetime | None = None
     status_updated_at: datetime | None = None
     notes: str | None = None
+    company_research: CompanyResearch | None = None
 
 
 class CustomSite(BaseModel):
