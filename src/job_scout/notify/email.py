@@ -86,6 +86,49 @@ def _build_html_body(job: JobListing) -> str:
 </body></html>"""
 
 
+def _build_digest_html_body(jobs: list[JobListing]) -> str:
+    """Build an HTML email body for a digest notification.
+
+    Args:
+        jobs: List of matched job listings.
+
+    Returns:
+        HTML string.
+    """
+    count = len(jobs)
+    top_job = max(jobs, key=lambda j: j.fit_score or 0) if jobs else None
+
+    job_rows = []
+    for job in jobs:
+        marker = " ⭐ TOP PICK" if job == top_job else ""
+        row = f"""<tr style="border-bottom: 1px solid #eee;">
+        <td style="padding: 10px;">{job.title}</td>
+        <td style="padding: 10px;">{job.company}</td>
+        <td style="padding: 10px;">{job.fit_score}/100{marker}</td>
+        <td style="padding: 10px;"><a href="{job.url}">View</a></td>
+    </tr>"""
+        job_rows.append(row)
+
+    return f"""<html><body style="font-family: Arial, sans-serif;">
+<h2>Daily Job Digest: {count} match{"es" if count != 1 else ""} found</h2>
+<p>Summary of {count} job(s) matched today:</p>
+<table style="width: 100%; border-collapse: collapse;">
+    <thead>
+        <tr style="background-color: #f5f5f5;">
+            <th style="padding: 10px; text-align: left;">Title</th>
+            <th style="padding: 10px; text-align: left;">Company</th>
+            <th style="padding: 10px; text-align: left;">Fit Score</th>
+            <th style="padding: 10px; text-align: left;">Action</th>
+        </tr>
+    </thead>
+    <tbody>
+        {"".join(job_rows)}
+    </tbody>
+</table>
+<p style="margin-top: 20px;">Check the dashboard for more details.</p>
+</body></html>"""
+
+
 class EmailNotifier:
     """Notifier for email via SMTP."""
 
@@ -149,6 +192,39 @@ class EmailNotifier:
             raise NotificationError(
                 f"Email notification failed for '{job.title}': {e}"
             ) from e
+
+    def send_digest(self, jobs: list[JobListing]) -> None:
+        """Send a digest email notification for multiple jobs.
+
+        Args:
+            jobs: List of job listings to summarize.
+
+        Raises:
+            NotificationError: If the send fails.
+        """
+        if not jobs:
+            return
+        count = len(jobs)
+        subject = f"Daily Job Digest: {count} match{'es' if count != 1 else ''}"
+        html_body = _build_digest_html_body(jobs)
+
+        try:
+            msg = MIMEMultipart("alternative")
+            msg["Subject"] = subject
+            msg["From"] = self._smtp_from
+            msg["To"] = self._smtp_to
+
+            msg.attach(MIMEText(html_body, "html"))
+
+            with smtplib.SMTP(self._smtp_host, self._smtp_port, timeout=10) as server:
+                if self._smtp_username and self._smtp_password:
+                    server.starttls()
+                    server.login(self._smtp_username, self._smtp_password)
+                server.send_message(msg)
+
+            logger.info(f"Digest email sent to {self._smtp_to}: {count} jobs")
+        except (smtplib.SMTPException, OSError) as e:
+            raise NotificationError(f"Email digest notification failed: {e}") from e
 
     def check_available(self) -> tuple[bool, str | None]:
         """Check if email is configured.

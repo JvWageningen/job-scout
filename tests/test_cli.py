@@ -507,3 +507,112 @@ def test_profile_cv_summary_with_cv_path(cli_env: Path) -> None:
         result = runner.invoke(cli, ["profile", "cv-summary", "--user", "testuser"])
         assert result.exit_code == 1
         assert "Failed to extract text" in result.output
+
+
+# ---------------------------------------------------------------------------
+# notification mode tests
+# ---------------------------------------------------------------------------
+
+
+def test_send_notifications_per_job_mode(cli_env: Path) -> None:
+    """Test per-job notification mode sends one notification per job."""
+    from unittest.mock import Mock
+
+    from job_scout.cli import _send_notifications
+    from job_scout.database import Database
+
+    _save_test_config(cli_env, notification_mode="per_job")
+    from job_scout.config import load_config
+
+    config = load_config()
+    db = Database(cli_env / "test.db")
+
+    job1 = JobListing(
+        title="Engineer",
+        company="Corp A",
+        url="https://example.com/1",
+        source="linkedin",
+        fit_score=85,
+        fit_reasoning="Good match",
+    )
+    job2 = JobListing(
+        title="Developer",
+        company="Corp B",
+        url="https://example.com/2",
+        source="linkedin",
+        fit_score=75,
+        fit_reasoning="Okay match",
+    )
+
+    with patch("job_scout.cli.get_notifier") as mock_get_notifier:
+        mock_notifier = Mock()
+        mock_get_notifier.return_value = mock_notifier
+
+        sent = _send_notifications([job1, job2], db, config, dry_run=True)
+
+        assert sent == 0  # dry_run doesn't count
+        assert mock_notifier.send.call_count == 0  # dry_run
+
+
+def test_send_notifications_digest_mode(cli_env: Path) -> None:
+    """Test digest notification mode sends one notification for all jobs."""
+    from unittest.mock import Mock
+
+    from job_scout.cli import _send_notifications
+    from job_scout.database import Database
+
+    _save_test_config(cli_env, notification_mode="digest")
+    from job_scout.config import load_config
+
+    config = load_config()
+    db = Database(cli_env / "test.db")
+
+    job1 = JobListing(
+        title="Engineer",
+        company="Corp A",
+        url="https://example.com/1",
+        source="linkedin",
+        fit_score=85,
+        fit_reasoning="Good match",
+    )
+    job2 = JobListing(
+        title="Developer",
+        company="Corp B",
+        url="https://example.com/2",
+        source="linkedin",
+        fit_score=75,
+        fit_reasoning="Okay match",
+    )
+
+    with patch("job_scout.cli.get_notifier") as mock_get_notifier:
+        mock_notifier = Mock()
+        mock_get_notifier.return_value = mock_notifier
+
+        sent = _send_notifications([job1, job2], db, config, dry_run=True)
+
+        assert sent == 0  # dry_run doesn't count
+        assert mock_notifier.send_digest.call_count == 0  # dry_run
+
+
+def test_send_notifications_zero_matches(cli_env: Path) -> None:
+    """Test that no notification is sent when there are zero matches."""
+    from unittest.mock import Mock
+
+    from job_scout.cli import _send_notifications
+    from job_scout.database import Database
+
+    _save_test_config(cli_env, notification_mode="digest")
+    from job_scout.config import load_config
+
+    config = load_config()
+    db = Database(cli_env / "test.db")
+
+    with patch("job_scout.cli.get_notifier") as mock_get_notifier:
+        mock_notifier = Mock()
+        mock_get_notifier.return_value = mock_notifier
+
+        sent = _send_notifications([], db, config, dry_run=False)
+
+        assert sent == 0
+        assert mock_notifier.send_digest.call_count == 0
+        assert mock_notifier.send.call_count == 0

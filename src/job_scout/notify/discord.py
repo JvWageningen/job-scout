@@ -103,6 +103,46 @@ def _build_discord_embed(job: JobListing) -> dict[str, object]:
     }
 
 
+def _build_discord_digest_embeds(jobs: list[JobListing]) -> list[dict[str, object]]:
+    """Build Discord embeds for a digest notification.
+
+    Args:
+        jobs: List of matched job listings.
+
+    Returns:
+        List of dictionaries representing Discord embeds.
+    """
+    count = len(jobs)
+    top_job = max(jobs, key=lambda j: j.fit_score or 0) if jobs else None
+
+    embeds = [
+        {
+            "title": f"Daily Job Digest: {count} match{'es' if count != 1 else ''}",
+            "description": f"Summary of {count} job(s) matched today",
+            "color": 3447003,
+        }
+    ]
+
+    for job in jobs:
+        marker = " TOP PICK" if job == top_job else ""
+        embeds.append(
+            {
+                "title": f"{job.title} @ {job.company}{marker}",
+                "url": job.url,
+                "color": 3447003 if job != top_job else 16776960,
+                "fields": [
+                    {
+                        "name": "Fit Score",
+                        "value": f"{job.fit_score}/100",
+                        "inline": True,
+                    },
+                ],
+            }
+        )
+
+    return embeds
+
+
 class DiscordNotifier:
     """Notifier for Discord via incoming webhook."""
 
@@ -139,6 +179,32 @@ class DiscordNotifier:
             raise NotificationError(
                 f"Discord notification failed for '{job.title}': {e}"
             ) from e
+
+    def send_digest(self, jobs: list[JobListing]) -> None:
+        """Send a Discord digest notification for multiple jobs.
+
+        Args:
+            jobs: List of job listings to summarize.
+
+        Raises:
+            NotificationError: If the send fails.
+        """
+        if not jobs:
+            return
+        embeds = _build_discord_digest_embeds(jobs)
+        payload = {"embeds": embeds}
+
+        try:
+            resp = requests.post(
+                self._webhook_url,
+                data=json.dumps(payload),
+                headers={"Content-Type": "application/json"},
+                timeout=10,
+            )
+            resp.raise_for_status()
+            logger.info(f"Discord digest notification sent: {len(jobs)} jobs")
+        except requests.RequestException as e:
+            raise NotificationError(f"Discord digest notification failed: {e}") from e
 
     def check_available(self) -> tuple[bool, str | None]:
         """Check if Discord webhook is configured.

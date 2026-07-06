@@ -82,6 +82,31 @@ class TestNtfyNotifier:
         assert available is False
         assert error is not None
 
+    def test_send_digest_success(self, sample_job: JobListing) -> None:
+        """Test successful ntfy digest notification."""
+        notifier = NtfyNotifier(topic="test-topic", server="https://ntfy.sh")
+        jobs = [sample_job, sample_job]
+
+        with patch("job_scout.notify.ntfy.requests.post") as mock_post:
+            mock_response = Mock()
+            mock_response.raise_for_status = Mock()
+            mock_post.return_value = mock_response
+
+            notifier.send_digest(jobs)
+
+            mock_post.assert_called_once()
+            call_args = mock_post.call_args
+            assert "ntfy.sh/test-topic" in call_args[0][0]
+
+    def test_send_digest_empty_list(self) -> None:
+        """Test ntfy digest notification with empty list."""
+        notifier = NtfyNotifier(topic="test-topic", server="https://ntfy.sh")
+
+        with patch("job_scout.notify.ntfy.requests.post") as mock_post:
+            notifier.send_digest([])
+
+            mock_post.assert_not_called()
+
 
 class TestEmailNotifier:
     """Tests for EmailNotifier."""
@@ -147,6 +172,38 @@ class TestEmailNotifier:
         assert available is False
         assert error is not None
 
+    def test_send_digest_success(self, sample_job: JobListing) -> None:
+        """Test successful email digest notification."""
+        notifier = EmailNotifier(
+            smtp_host="smtp.example.com",
+            smtp_port=587,
+            smtp_from="sender@example.com",
+            smtp_to="recipient@example.com",
+        )
+        jobs = [sample_job, sample_job]
+
+        with patch("job_scout.notify.email.smtplib.SMTP") as mock_smtp:
+            mock_conn = Mock()
+            mock_smtp.return_value.__enter__.return_value = mock_conn
+
+            notifier.send_digest(jobs)
+
+            mock_conn.send_message.assert_called_once()
+
+    def test_send_digest_empty_list(self) -> None:
+        """Test email digest notification with empty list."""
+        notifier = EmailNotifier(
+            smtp_host="smtp.example.com",
+            smtp_port=587,
+            smtp_from="sender@example.com",
+            smtp_to="recipient@example.com",
+        )
+
+        with patch("job_scout.notify.email.smtplib.SMTP") as mock_smtp:
+            notifier.send_digest([])
+
+            mock_smtp.assert_not_called()
+
 
 class TestSlackNotifier:
     """Tests for SlackNotifier."""
@@ -180,6 +237,32 @@ class TestSlackNotifier:
         available, error = notifier.check_available()
         assert available is False
         assert error is not None
+
+    def test_send_digest_success(self, sample_job: JobListing) -> None:
+        """Test successful Slack digest notification."""
+        notifier = SlackNotifier(webhook_url="https://hooks.slack.com/services/test")
+        jobs = [sample_job, sample_job]
+
+        with patch("job_scout.notify.slack.requests.post") as mock_post:
+            mock_response = Mock()
+            mock_response.raise_for_status = Mock()
+            mock_post.return_value = mock_response
+
+            notifier.send_digest(jobs)
+
+            mock_post.assert_called_once()
+            call_args = mock_post.call_args
+            payload = json.loads(call_args[1]["data"])
+            assert "blocks" in payload
+
+    def test_send_digest_empty_list(self) -> None:
+        """Test Slack digest notification with empty list."""
+        notifier = SlackNotifier(webhook_url="https://hooks.slack.com/services/test")
+
+        with patch("job_scout.notify.slack.requests.post") as mock_post:
+            notifier.send_digest([])
+
+            mock_post.assert_not_called()
 
 
 class TestDiscordNotifier:
@@ -218,6 +301,36 @@ class TestDiscordNotifier:
         available, error = notifier.check_available()
         assert available is False
         assert error is not None
+
+    def test_send_digest_success(self, sample_job: JobListing) -> None:
+        """Test successful Discord digest notification."""
+        notifier = DiscordNotifier(
+            webhook_url="https://discordapp.com/api/webhooks/test"
+        )
+        jobs = [sample_job, sample_job]
+
+        with patch("job_scout.notify.discord.requests.post") as mock_post:
+            mock_response = Mock()
+            mock_response.raise_for_status = Mock()
+            mock_post.return_value = mock_response
+
+            notifier.send_digest(jobs)
+
+            mock_post.assert_called_once()
+            call_args = mock_post.call_args
+            payload = json.loads(call_args[1]["data"])
+            assert "embeds" in payload
+
+    def test_send_digest_empty_list(self) -> None:
+        """Test Discord digest notification with empty list."""
+        notifier = DiscordNotifier(
+            webhook_url="https://discordapp.com/api/webhooks/test"
+        )
+
+        with patch("job_scout.notify.discord.requests.post") as mock_post:
+            notifier.send_digest([])
+
+            mock_post.assert_not_called()
 
 
 class TestFactory:

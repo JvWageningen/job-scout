@@ -1635,6 +1635,7 @@ async function loadNotificationData() {
 
         const config = await response.json();
         document.getElementById('notification-channel').value = config.notification_channel || 'ntfy';
+        document.getElementById('notification-mode').value = config.notification_mode || 'per_job';
         document.getElementById('ntfy-topic').value = config.ntfy_topic || '';
         document.getElementById('ntfy-server').value = config.ntfy_server || '';
         document.getElementById('smtp-to').value = config.smtp_to || '';
@@ -1673,8 +1674,10 @@ async function saveNotifications() {
     }
 
     const channel = document.getElementById('notification-channel').value;
+    const mode = document.getElementById('notification-mode').value;
     const values = {
         notification_channel: channel,
+        notification_mode: mode,
         ntfy_topic: document.getElementById('ntfy-topic').value || 'job-scout-alerts',
         slack_webhook_url: document.getElementById('slack-webhook-url').value,
         discord_webhook_url: document.getElementById('discord-webhook-url').value,

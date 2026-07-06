@@ -26,6 +26,17 @@ class Notifier(Protocol):
         """
         ...
 
+    def send_digest(self, jobs: list[JobListing]) -> None:
+        """Send a digest notification summarizing multiple jobs.
+
+        Args:
+            jobs: List of matched job listings to summarize.
+
+        Raises:
+            NotificationError: If the send fails for any reason.
+        """
+        ...
+
     def check_available(self) -> tuple[bool, str | None]:
         """Check whether this notifier is ready to use.
 

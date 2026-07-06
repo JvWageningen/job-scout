@@ -524,6 +524,9 @@ def _send_notifications(
     Returns:
         Number of notifications successfully sent.
     """
+    if not matched:
+        return 0
+
     sent = 0
     try:
         notifier = get_notifier(config)
@@ -531,24 +534,48 @@ def _send_notifications(
         logger.warning(f"Notification channel not available: {e}")
         return 0
 
-    for job in matched:
+    notification_mode = getattr(config, "notification_mode", "per_job")
+
+    if notification_mode == "digest":
         if dry_run:
-            click.echo(
-                f"[DRY RUN] Would notify: {job.title} @ {job.company} ({job.fit_score})"
-            )
-            continue
-        try:
-            notifier.send(job)
-            if job.id:
-                db.mark_notified(job.id)
-            sent += 1
-        except NotificationError:
-            if job.id:
-                db.mark_notification_pending(job.id)
+            click.echo(f"[DRY RUN] Would send digest notification: {len(matched)} jobs")
+        else:
+            try:
+                notifier.send_digest(matched)
+                for job in matched:
+                    if job.id:
+                        db.mark_notified(job.id)
+                sent = len(matched)
+                logger.info(f"Digest notification sent for {sent} jobs")
+            except NotificationError as e:
+                logger.warning(f"Digest notification failed: {e}")
+                for job in matched:
+                    if job.id:
+                        db.mark_notification_pending(job.id)
+    else:
+        for job in matched:
+            if dry_run:
+                click.echo(
+                    f"[DRY RUN] Would notify: {job.title} @ {job.company} "
+                    f"({job.fit_score})"
+                )
+                continue
+            try:
+                notifier.send(job)
+                if job.id:
+                    db.mark_notified(job.id)
+                sent += 1
+            except NotificationError:
+                if job.id:
+                    db.mark_notification_pending(job.id)
+
     if not dry_run:
         for pending in db.get_pending_notifications():
             try:
-                notifier.send(pending)
+                if notification_mode == "digest":
+                    notifier.send_digest([pending])
+                else:
+                    notifier.send(pending)
                 if pending.id:
                     db.mark_notified(pending.id)
                     sent += 1

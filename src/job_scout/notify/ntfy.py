@@ -83,6 +83,37 @@ def _build_notification_payload(job: JobListing) -> tuple[str, str]:
     return title, "\n".join(lines)
 
 
+def _build_digest_payload(jobs: list[JobListing]) -> tuple[str, str]:
+    """Build title and body for a digest notification.
+
+    Args:
+        jobs: List of matched job listings.
+
+    Returns:
+        Tuple of (title, body) strings.
+    """
+    count = len(jobs)
+    title = f"Daily Job Digest: {count} match{'es' if count != 1 else ''} found"
+
+    lines = [
+        f"Summary of {count} job(s) matched today:",
+        "",
+    ]
+
+    top_job = max(jobs, key=lambda j: j.fit_score or 0) if jobs else None
+    for job in jobs:
+        marker = " ⭐ TOP PICK" if job == top_job else ""
+        lines.append(f"• {job.title} @ {job.company} ({job.fit_score}/100){marker}")
+
+    lines.extend(
+        [
+            "",
+            "View all matches in the dashboard or your notifications app.",
+        ]
+    )
+    return title, "\n".join(lines)
+
+
 class NtfyNotifier:
     """Notifier for ntfy.sh push notifications."""
 
@@ -126,6 +157,36 @@ class NtfyNotifier:
             raise NotificationError(
                 f"ntfy notification failed for '{job.title}': {e}"
             ) from e
+
+    def send_digest(self, jobs: list[JobListing]) -> None:
+        """Send a digest notification for multiple jobs via ntfy.sh.
+
+        Args:
+            jobs: List of job listings to summarize.
+
+        Raises:
+            NotificationError: If the send fails.
+        """
+        if not jobs:
+            return
+        title, body = _build_digest_payload(jobs)
+        url = f"{self._server.rstrip('/')}/{self._topic}"
+
+        try:
+            resp = requests.post(
+                url,
+                data=body.encode("utf-8"),
+                headers={
+                    "Title": title.encode("utf-8").decode("latin-1"),
+                    "Priority": "default",
+                    "Tags": "briefcase",
+                },
+                timeout=10,
+            )
+            resp.raise_for_status()
+            logger.info(f"Digest notification sent via ntfy: {len(jobs)} jobs")
+        except requests.RequestException as e:
+            raise NotificationError(f"ntfy digest notification failed: {e}") from e
 
     def check_available(self) -> tuple[bool, str | None]:
         """Check if ntfy is configured.

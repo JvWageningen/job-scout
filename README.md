@@ -153,6 +153,7 @@ uv run job-scout config set min_salary 3000 --user alex
 | `max_salary` | — | Maximum gross monthly salary (EUR) |
 | `min_vacation_days` | — | Minimum annual vacation days |
 | `notification_channel` | `ntfy` | Notification channel: `ntfy`, `email`, `slack`, or `discord` |
+| `notification_mode` | `per_job` | Notification mode: `per_job` (one per match) or `digest` (daily summary) |
 | `ntfy_topic` | `job-scout-alerts` | ntfy.sh topic for push notifications |
 | `slack_webhook_url` | — | Slack incoming webhook URL (for `notification_channel: slack`) |
 | `discord_webhook_url` | — | Discord webhook URL (for `notification_channel: discord`) |
@@ -230,6 +231,25 @@ uv run job-scout config set smtp_to "you@example.com" --user alex
 | **Email** (SMTP) | `notification_channel: email`, `smtp_to` (user-scoped), `smtp_host/smtp_port/smtp_from` (global, shared relay) | Requires a shared SMTP relay configured globally. Each user specifies their recipient email. SMTP credentials are secrets. |
 | **Slack** | `notification_channel: slack`, `slack_webhook_url` (user-scoped) | Create an [incoming webhook](https://api.slack.com/messaging/webhooks) in your Slack workspace and paste the URL. |
 | **Discord** | `notification_channel: discord`, `discord_webhook_url` (user-scoped) | Create a webhook in your Discord server's webhook settings and paste the URL. |
+
+#### Notification modes
+
+By default, job-scout sends one notification per matched job. For a more condensed daily summary, enable digest mode:
+
+```bash
+# Enable daily digest (one notification summarizing all matches)
+uv run job-scout config set notification_mode digest --user alex
+
+# Back to per-job notifications (default)
+uv run job-scout config set notification_mode per_job --user alex
+```
+
+| Mode | Behavior | Best for |
+|------|----------|----------|
+| **per_job** (default) | One notification per matched job, sent immediately | Users who want real-time alerts for every match |
+| **digest** | One notification per run summarizing all matches with job title, company, and fit score; top pick highlighted | Users who prefer a condensed daily summary to reduce notification noise |
+
+Digest notifications work with any channel (ntfy.sh, email, Slack, Discord) and are formatted appropriately for each. If a run has zero matches, no digest is sent (consistent with per-job mode).
 
 #### Global SMTP relay (email only)
 

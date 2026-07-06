@@ -94,6 +94,7 @@ class Config(BaseModel):
 
     name: str = ""
     notification_channel: Literal["ntfy", "email", "slack", "discord"] = "ntfy"
+    notification_mode: Literal["per_job", "digest"] = "per_job"
     ntfy_topic: str = "job-scout-alerts"
     ntfy_server: str = "https://ntfy.sh"
     slack_webhook_url: str = ""

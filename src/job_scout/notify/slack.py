@@ -119,6 +119,56 @@ def _build_slack_payload(job: JobListing) -> dict[str, object]:
     }
 
 
+def _build_slack_digest_payload(jobs: list[JobListing]) -> dict[str, object]:
+    """Build a Slack message payload for a digest notification.
+
+    Args:
+        jobs: List of matched job listings.
+
+    Returns:
+        Dictionary to send as JSON to Slack webhook.
+    """
+    count = len(jobs)
+    top_job = max(jobs, key=lambda j: j.fit_score or 0) if jobs else None
+
+    job_sections = []
+    for job in jobs:
+        marker = " ⭐ TOP PICK" if job == top_job else ""
+        job_sections.append(
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": (
+                        f"*{job.title}* @ {job.company}\n"
+                        f"Score: {job.fit_score}/100{marker}\n"
+                        f"<{job.url}|View Job>"
+                    ),
+                },
+            }
+        )
+
+    blocks = [
+        {
+            "type": "header",
+            "text": {
+                "type": "plain_text",
+                "text": f"Daily Job Digest: {count} match{'es' if count != 1 else ''}",
+            },
+        },
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f"Summary of {count} job(s) matched today:",
+            },
+        },
+    ]
+    blocks.extend(job_sections)
+
+    return {"blocks": blocks}
+
+
 class SlackNotifier:
     """Notifier for Slack via incoming webhook."""
 
@@ -154,6 +204,31 @@ class SlackNotifier:
             raise NotificationError(
                 f"Slack notification failed for '{job.title}': {e}"
             ) from e
+
+    def send_digest(self, jobs: list[JobListing]) -> None:
+        """Send a Slack digest notification for multiple jobs.
+
+        Args:
+            jobs: List of job listings to summarize.
+
+        Raises:
+            NotificationError: If the send fails.
+        """
+        if not jobs:
+            return
+        payload = _build_slack_digest_payload(jobs)
+
+        try:
+            resp = requests.post(
+                self._webhook_url,
+                data=json.dumps(payload),
+                headers={"Content-Type": "application/json"},
+                timeout=10,
+            )
+            resp.raise_for_status()
+            logger.info(f"Slack digest notification sent: {len(jobs)} jobs")
+        except requests.RequestException as e:
+            raise NotificationError(f"Slack digest notification failed: {e}") from e
 
     def check_available(self) -> tuple[bool, str | None]:
         """Check if Slack webhook is configured.
