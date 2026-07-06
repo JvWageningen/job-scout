@@ -39,6 +39,7 @@ GLOBAL_FIELDS: frozenset[str] = frozenset(
         "screening_provider",
         "evaluation_provider",
         "keywords_provider",
+        "cv_parsing_provider",
         "ntfy_server",
         "max_jobs_per_source",
         "llm_max_attempts",

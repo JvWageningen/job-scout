@@ -241,6 +241,33 @@
                     </div>
                     <button type="submit" class="btn btn-primary">Save Profile</button>
                 </form>
+
+                <!-- CV Profile Summary (Read-only) -->
+                <div id="cv-summary-container" class="form-group" style="display: none;">
+                    <h3>Parsed CV Profile</h3>
+                    <div id="cv-summary-content" class="info-box">
+                        <p id="cv-loading" style="display: none;">Loading CV profile...</p>
+                        <p id="cv-error" style="display: none; color: #d32f2f;"></p>
+                        <div id="cv-profile-details" style="display: none;">
+                            <div class="cv-info-item">
+                                <strong>Years of Experience:</strong>
+                                <span id="cv-years"></span>
+                            </div>
+                            <div class="cv-info-item">
+                                <strong>Skills:</strong>
+                                <div id="cv-skills" class="skill-list"></div>
+                            </div>
+                            <div class="cv-info-item">
+                                <strong>Education:</strong>
+                                <div id="cv-education" class="education-list"></div>
+                            </div>
+                            <div class="cv-info-item">
+                                <strong>Past Roles:</strong>
+                                <div id="cv-roles" class="roles-list"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </section>
 
             <!-- Keywords Section -->

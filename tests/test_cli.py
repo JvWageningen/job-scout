@@ -466,3 +466,46 @@ def test_keywords_refresh_exits_without_claude(cli_env: Path) -> None:
         runner = CliRunner()
         result = runner.invoke(cli, ["keywords", "refresh"])
     assert result.exit_code == 1
+
+
+def test_profile_cv_summary_exits_without_cv_path(cli_env: Path) -> None:
+    """profile cv-summary exits with code 1 when no CV path is configured."""
+    from job_scout.config import apply_user_init
+
+    _save_test_config(cli_env)
+    apply_user_init("testuser", {})
+    runner = CliRunner()
+    result = runner.invoke(cli, ["profile", "cv-summary", "--user", "testuser"])
+    assert result.exit_code == 1
+    assert "No CV path configured" in result.output
+
+
+def test_profile_cv_summary_exits_when_cv_missing(cli_env: Path) -> None:
+    """profile cv-summary exits with code 1 when CV file does not exist."""
+    from job_scout.config import apply_user_init
+
+    _save_test_config(cli_env)
+    apply_user_init("testuser", {"cv_path": "/nonexistent/cv.pdf"})
+    runner = CliRunner()
+    result = runner.invoke(cli, ["profile", "cv-summary", "--user", "testuser"])
+    assert result.exit_code == 1
+    assert "not found" in result.output
+
+
+def test_profile_cv_summary_with_cv_path(cli_env: Path) -> None:
+    """profile cv-summary shows error when CV path is set but parse fails."""
+    from job_scout.config import apply_user_init
+
+    cv_path = cli_env / "test_cv.pdf"
+    cv_path.write_bytes(b"fake pdf")
+
+    _save_test_config(cli_env)
+    apply_user_init("testuser", {"cv_path": str(cv_path)})
+
+    with patch("job_scout.cv_parser.parse_cv", return_value=""):
+        runner = CliRunner()
+        result = runner.invoke(
+            cli, ["profile", "cv-summary", "--user", "testuser"]
+        )
+        assert result.exit_code == 1
+        assert "Failed to extract text" in result.output

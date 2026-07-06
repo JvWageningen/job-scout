@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from pathlib import Path
 
 from loguru import logger
+
+from job_scout.llm.base import LLMClient
+from job_scout.models import CvProfile
 
 
 def parse_cv(cv_path: str | Path) -> str:
@@ -39,3 +44,91 @@ def parse_cv(cv_path: str | Path) -> str:
     except Exception as e:
         logger.warning(f"Failed to parse CV '{cv_path}': {e}")
         return ""
+
+
+def _extract_json_from_response(text: str) -> dict[str, object]:
+    """Extract JSON object from LLM output, stripping markdown fences.
+
+    Args:
+        text: Raw text that may contain a fenced JSON block.
+
+    Returns:
+        Parsed dictionary.
+
+    Raises:
+        json.JSONDecodeError: If no valid JSON can be found.
+    """
+    if "```json" in text:
+        start = text.index("```json") + 7
+        end = text.index("```", start)
+        text = text[start:end].strip()
+    elif "```" in text:
+        start = text.index("```") + 3
+        end = text.index("```", start)
+        text = text[start:end].strip()
+
+    try:
+        return json.loads(text)  # type: ignore[no-any-return]
+    except json.JSONDecodeError:
+        pass
+
+    # Last resort: find the first '{' ... last '}' block (handles preamble text)
+    brace_start = text.find("{")
+    brace_end = text.rfind("}") + 1
+    if brace_start != -1 and brace_end > brace_start:
+        return json.loads(text[brace_start:brace_end])  # type: ignore[no-any-return]
+
+    raise json.JSONDecodeError("No JSON object found", text, 0)
+
+
+def parse_cv_structured(raw_text: str, client: LLMClient) -> CvProfile:
+    """Parse CV text using LLM and return structured CvProfile.
+
+    Sends raw CV text to LLM for structured extraction of skills,
+    experience, education, and past roles.
+
+    Args:
+        raw_text: Raw text extracted from the CV.
+        client: LLMClient to use for structured parsing.
+
+    Returns:
+        Parsed CvProfile with skills, years_experience, education, past_roles.
+
+    Raises:
+        ValueError: If LLM response cannot be parsed as valid JSON.
+    """
+    prompt = (
+        "Extract structured CV information and respond with JSON.\n"
+        f"CV TEXT:\n{raw_text[:3000]}\n"
+        "Return JSON with: skills, years_experience, education, past_roles.\n"
+        'Example: {"skills": ["Python"], "years_experience": 5, '
+        '"education": [], "past_roles": []}'
+    )
+
+    response = client.complete(prompt, purpose="cv_parsing")
+    data = _extract_json_from_response(response)
+
+    # Validate and construct CvProfile
+    profile = CvProfile(
+        skills=data.get("skills", []) or [],
+        years_experience=data.get("years_experience"),
+        education=data.get("education", []) or [],
+        past_roles=data.get("past_roles", []) or [],
+    )
+
+    logger.debug(
+        f"Parsed CV: {len(profile.skills)} skills, {profile.years_experience} years"
+    )
+    return profile
+
+
+def compute_cv_hash(raw_text: str) -> str:
+    """Compute SHA256 hash of CV text for caching purposes.
+
+    Args:
+        raw_text: Raw CV text.
+
+    Returns:
+        Hex string of SHA256 hash.
+    """
+    return hashlib.sha256(raw_text.encode()).hexdigest()

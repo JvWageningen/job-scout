@@ -154,6 +154,14 @@ class Database:
                     PRIMARY KEY (origin_key, destination_key, mode)
                 )
             """)
+            # Create CV cache table
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS cv_cache (
+                    cv_hash TEXT PRIMARY KEY,
+                    cv_profile_json TEXT NOT NULL,
+                    cached_at TEXT NOT NULL
+                )
+            """)
 
     def _backfill_dedup_keys(self, conn: sqlite3.Connection) -> None:
         """Populate dedup_key for rows written before the column existed.
@@ -805,6 +813,39 @@ class Database:
                     minutes,
                     datetime.now(UTC).isoformat(),
                 ),
+            )
+
+    def get_cached_cv_profile(self, cv_hash: str) -> str | None:
+        """Retrieve a cached CV profile JSON if it exists.
+
+        Args:
+            cv_hash: SHA256 hash of the raw CV text.
+
+        Returns:
+            JSON string of CvProfile if cached, None otherwise.
+        """
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT cv_profile_json FROM cv_cache WHERE cv_hash = ?",
+                (cv_hash,),
+            ).fetchone()
+        return row[0] if row else None
+
+    def save_cv_profile_cache(self, cv_hash: str, cv_profile_json: str) -> None:
+        """Cache a parsed CV profile.
+
+        Args:
+            cv_hash: SHA256 hash of the raw CV text.
+            cv_profile_json: JSON string representation of CvProfile.
+        """
+        with self._conn() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO cv_cache
+                  (cv_hash, cv_profile_json, cached_at)
+                VALUES (?, ?, ?)
+                """,
+                (cv_hash, cv_profile_json, datetime.now(UTC).isoformat()),
             )
 
     @staticmethod

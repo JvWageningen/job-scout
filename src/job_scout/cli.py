@@ -35,7 +35,8 @@ from job_scout.evaluator import (
     generate_keywords,
     quick_evaluate_fit,
 )
-from job_scout.llm.base import LLMClient
+from job_scout.llm.base import LLMClient, LLMError
+from job_scout.llm.factory import get_llm_client
 from job_scout.models import Config, JobListing, JobStatus, RunStats
 from job_scout.notifier import send_notification
 from job_scout.scheduler import (
@@ -1172,6 +1173,88 @@ def sites_remove(identifier: str, user_name: str | None) -> None:
     cfg["custom_sites"] = sites_data
     save_user_config(target, cfg)
     click.echo(f"Removed '{identifier}' for user '{target}'")
+
+
+@cli.group("profile")
+def profile_group() -> None:
+    """Manage and view parsed CV profile information."""
+
+
+@profile_group.command("cv-summary")
+@click.option(
+    "--user", "user_name", default=None, help="User to view (default: current user)"
+)
+def profile_cv_summary(user_name: str | None) -> None:
+    """Display the structured CV profile (requires CV path and LLM parsing).
+
+    Shows skills, years of experience, education, and past roles extracted
+    from the candidate's CV using LLM-based parsing.
+    """
+    from job_scout.config import build_effective_config, user_db_path
+    from job_scout.cv_parser import parse_cv
+    from job_scout.cv_profile import get_or_parse_cv_profile
+
+    target = _require_single_user(user_name)
+    config = build_effective_config(target)
+
+    if not config.cv_path:
+        click.echo(
+            f"No CV path configured. Run 'job-scout init --user {target}' first.",
+            err=True,
+        )
+        sys.exit(1)
+
+    # Parse raw CV text
+    try:
+        raw_cv_text = parse_cv(config.cv_path)
+    except FileNotFoundError as e:
+        click.echo(str(e), err=True)
+        sys.exit(1)
+
+    if not raw_cv_text:
+        click.echo("Failed to extract text from CV file.", err=True)
+        sys.exit(1)
+
+    # Get LLM client
+    try:
+        client = get_llm_client(config)
+    except LLMError as e:
+        click.echo(f"LLM configuration error: {e}", err=True)
+        sys.exit(1)
+
+    # Check LLM availability
+    ok, err = client.check_available()
+    if not ok:
+        click.echo(f"LLM not available: {err}", err=True)
+        sys.exit(1)
+
+    # Load or parse CV profile with caching
+    db = Database(user_db_path(target))
+    profile = get_or_parse_cv_profile(raw_cv_text, client, db)
+
+    # Display the profile
+    click.echo(f"\nCV Profile for '{target}':")
+    click.echo("=" * 50)
+
+    if profile.years_experience is not None:
+        click.echo(f"Years of Experience: {profile.years_experience}")
+
+    if profile.skills:
+        click.echo(f"\nSkills ({len(profile.skills)}):")
+        for skill in profile.skills:
+            click.echo(f"  - {skill}")
+
+    if profile.education:
+        click.echo("\nEducation:")
+        for edu in profile.education:
+            click.echo(f"  - {edu}")
+
+    if profile.past_roles:
+        click.echo("\nPast Roles:")
+        for role in profile.past_roles:
+            click.echo(f"  - {role}")
+
+    click.echo()
 
 
 @cli.group("schedule")

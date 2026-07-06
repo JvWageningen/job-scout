@@ -141,6 +141,7 @@ class Config(BaseModel):
     screening_provider: Literal["claude_cli", "zai", "kilo_cli", "local"] | None = None
     evaluation_provider: Literal["claude_cli", "zai", "kilo_cli", "local"] | None = None
     keywords_provider: Literal["claude_cli", "zai", "kilo_cli", "local"] | None = None
+    cv_parsing_provider: Literal["claude_cli", "zai", "kilo_cli", "local"] | None = None
     llm_max_attempts: int = 3
     llm_retry_base_delay: float = 1.0
     max_parallel_evaluations: int = 5
@@ -253,3 +254,12 @@ class RunHistoryEntry(BaseModel):
     rejected: int
     notified: int
     errors: int
+
+
+class CvProfile(BaseModel):
+    """Structured CV profile extracted and validated by the LLM."""
+
+    skills: list[str] = Field(default_factory=list)
+    years_experience: int | None = None
+    education: list[str] = Field(default_factory=list)
+    past_roles: list[str] = Field(default_factory=list)

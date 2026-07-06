@@ -562,6 +562,69 @@ def create_app() -> FastAPI:
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
 
+    @app.get("/api/profile/cv-summary")
+    def get_cv_profile(user: str | None = None) -> dict[str, Any]:
+        """Get the structured CV profile for a user.
+
+        Parses the user's CV file using LLM and returns structured data:
+        skills, years of experience, education, and past roles.
+        Results are cached by CV content hash.
+
+        Args:
+            user: User name (required).
+
+        Returns:
+            Dictionary with cv_profile (skills, years_experience, education, past_roles)
+            or error message if CV not configured or parsing fails.
+
+        Raises:
+            HTTPException: If user not provided or not found.
+        """
+        if not user:
+            raise HTTPException(status_code=400, detail="User is required")
+        if user not in list_users():
+            raise HTTPException(status_code=404, detail=f"User '{user}' not found")
+
+        try:
+            from job_scout.cv_parser import parse_cv  # noqa: PLC0415
+            from job_scout.cv_profile import get_or_parse_cv_profile  # noqa: PLC0415
+            from job_scout.llm.base import LLMError  # noqa: PLC0415
+
+            config = build_effective_config(user)
+
+            if not config.cv_path:
+                return {"error": "CV path not configured"}
+
+            # Parse raw CV text
+            try:
+                raw_cv_text = parse_cv(config.cv_path)
+            except FileNotFoundError:
+                return {"error": f"CV file not found at {config.cv_path}"}
+
+            if not raw_cv_text:
+                return {"error": "Failed to extract text from CV"}
+
+            # Get LLM client
+            try:
+                client = get_llm_client(config)
+            except LLMError as e:
+                return {"error": f"LLM configuration error: {str(e)}"}
+
+            # Check LLM availability
+            ok, err = client.check_available()
+            if not ok:
+                return {"error": f"LLM not available: {err}"}
+
+            # Load or parse CV profile with caching
+            db = Database(user_db_path(user))
+            profile = get_or_parse_cv_profile(raw_cv_text, client, db)
+
+            return {
+                "cv_profile": profile.model_dump(),
+            }
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+
     @app.post("/api/sites")
     def add_site(body: dict[str, Any]) -> dict[str, str]:
         """Add a custom site for a user.

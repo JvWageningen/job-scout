@@ -161,7 +161,7 @@ def get_llm_client(config: Config) -> LLMClient:
 
     # Determine which purposes have overrides that differ from the default
     overrides: dict[CallPurpose, LLMClient] = {}
-    for purpose in ["quick_eval", "screening", "evaluation", "keywords"]:
+    for purpose in ["quick_eval", "screening", "evaluation", "keywords", "cv_parsing"]:
         override_attr = f"{purpose}_provider"
         override_provider = getattr(config, override_attr, None)
         if override_provider and override_provider != default_provider:

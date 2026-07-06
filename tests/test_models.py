@@ -321,3 +321,48 @@ def test_config_nvb_keyword_limit_above_maximum() -> None:
     """Config.nvb_keyword_limit rejects values above 20."""
     with pytest.raises(ValidationError):
         Config(nvb_keyword_limit=21)
+
+
+def test_cv_profile_defaults() -> None:
+    """CvProfile defaults all fields to empty/None."""
+    from job_scout.models import CvProfile
+
+    profile = CvProfile()
+    assert profile.skills == []
+    assert profile.years_experience is None
+    assert profile.education == []
+    assert profile.past_roles == []
+
+
+def test_cv_profile_with_data() -> None:
+    """CvProfile stores skills, experience, education, and roles."""
+    from job_scout.models import CvProfile
+
+    profile = CvProfile(
+        skills=["Python", "Kubernetes"],
+        years_experience=7,
+        education=["BSc CS", "MSc AI"],
+        past_roles=["SWE at Google", "TL at Meta"],
+    )
+    assert len(profile.skills) == 2
+    assert profile.years_experience == 7
+    assert len(profile.education) == 2
+    assert len(profile.past_roles) == 2
+
+
+def test_cv_profile_serialisation() -> None:
+    """CvProfile round-trips through model_dump/model_validate."""
+    from job_scout.models import CvProfile
+
+    profile = CvProfile(
+        skills=["Go", "Rust"],
+        years_experience=5,
+        education=["PhD Computer Science"],
+        past_roles=["Principal Engineer"],
+    )
+    data = profile.model_dump()
+    restored = CvProfile(**data)
+    assert restored.skills == profile.skills
+    assert restored.years_experience == profile.years_experience
+    assert restored.education == profile.education
+    assert restored.past_roles == profile.past_roles

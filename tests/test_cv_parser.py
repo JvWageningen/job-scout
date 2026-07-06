@@ -100,3 +100,70 @@ def test_parse_cv_multiple_pages_joined(tmp_path: Path) -> None:
     assert "Page 0" in result
     assert "Page 1" in result
     assert "Page 2" in result
+
+
+def test_parse_cv_structured_extracts_profile(tmp_path: Path) -> None:
+    """parse_cv_structured sends CV to LLM and returns CvProfile."""
+    from unittest.mock import MagicMock
+
+    from job_scout.cv_parser import parse_cv_structured
+    from job_scout.models import CvProfile
+
+    cv_text = "10 years of Python programming..."
+    client = MagicMock()
+    client.complete.return_value = """
+    ```json
+    {
+        "skills": ["Python", "SQL", "Docker"],
+        "years_experience": 10,
+        "education": ["BSc Computer Science"],
+        "past_roles": ["Senior Engineer at TechCorp"]
+    }
+    ```
+    """
+
+    profile = parse_cv_structured(cv_text, client)
+
+    assert isinstance(profile, CvProfile)
+    assert profile.skills == ["Python", "SQL", "Docker"]
+    assert profile.years_experience == 10
+    assert profile.education == ["BSc Computer Science"]
+    assert profile.past_roles == ["Senior Engineer at TechCorp"]
+    client.complete.assert_called_once()
+    assert client.complete.call_args[1]["purpose"] == "cv_parsing"
+
+
+def test_parse_cv_structured_handles_missing_fields() -> None:
+    """parse_cv_structured returns empty arrays for missing optional fields."""
+    from unittest.mock import MagicMock
+
+    from job_scout.cv_parser import parse_cv_structured
+    from job_scout.models import CvProfile
+
+    client = MagicMock()
+    client.complete.return_value = '{"skills": []}'
+
+    profile = parse_cv_structured("some cv text", client)
+
+    assert isinstance(profile, CvProfile)
+    assert profile.skills == []
+    assert profile.years_experience is None
+    assert profile.education == []
+    assert profile.past_roles == []
+
+
+def test_compute_cv_hash() -> None:
+    """compute_cv_hash returns consistent SHA256 hash."""
+    from job_scout.cv_parser import compute_cv_hash
+
+    text1 = "CV content"
+    text2 = "CV content"
+    text3 = "Different content"
+
+    hash1 = compute_cv_hash(text1)
+    hash2 = compute_cv_hash(text2)
+    hash3 = compute_cv_hash(text3)
+
+    assert hash1 == hash2
+    assert hash1 != hash3
+    assert len(hash1) == 64  # SHA256 hex is 64 chars

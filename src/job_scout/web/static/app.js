@@ -710,6 +710,113 @@ async function loadAllUserData() {
 /**
  * Load and populate the profile form
  */
+/**
+ * Load and display CV profile
+ */
+async function loadCVProfile() {
+    if (!currentUser) {
+        return;
+    }
+
+    const container = document.getElementById('cv-summary-container');
+    const content = document.getElementById('cv-summary-content');
+    const loading = document.getElementById('cv-loading');
+    const error = document.getElementById('cv-error');
+    const details = document.getElementById('cv-profile-details');
+
+    // Reset state
+    loading.style.display = 'none';
+    error.style.display = 'none';
+    details.style.display = 'none';
+
+    try {
+        const response = await fetchWithAuth(`${API_BASE}/profile/cv-summary?user=${encodeURIComponent(currentUser)}`);
+        if (!response.ok) {
+            container.style.display = 'block';
+            error.style.display = 'block';
+            error.textContent = 'Failed to load CV profile';
+            return;
+        }
+
+        const data = await response.json();
+        
+        if (data.error) {
+            container.style.display = 'block';
+            error.style.display = 'block';
+            error.textContent = data.error;
+            return;
+        }
+
+        if (!data.cv_profile) {
+            return;
+        }
+
+        // Display the CV profile
+        container.style.display = 'block';
+        error.style.display = 'none';
+        loading.style.display = 'none';
+        details.style.display = 'block';
+
+        const profile = data.cv_profile;
+
+        // Years of experience
+        const yearsEl = document.getElementById('cv-years');
+        if (profile.years_experience !== null) {
+            yearsEl.textContent = profile.years_experience + ' years';
+        } else {
+            yearsEl.textContent = 'Not specified';
+        }
+
+        // Skills
+        const skillsList = document.getElementById('cv-skills');
+        skillsList.innerHTML = '';
+        if (profile.skills && profile.skills.length > 0) {
+            profile.skills.forEach(skill => {
+                const div = document.createElement('div');
+                div.textContent = skill;
+                skillsList.appendChild(div);
+            });
+        } else {
+            skillsList.innerHTML = '<span>No skills extracted</span>';
+        }
+
+        // Education
+        const eduList = document.getElementById('cv-education');
+        eduList.innerHTML = '';
+        if (profile.education && profile.education.length > 0) {
+            profile.education.forEach(edu => {
+                const div = document.createElement('div');
+                div.textContent = edu;
+                eduList.appendChild(div);
+            });
+        } else {
+            eduList.innerHTML = '<span>No education information</span>';
+        }
+
+        // Past roles
+        const rolesList = document.getElementById('cv-roles');
+        rolesList.innerHTML = '';
+        if (profile.past_roles && profile.past_roles.length > 0) {
+            profile.past_roles.forEach(role => {
+                const div = document.createElement('div');
+                div.textContent = role;
+                rolesList.appendChild(div);
+            });
+        } else {
+            rolesList.innerHTML = '<span>No past roles information</span>';
+        }
+
+        // Load CV profile
+        await loadCVProfile();
+
+    } catch (error) {
+        console.error('Error loading CV profile:', error);
+        container.style.display = 'block';
+        error.style.display = 'block';
+        error.textContent = 'Error loading CV profile: ' + error.message;
+    }
+}
+
 async function loadProfileData() {
     if (!currentUser) {
         return;

@@ -283,3 +283,35 @@ def test_backward_compatibility_no_overrides() -> None:
     assert isinstance(client.inner, ZaiClient)
     # The inner client should be directly accessible for model checks
     assert client.inner._evaluation_model == "glm-5.1"
+
+
+def test_cv_parsing_provider_override() -> None:
+    """cv_parsing_provider overrides the default provider for cv_parsing purpose."""
+    from job_scout.llm.factory import _PurposeRoutingClient
+    from job_scout.llm.local import LocalLLMClient
+    from job_scout.llm.zai import ZaiClient
+
+    config = Config(
+        llm_provider="zai",
+        zai_api_key="sk-test",
+        cv_parsing_provider="local",
+    )
+    client = get_llm_client(config)
+    assert isinstance(client, RetryingLLMClient)
+    assert isinstance(client.inner, _PurposeRoutingClient)
+    assert isinstance(client.inner._overrides.get("cv_parsing"), LocalLLMClient)
+    assert isinstance(client.inner._default, ZaiClient)
+
+
+def test_cv_parsing_same_as_default_not_duplicated() -> None:
+    """If cv_parsing_provider equals default, no override is created."""
+    config = Config(
+        llm_provider="claude_cli",
+        cv_parsing_provider="claude_cli",  # Same as default
+    )
+    client = get_llm_client(config)
+    assert isinstance(client, RetryingLLMClient)
+    from job_scout.llm.factory import _PurposeRoutingClient
+
+    # Should be a plain client, not routing
+    assert not isinstance(client.inner, _PurposeRoutingClient)
