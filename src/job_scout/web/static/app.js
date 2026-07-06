@@ -142,6 +142,27 @@ function setupEventListeners() {
             installSchedule();
         });
     }
+    const notificationsForm = document.getElementById('notifications-form');
+    if (notificationsForm) {
+        notificationsForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            saveNotifications();
+        });
+    }
+
+    const notificationChannelSelect = document.getElementById('notification-channel');
+    if (notificationChannelSelect) {
+        notificationChannelSelect.addEventListener('change', (e) => {
+            updateNotificationChannelUI(e.target.value);
+        });
+    }
+
+    const testNotifBtn = document.getElementById('test-notif-btn');
+    if (testNotifBtn) {
+        testNotifBtn.addEventListener('click', testNotificationChannel);
+    }
+
+    
 
     const removeScheduleBtn = document.getElementById('remove-schedule-btn');
     if (removeScheduleBtn) {
@@ -699,6 +720,7 @@ async function loadAllUserData() {
 
     await Promise.all([
         loadProfileData(),
+        loadNotificationData(),
         loadSitesData(),
         loadLLMSettings(),
         loadScheduleStatus(),
@@ -1594,4 +1616,142 @@ function displayAnalyticsChart(history) {
     });
 
     document.getElementById('chart-bars').innerHTML = barsHtml;
+}
+
+/**
+ * Load notification settings for the current user
+ */
+async function loadNotificationData() {
+    if (!currentUser) {
+        return;
+    }
+
+    try {
+        const response = await fetchWithAuth(`${API_BASE}/config?user=${encodeURIComponent(currentUser)}`);
+        if (!response.ok) {
+            console.error('Failed to load config');
+            return;
+        }
+
+        const config = await response.json();
+        document.getElementById('notification-channel').value = config.notification_channel || 'ntfy';
+        document.getElementById('ntfy-topic').value = config.ntfy_topic || '';
+        document.getElementById('ntfy-server').value = config.ntfy_server || '';
+        document.getElementById('smtp-to').value = config.smtp_to || '';
+        document.getElementById('smtp-host').value = config.smtp_host || '';
+        document.getElementById('smtp-port').value = config.smtp_port || 587;
+        document.getElementById('smtp-from').value = config.smtp_from || '';
+        document.getElementById('slack-webhook-url').value = config.slack_webhook_url || '';
+        document.getElementById('discord-webhook-url').value = config.discord_webhook_url || '';
+
+        updateNotificationChannelUI(config.notification_channel || 'ntfy');
+    } catch (error) {
+        console.error('Error loading notification data:', error);
+    }
+}
+
+/**
+ * Update the notification channel UI to show/hide relevant settings
+ */
+function updateNotificationChannelUI(channel) {
+    const channels = ['ntfy', 'email', 'slack', 'discord'];
+    channels.forEach((ch) => {
+        const el = document.getElementById(`${ch}-settings`);
+        if (el) {
+            el.style.display = ch === channel ? 'block' : 'none';
+        }
+    });
+}
+
+/**
+ * Save notification settings for the current user
+ */
+async function saveNotifications() {
+    if (!currentUser) {
+        alert('Please select a user first');
+        return;
+    }
+
+    const channel = document.getElementById('notification-channel').value;
+    const values = {
+        notification_channel: channel,
+        ntfy_topic: document.getElementById('ntfy-topic').value || 'job-scout-alerts',
+        slack_webhook_url: document.getElementById('slack-webhook-url').value,
+        discord_webhook_url: document.getElementById('discord-webhook-url').value,
+        smtp_to: document.getElementById('smtp-to').value,
+    };
+
+    // Remove empty strings
+    for (const key of Object.keys(values)) {
+        if (values[key] === '' && key !== 'notification_channel') {
+            delete values[key];
+        }
+    }
+
+    try {
+        const response = await fetchWithAuth(`${API_BASE}/config`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ user: currentUser, values }),
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            alert(`Failed to save settings: ${error.detail || 'Unknown error'}`);
+            return;
+        }
+
+        alert('Notification settings saved successfully');
+    } catch (error) {
+        alert(`Error saving settings: ${error.message}`);
+    }
+}
+
+/**
+ * Test the current notification channel configuration
+ */
+async function testNotificationChannel() {
+    if (!currentUser) {
+        alert('Please select a user first');
+        return;
+    }
+
+    const channel = document.getElementById('notification-channel').value;
+    const body = {
+        channel: channel,
+    };
+
+    if (channel === 'ntfy') {
+        body.ntfy_topic = document.getElementById('ntfy-topic').value;
+        body.ntfy_server = document.getElementById('ntfy-server').value;
+    } else if (channel === 'email') {
+        body.smtp_host = document.getElementById('smtp-host').value;
+        body.smtp_port = parseInt(document.getElementById('smtp-port').value, 10);
+        body.smtp_from = document.getElementById('smtp-from').value;
+        body.smtp_to = document.getElementById('smtp-to').value;
+    } else if (channel === 'slack') {
+        body.slack_webhook_url = document.getElementById('slack-webhook-url').value;
+    } else if (channel === 'discord') {
+        body.discord_webhook_url = document.getElementById('discord-webhook-url').value;
+    }
+
+    const resultDiv = document.getElementById('test-notif-result');
+    resultDiv.innerHTML = '<p class="loading">Testing...</p>';
+
+    try {
+        const response = await fetchWithAuth(`${API_BASE}/notification/test-channel`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        });
+
+        const data = await response.json();
+        if (data.ok) {
+            resultDiv.innerHTML = `<p style="color: #4caf50;"><strong>✓</strong> ${escapeHtml(data.message)}</p>`;
+        } else {
+            resultDiv.innerHTML = `<p style="color: #d32f2f;"><strong>✗</strong> ${escapeHtml(data.message)}</p>`;
+        }
+    } catch (error) {
+        resultDiv.innerHTML = `<p style="color: #d32f2f;"><strong>✗</strong> ${escapeHtml(error.message)}</p>`;
+    }
 }

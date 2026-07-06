@@ -93,8 +93,17 @@ class Config(BaseModel):
     """Application configuration stored in config.yaml."""
 
     name: str = ""
+    notification_channel: Literal["ntfy", "email", "slack", "discord"] = "ntfy"
     ntfy_topic: str = "job-scout-alerts"
     ntfy_server: str = "https://ntfy.sh"
+    slack_webhook_url: str = ""
+    discord_webhook_url: str = ""
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_from: str = ""
+    smtp_to: str = ""
+    smtp_username: str | None = None
+    smtp_password: str | None = None
     home_address: str = ""
     max_travel_car: int = 30
     max_travel_pt: int = 60

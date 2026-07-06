@@ -112,6 +112,9 @@ uv run job-scout config set min_salary 3000 --user alex
 | `max_parallel_evaluations` | `5` | Max concurrent LLM calls during quick-eval/evaluation/screening/travel lookups |
 | `max_jobs_per_source` | `50` | Max jobs fetched per source |
 | `ntfy_server` | `https://ntfy.sh` | ntfy.sh server URL |
+| `smtp_host` | — | SMTP relay hostname (for email notifications) |
+| `smtp_port` | `587` | SMTP relay port (for email notifications) |
+| `smtp_from` | — | SMTP sender address (for email notifications) |
 | `llm_max_attempts` | `3` | Retry attempts for LLM calls |
 | `llm_retry_base_delay` | `1.0` | Base backoff delay in seconds (doubles each retry) |
 | `claude_evaluation_model` | — | Claude model for evaluation (default: CLI default) |
@@ -149,7 +152,11 @@ uv run job-scout config set min_salary 3000 --user alex
 | `min_salary` | — | Minimum gross monthly salary (EUR) |
 | `max_salary` | — | Maximum gross monthly salary (EUR) |
 | `min_vacation_days` | — | Minimum annual vacation days |
+| `notification_channel` | `ntfy` | Notification channel: `ntfy`, `email`, `slack`, or `discord` |
 | `ntfy_topic` | `job-scout-alerts` | ntfy.sh topic for push notifications |
+| `slack_webhook_url` | — | Slack incoming webhook URL (for `notification_channel: slack`) |
+| `discord_webhook_url` | — | Discord webhook URL (for `notification_channel: discord`) |
+| `smtp_to` | — | Email recipient (for `notification_channel: email`) |
 | `language_preferences` | `["nl","en"]` | Language filter for job boards |
 | `keywords_dutch` | `[]` | Dutch job search keywords (auto-generated) |
 | `keywords_english` | `[]` | English job search keywords (auto-generated) |
@@ -170,6 +177,8 @@ API keys are **never stored in tracked YAML files**. Set them via environment va
 | `local_api_key` | `JOB_SCOUT_LOCAL_API_KEY` | API key for the local/LAN LLM server (usually not required) |
 | `ors_api_key` | `JOB_SCOUT_ORS_API_KEY` | OpenRouteService API key |
 | `ns_api_key` | `JOB_SCOUT_NS_API_KEY` | NS Journey Planner API key |
+| `smtp_username` | `JOB_SCOUT_SMTP_USERNAME` | SMTP relay username (optional, if relay requires auth) |
+| `smtp_password` | `JOB_SCOUT_SMTP_PASSWORD` | SMTP relay password (optional, if relay requires auth) |
 
 Environment variables take precedence over `data/secrets.yaml`.
 
@@ -197,6 +206,62 @@ uv run job-scout config set evaluation_provider zai
 ```
 
 All of this is also available in the [web dashboard](#web-dashboard)'s LLM Settings tab, including a "Test Connection" button that verifies a candidate provider/URL/key before you save it.
+
+### Notifications
+
+job-scout supports pluggable notification channels: **ntfy.sh** (push notifications), **Email** (SMTP), **Slack** (incoming webhooks), and **Discord** (incoming webhooks). Each user can choose their preferred channel and configure channel-specific settings.
+
+```bash
+# Set notification channel for a user
+uv run job-scout config set notification_channel slack --user alex
+
+# Configure Slack webhook
+uv run job-scout config set slack_webhook_url "https://hooks.slack.com/services/..." --user alex
+
+# Configure email recipient
+uv run job-scout config set smtp_to "you@example.com" --user alex
+```
+
+#### Supported channels
+
+| Channel | Configuration | Notes |
+|---------|---------------|-------|
+| **ntfy.sh** (default) | `notification_channel: ntfy`, `ntfy_topic` (user-scoped), `ntfy_server` (global, read-only) | Free push notifications to your phone or desktop. Public-by-default topics; use a hard-to-guess UUID for privacy. |
+| **Email** (SMTP) | `notification_channel: email`, `smtp_to` (user-scoped), `smtp_host/smtp_port/smtp_from` (global, shared relay) | Requires a shared SMTP relay configured globally. Each user specifies their recipient email. SMTP credentials are secrets. |
+| **Slack** | `notification_channel: slack`, `slack_webhook_url` (user-scoped) | Create an [incoming webhook](https://api.slack.com/messaging/webhooks) in your Slack workspace and paste the URL. |
+| **Discord** | `notification_channel: discord`, `discord_webhook_url` (user-scoped) | Create a webhook in your Discord server's webhook settings and paste the URL. |
+
+#### Global SMTP relay (email only)
+
+If your team uses email notifications, configure the shared relay once globally:
+
+```bash
+uv run job-scout config set smtp_host mail.example.com
+uv run job-scout config set smtp_port 587
+uv run job-scout config set smtp_from jobs@example.com
+# Optional: authentication credentials (only if your relay requires it)
+# Set JOB_SCOUT_SMTP_USERNAME and JOB_SCOUT_SMTP_PASSWORD environment variables
+# or add them to data/secrets.yaml
+```
+
+Then each user simply sets their recipient email:
+
+```bash
+uv run job-scout config set smtp_to "alex@example.com" --user alex
+```
+
+#### Testing a notification channel
+
+Before relying on notifications in production, test your configuration via the web dashboard's Notifications tab or the CLI:
+
+```bash
+# Coming soon: CLI test command
+# For now, use the web dashboard Notifications tab and click "Test Notification"
+```
+
+#### Retry and pending notifications
+
+If a notification send fails (network error, webhook unreachable, etc.), the job is automatically marked as `notification_pending` in the database. On the next `job-scout run`, pending notifications are automatically retried using the same channel. This ensures matches are never lost due to transient failures.
 
 ## Web dashboard
 

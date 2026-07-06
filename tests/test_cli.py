@@ -504,8 +504,6 @@ def test_profile_cv_summary_with_cv_path(cli_env: Path) -> None:
 
     with patch("job_scout.cv_parser.parse_cv", return_value=""):
         runner = CliRunner()
-        result = runner.invoke(
-            cli, ["profile", "cv-summary", "--user", "testuser"]
-        )
+        result = runner.invoke(cli, ["profile", "cv-summary", "--user", "testuser"])
         assert result.exit_code == 1
         assert "Failed to extract text" in result.output

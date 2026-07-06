@@ -30,6 +30,7 @@ from job_scout.config import (
 from job_scout.database import Database
 from job_scout.llm.factory import build_raw_client_for_test, get_llm_client
 from job_scout.models import Config, JobListing
+from job_scout.notify.factory import build_raw_notifier_for_test
 from job_scout.scheduler import check_schedule_status, install_schedule, remove_schedule
 
 # Global registry for tracking run status
@@ -799,6 +800,60 @@ def create_app() -> FastAPI:
                 return {"ok": False, "message": err or "Provider not available"}
             return {"ok": True, "message": "Connection successful"}
         except LLMError as e:
+            return {"ok": False, "message": str(e)}
+        except Exception as exc:
+            return {"ok": False, "message": str(exc)}
+
+    @app.post("/api/notification/test-channel")
+    def test_notification_channel(body: dict[str, Any]) -> dict[str, Any]:
+        """Test a candidate notification channel configuration.
+
+        Args:
+            body: Request body with 'channel' and channel-specific settings.
+                For ntfy: ntfy_topic, ntfy_server (optional).
+                For email: smtp_host, smtp_port, smtp_from, smtp_to,
+                    smtp_username (optional), smtp_password (optional).
+                For slack: slack_webhook_url.
+                For discord: discord_webhook_url.
+
+        Returns:
+            Dictionary with 'ok' (bool) and 'message' (str).
+
+        Raises:
+            HTTPException: If parameters are invalid.
+        """
+        from job_scout.notify.base import NotificationError
+
+        channel = body.get("channel", "").strip()
+
+        if not channel:
+            raise HTTPException(status_code=400, detail="Channel is required")
+        if channel not in ("ntfy", "email", "slack", "discord"):
+            raise HTTPException(status_code=400, detail=f"Unknown channel: {channel}")
+
+        try:
+            kwargs: dict[str, object] = {}
+            if channel == "ntfy":
+                kwargs["ntfy_topic"] = body.get("ntfy_topic", "")
+                kwargs["ntfy_server"] = body.get("ntfy_server", "https://ntfy.sh")
+            elif channel == "email":
+                kwargs["smtp_host"] = body.get("smtp_host", "")
+                kwargs["smtp_port"] = body.get("smtp_port", 587)
+                kwargs["smtp_from"] = body.get("smtp_from", "")
+                kwargs["smtp_to"] = body.get("smtp_to", "")
+                kwargs["smtp_username"] = body.get("smtp_username", "")
+                kwargs["smtp_password"] = body.get("smtp_password", "")
+            elif channel == "slack":
+                kwargs["slack_webhook_url"] = body.get("slack_webhook_url", "")
+            elif channel == "discord":
+                kwargs["discord_webhook_url"] = body.get("discord_webhook_url", "")
+
+            notifier = build_raw_notifier_for_test(channel, **kwargs)
+            available, err = notifier.check_available()
+            if not available:
+                return {"ok": False, "message": err or "Channel not available"}
+            return {"ok": True, "message": "Channel configuration valid"}
+        except NotificationError as e:
             return {"ok": False, "message": str(e)}
         except Exception as exc:
             return {"ok": False, "message": str(exc)}

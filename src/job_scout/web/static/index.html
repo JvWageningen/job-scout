@@ -41,6 +41,7 @@
                 <button class="tab-btn" data-tab="profile">Profile & Filters</button>
                 <button class="tab-btn" data-tab="keywords">Keywords</button>
                 <button class="tab-btn" data-tab="sites">Custom Sites</button>
+                <button class="tab-btn" data-tab="notifications">Notifications</button>
                 <button class="tab-btn" data-tab="llm">LLM Settings</button>
                 <button class="tab-btn" data-tab="secrets">Secrets</button>
                 <button class="tab-btn" data-tab="schedule">Schedule</button>
@@ -297,6 +298,82 @@
                     </div>
                     <button type="submit" class="btn btn-primary">Add Site</button>
                 </form>
+            </section>
+
+            <!-- Notifications Section -->
+            <section id="notifications-section" class="section hidden tab-content" data-tab="notifications">
+                <h2>Notifications</h2>
+                <form id="notifications-form">
+                    <div class="form-group">
+                        <label for="notification-channel">Notification Channel:</label>
+                        <select id="notification-channel">
+                            <option value="ntfy">Ntfy.sh (Push Notifications)</option>
+                            <option value="email">Email (SMTP)</option>
+                            <option value="slack">Slack</option>
+                            <option value="discord">Discord</option>
+                        </select>
+                    </div>
+
+                    <!-- Ntfy Settings -->
+                    <div id="ntfy-settings" class="channel-settings">
+                        <h3>Ntfy.sh Settings</h3>
+                        <div class="form-group">
+                            <label for="ntfy-topic">Topic (user-scoped):</label>
+                            <input type="text" id="ntfy-topic" placeholder="e.g., job-scout-alerts">
+                        </div>
+                        <div class="form-group">
+                            <label for="ntfy-server">Server (global, read-only):</label>
+                            <input type="text" id="ntfy-server" readonly>
+                        </div>
+                    </div>
+
+                    <!-- Email Settings -->
+                    <div id="email-settings" class="channel-settings" style="display: none;">
+                        <h3>Email Settings</h3>
+                        <div class="form-group">
+                            <label for="smtp-to">Recipient Email (user-scoped):</label>
+                            <input type="email" id="smtp-to" placeholder="e.g., you@example.com">
+                        </div>
+                        <div class="form-group">
+                            <label for="smtp-host">SMTP Host (global, read-only):</label>
+                            <input type="text" id="smtp-host" readonly>
+                        </div>
+                        <div class="form-group">
+                            <label for="smtp-port">SMTP Port (global, read-only):</label>
+                            <input type="number" id="smtp-port" readonly>
+                        </div>
+                        <div class="form-group">
+                            <label for="smtp-from">From Address (global, read-only):</label>
+                            <input type="text" id="smtp-from" readonly>
+                        </div>
+                    </div>
+
+                    <!-- Slack Settings -->
+                    <div id="slack-settings" class="channel-settings" style="display: none;">
+                        <h3>Slack Settings</h3>
+                        <div class="form-group">
+                            <label for="slack-webhook-url">Webhook URL (user-scoped):</label>
+                            <input type="password" id="slack-webhook-url" placeholder="https://hooks.slack.com/services/...">
+                        </div>
+                    </div>
+
+                    <!-- Discord Settings -->
+                    <div id="discord-settings" class="channel-settings" style="display: none;">
+                        <h3>Discord Settings</h3>
+                        <div class="form-group">
+                            <label for="discord-webhook-url">Webhook URL (user-scoped):</label>
+                            <input type="password" id="discord-webhook-url" placeholder="https://discordapp.com/api/webhooks/...">
+                        </div>
+                    </div>
+
+                    <button type="submit" class="btn btn-primary">Save Notification Settings</button>
+                </form>
+
+                <h3>Test Channel</h3>
+                <div id="test-notification-form">
+                    <button type="button" id="test-notif-btn" class="btn btn-secondary">Test Notification</button>
+                    <div id="test-notif-result"></div>
+                </div>
             </section>
 
             <!-- LLM Settings Section -->

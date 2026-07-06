@@ -38,7 +38,7 @@ from job_scout.evaluator import (
 from job_scout.llm.base import LLMClient, LLMError
 from job_scout.llm.factory import get_llm_client
 from job_scout.models import Config, JobListing, JobStatus, RunStats
-from job_scout.notifier import send_notification
+from job_scout.notify import NotificationError, get_notifier
 from job_scout.scheduler import (
     check_schedule_status,
     install_schedule,
@@ -513,35 +513,47 @@ def _run_quick_eval(
 def _send_notifications(
     matched: list[JobListing], db: Database, config: Config, dry_run: bool
 ) -> int:
-    """Send ntfy notifications for matched jobs and retry pending ones.
+    """Send notifications for matched jobs and retry pending ones.
 
     Args:
         matched: Newly matched jobs to notify about.
         db: Database for updating notification state.
-        config: Application configuration with ntfy settings.
+        config: Application configuration with notification settings.
         dry_run: Skip actual sending if True.
 
     Returns:
         Number of notifications successfully sent.
     """
     sent = 0
+    try:
+        notifier = get_notifier(config)
+    except NotificationError as e:
+        logger.warning(f"Notification channel not available: {e}")
+        return 0
+
     for job in matched:
         if dry_run:
             click.echo(
                 f"[DRY RUN] Would notify: {job.title} @ {job.company} ({job.fit_score})"
             )
             continue
-        if send_notification(job, config):
+        try:
+            notifier.send(job)
             if job.id:
                 db.mark_notified(job.id)
             sent += 1
-        elif job.id:
-            db.mark_notification_pending(job.id)
+        except NotificationError:
+            if job.id:
+                db.mark_notification_pending(job.id)
     if not dry_run:
         for pending in db.get_pending_notifications():
-            if send_notification(pending, config) and pending.id:
-                db.mark_notified(pending.id)
-                sent += 1
+            try:
+                notifier.send(pending)
+                if pending.id:
+                    db.mark_notified(pending.id)
+                    sent += 1
+            except NotificationError:
+                pass
     return sent
 
 

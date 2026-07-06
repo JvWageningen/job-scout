@@ -41,6 +41,9 @@ GLOBAL_FIELDS: frozenset[str] = frozenset(
         "keywords_provider",
         "cv_parsing_provider",
         "ntfy_server",
+        "smtp_host",
+        "smtp_port",
+        "smtp_from",
         "max_jobs_per_source",
         "llm_max_attempts",
         "llm_retry_base_delay",
@@ -54,6 +57,8 @@ SECRET_FIELDS: frozenset[str] = frozenset(
         "ns_api_key",
         "local_api_key",
         "dashboard_token",
+        "smtp_username",
+        "smtp_password",
     }
 )
 
@@ -223,6 +228,8 @@ def load_secrets() -> dict[str, Any]:
         "JOB_SCOUT_NS_API_KEY": "ns_api_key",
         "JOB_SCOUT_LOCAL_API_KEY": "local_api_key",
         "JOB_SCOUT_DASHBOARD_TOKEN": "dashboard_token",
+        "JOB_SCOUT_SMTP_USERNAME": "smtp_username",
+        "JOB_SCOUT_SMTP_PASSWORD": "smtp_password",
     }
     for env_key, field in env_map.items():
         val = os.environ.get(env_key)
