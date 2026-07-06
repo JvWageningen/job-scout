@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class TravelMode(StrEnum):
@@ -145,7 +145,45 @@ class Config(BaseModel):
     max_parallel_evaluations: int = 5
     jobspy_keyword_limit: int = Field(default=5, ge=1, le=20)
     nvb_keyword_limit: int = Field(default=3, ge=1, le=20)
+    jobspy_sites: list[str] = Field(
+        default_factory=lambda: ["indeed", "linkedin"],
+        description="Job sources to scrape via jobspy",
+    )
     custom_sites: list[CustomSite] = Field(default_factory=list)
+
+    @field_validator("jobspy_sites", mode="before")
+    @classmethod
+    def validate_jobspy_sites(cls, v: list[str]) -> list[str]:
+        """Validate that jobspy_sites contains only supported site names.
+
+        Args:
+            v: List of site names to validate.
+
+        Returns:
+            Validated list of site names.
+
+        Raises:
+            ValueError: If any site name is not supported by jobspy.
+        """
+        valid_sites = {
+            "linkedin",
+            "indeed",
+            "zip_recruiter",
+            "glassdoor",
+            "google",
+            "bayt",
+            "naukri",
+            "bdjobs",
+        }
+        if not isinstance(v, list):
+            raise ValueError("jobspy_sites must be a list")
+        invalid_sites = [site for site in v if site not in valid_sites]
+        if invalid_sites:
+            raise ValueError(
+                f"Invalid jobspy sites: {invalid_sites}. "
+                f"Valid options are: {sorted(valid_sites)}"
+            )
+        return v
 
 
 class KeywordsResult(BaseModel):

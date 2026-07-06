@@ -560,6 +560,12 @@ async function loadProfileData() {
         document.getElementById('vacation-days').value = config.min_vacation_days ?? '';
         document.getElementById('jobspy-keyword-limit').value = config.jobspy_keyword_limit ?? 5;
         document.getElementById('nvb-keyword-limit').value = config.nvb_keyword_limit ?? 3;
+
+        // Load jobspy sites
+        const jobspySites = config.jobspy_sites || ['indeed', 'linkedin'];
+        document.querySelectorAll('input[name="jobspy-sites"]').forEach((checkbox) => {
+            checkbox.checked = jobspySites.includes(checkbox.value);
+        });
     } catch (error) {
         console.error('Error loading profile data:', error);
     }
@@ -573,6 +579,11 @@ async function saveProfile() {
         alert('Please select a user first');
         return;
     }
+
+    // Collect checked jobspy sites
+    const jobspySites = Array.from(document.querySelectorAll('input[name="jobspy-sites"]:checked')).map(
+        (checkbox) => checkbox.value
+    );
 
     const values = {
         profile_description: document.getElementById('profile-desc').value,
@@ -588,6 +599,7 @@ async function saveProfile() {
         min_vacation_days: document.getElementById('vacation-days').value,
         jobspy_keyword_limit: document.getElementById('jobspy-keyword-limit').value,
         nvb_keyword_limit: document.getElementById('nvb-keyword-limit').value,
+        jobspy_sites: jobspySites.length > 0 ? jobspySites : ['indeed', 'linkedin'],
     };
     for (const key of Object.keys(values)) {
         if (values[key] === '') {

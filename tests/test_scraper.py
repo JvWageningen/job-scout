@@ -350,3 +350,48 @@ def test_scrape_all_jobs_respects_nvb_keyword_limit(
     assert len(scraped_jobspy_keywords) == 1
     # Verify that only nvb_keyword_limit keywords were used for nvb
     assert len(scraped_nvb_keywords) == 2
+
+
+def test_scrape_jobspy_uses_config_sites(monkeypatch: pytest.MonkeyPatch) -> None:
+    """_scrape_jobspy uses config.jobspy_sites in scrape_jobs call."""
+    from job_scout.models import Config
+    from job_scout.scraper import _scrape_jobspy
+
+    captured_call = {}
+
+    def mock_scrape_jobs(**kwargs: dict) -> object:  # type: ignore
+        captured_call.update(kwargs)
+        # Return empty DataFrame to avoid processing
+        import pandas as pd
+
+        return pd.DataFrame()
+
+    monkeypatch.setattr("jobspy.scrape_jobs", mock_scrape_jobs)
+
+    config = Config(jobspy_sites=["indeed", "glassdoor"])
+    _scrape_jobspy("test keyword", config)
+
+    # Verify that site_name was set to config.jobspy_sites
+    assert captured_call.get("site_name") == ["indeed", "glassdoor"]
+
+
+def test_scrape_jobspy_uses_default_sites(monkeypatch: pytest.MonkeyPatch) -> None:
+    """_scrape_jobspy uses default sites when not configured."""
+    from job_scout.models import Config
+    from job_scout.scraper import _scrape_jobspy
+
+    captured_call = {}
+
+    def mock_scrape_jobs(**kwargs: dict) -> object:  # type: ignore
+        captured_call.update(kwargs)
+        import pandas as pd
+
+        return pd.DataFrame()
+
+    monkeypatch.setattr("jobspy.scrape_jobs", mock_scrape_jobs)
+
+    config = Config()  # Uses default sites
+    _scrape_jobspy("test keyword", config)
+
+    # Verify that site_name was set to defaults
+    assert captured_call.get("site_name") == ["indeed", "linkedin"]

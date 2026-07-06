@@ -361,7 +361,7 @@ def _normalize_date(val: Any) -> datetime | None:
 
 
 def _scrape_jobspy(keyword: str, config: Config) -> list[JobListing]:
-    """Scrape Indeed.nl and LinkedIn via python-jobspy.
+    """Scrape job sites via python-jobspy using configured sources.
 
     Args:
         keyword: Search term.
@@ -374,9 +374,9 @@ def _scrape_jobspy(keyword: str, config: Config) -> list[JobListing]:
         import pandas as pd
         from jobspy import scrape_jobs
 
-        logger.info(f"[jobspy] Scraping '{keyword}'")
+        logger.info(f"[jobspy] Scraping '{keyword}' from {config.jobspy_sites}")
         df = scrape_jobs(
-            site_name=["indeed", "linkedin"],
+            site_name=config.jobspy_sites,
             search_term=keyword,
             location="Netherlands",
             results_wanted=min(config.max_jobs_per_source, 50),

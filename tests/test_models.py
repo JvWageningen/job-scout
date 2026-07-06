@@ -199,6 +199,56 @@ def test_travel_time_error_field() -> None:
     assert tt.available is False
 
 
+def test_config_jobspy_sites_defaults() -> None:
+    """Config.jobspy_sites defaults to indeed and linkedin."""
+    config = Config()
+    assert config.jobspy_sites == ["indeed", "linkedin"]
+
+
+def test_config_jobspy_sites_custom() -> None:
+    """Config.jobspy_sites accepts custom site lists."""
+    config = Config(jobspy_sites=["indeed", "glassdoor", "zip_recruiter"])
+    assert config.jobspy_sites == ["indeed", "glassdoor", "zip_recruiter"]
+
+
+def test_config_jobspy_sites_valid() -> None:
+    """Config.jobspy_sites validates against known site names."""
+    config = Config(
+        jobspy_sites=[
+            "indeed",
+            "linkedin",
+            "glassdoor",
+            "zip_recruiter",
+            "google",
+            "bayt",
+            "naukri",
+            "bdjobs",
+        ]
+    )
+    assert len(config.jobspy_sites) == 8
+
+
+def test_config_jobspy_sites_invalid() -> None:
+    """Config.jobspy_sites rejects invalid site names."""
+    with pytest.raises(ValidationError):
+        Config(jobspy_sites=["indeed", "invalid_site"])
+
+
+def test_config_jobspy_sites_multiple_invalid() -> None:
+    """Config.jobspy_sites reports all invalid site names."""
+    with pytest.raises(ValidationError) as exc_info:
+        Config(jobspy_sites=["indeed", "fake1", "fake2"])
+    error_msg = str(exc_info.value)
+    assert "fake1" in error_msg
+    assert "fake2" in error_msg
+
+
+def test_config_jobspy_sites_empty_list() -> None:
+    """Config.jobspy_sites accepts empty lists."""
+    config = Config(jobspy_sites=[])
+    assert config.jobspy_sites == []
+
+
 def test_run_stats_error_list_grows() -> None:
     """RunStats.errors accumulates error messages."""
     stats = RunStats()
