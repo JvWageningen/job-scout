@@ -1646,3 +1646,110 @@ class TestTokenAuthentication:
 
         response = client.get("/style.css")
         assert response.status_code == 200
+
+
+class TestJobStatusUpdate:
+    """Tests for POST /api/jobs/{job_id}/status endpoint."""
+
+    def test_update_job_status_missing_user(self, client: TestClient) -> None:
+        """Updating job status without user parameter fails."""
+        response = client.post(
+            "/api/jobs/1/status",
+            json={"status": "viewed"},
+        )
+        assert response.status_code == 400
+        assert "user is required" in response.json()["detail"]
+
+    def test_update_job_status_invalid_user(self, client: TestClient) -> None:
+        """Updating job status for nonexistent user fails."""
+        response = client.post(
+            "/api/jobs/1/status",
+            json={"status": "viewed", "user": "nonexistent"},
+        )
+        assert response.status_code == 404
+
+    def test_update_job_status_missing_status(
+        self, client: TestClient, test_user: str
+    ) -> None:
+        """Updating job status without status parameter fails."""
+        response = client.post(
+            "/api/jobs/1/status",
+            json={"user": test_user},
+        )
+        assert response.status_code == 400
+        assert "status is required" in response.json()["detail"]
+
+    def test_update_job_status_invalid_status(
+        self, client: TestClient, test_user: str
+    ) -> None:
+        """Updating job status with invalid status value fails."""
+        response = client.post(
+            "/api/jobs/1/status",
+            json={"status": "invalid_status", "user": test_user},
+        )
+        assert response.status_code == 400
+        assert "Invalid status" in response.json()["detail"]
+
+    def test_update_job_status_nonexistent_job(
+        self, client: TestClient, test_user: str
+    ) -> None:
+        """Updating status of nonexistent job fails."""
+        response = client.post(
+            "/api/jobs/9999/status",
+            json={"status": "viewed", "user": test_user},
+        )
+        assert response.status_code == 400
+        assert "Invalid status transition or job not found" in response.json()["detail"]
+
+    def test_update_job_status_valid_transition(
+        self, client: TestClient, test_user: str, sample_job: JobListing
+    ) -> None:
+        """Updating job status with valid transition succeeds."""
+        from job_scout.config import user_db_path
+        from job_scout.database import Database
+
+        # Create a job
+        db = Database(user_db_path(test_user))
+        job = sample_job.model_copy(update={"status": JobStatus.NEW})
+        job_id = db.save_job(job)
+
+        # Update status
+        response = client.post(
+            f"/api/jobs/{job_id}/status",
+            json={"status": "viewed", "user": test_user},
+        )
+        assert response.status_code == 200
+        assert "status updated" in response.json()["message"].lower()
+
+        # Verify in database
+        jobs = db.get_jobs_by_status(JobStatus.VIEWED)
+        assert len(jobs) == 1
+        assert jobs[0].id == job_id
+
+    def test_update_job_status_with_notes(
+        self, client: TestClient, test_user: str, sample_job: JobListing
+    ) -> None:
+        """Updating job status with notes saves the notes."""
+        from job_scout.config import user_db_path
+        from job_scout.database import Database
+
+        # Create a job
+        db = Database(user_db_path(test_user))
+        job = sample_job.model_copy(update={"status": JobStatus.NEW})
+        job_id = db.save_job(job)
+
+        # Update status with notes
+        response = client.post(
+            f"/api/jobs/{job_id}/status",
+            json={
+                "status": "viewed",
+                "notes": "Very interesting opportunity",
+                "user": test_user,
+            },
+        )
+        assert response.status_code == 200
+
+        # Verify notes are saved
+        jobs = db.get_jobs_by_status(JobStatus.VIEWED)
+        assert len(jobs) == 1
+        assert jobs[0].notes == "Very interesting opportunity"
