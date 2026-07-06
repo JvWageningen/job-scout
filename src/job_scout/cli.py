@@ -231,19 +231,21 @@ def _passes_compensation_filter(job: JobListing, config: Config) -> bool:
 def _calculate_travel_for_job(
     job: JobListing,
     config: Config,
+    db: Database | None = None,
 ) -> JobListing:
     """Calculate travel times for a single job (for parallel execution).
 
     Args:
         job: Job to calculate travel times for.
         config: Application configuration.
+        db: Optional database for caching travel time and geocode results.
 
     Returns:
         Job with travel_times, location_unknown, and distance_km populated.
     """
     if job.location:
         travel_times, location_unknown, distance = calculate_travel_times(
-            job.location, config
+            job.location, config, db
         )
         job.travel_times = travel_times
         job.location_unknown = location_unknown
@@ -344,7 +346,7 @@ def _process_jobs(
 
         def calculate_travel(job: JobListing) -> JobListing:
             """Helper to calculate travel times for a single job."""
-            return _calculate_travel_for_job(job, config)
+            return _calculate_travel_for_job(job, config, db)
 
         with ThreadPoolExecutor(max_workers=travel_workers) as travel_executor:
             # Submit all travel time calculation tasks

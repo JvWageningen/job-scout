@@ -711,3 +711,124 @@ def test_run_stats_with_zero_errors(tmp_db: Database) -> None:
     history = tmp_db.get_run_history(limit=1)
     assert len(history) == 1
     assert history[0].errors == 0
+
+
+def test_geocode_cache_save_and_retrieve(tmp_db: Database) -> None:
+    """Geocode cache stores and retrieves coordinates by normalized address."""
+    address = "Amsterdam, Netherlands"
+    lat, lon = 52.3676, 4.9041
+
+    tmp_db.save_geocode_cache(address, lat, lon)
+
+    # Retrieve with same address
+    result = tmp_db.get_cached_geocode(address, cache_days=90)
+    assert result is not None
+    assert result[0] == lon  # Returns (lon, lat)
+    assert result[1] == lat
+
+
+def test_geocode_cache_normalization(tmp_db: Database) -> None:
+    """Geocode cache key normalizes addresses (whitespace, case)."""
+    address1 = "Amsterdam, Netherlands"
+    address2 = "AMSTERDAM,   NETHERLANDS"
+    lat, lon = 52.3676, 4.9041
+
+    tmp_db.save_geocode_cache(address1, lat, lon)
+
+    # Should retrieve with differently-formatted address
+    result = tmp_db.get_cached_geocode(address2, cache_days=90)
+    assert result is not None
+    assert result == (lon, lat)
+
+
+def test_geocode_cache_ttl_expired(tmp_db: Database) -> None:
+    """Expired geocode cache entries are not returned."""
+    address = "Berlin, Germany"
+    lat, lon = 52.5200, 13.4050
+
+    # Save the cache
+    tmp_db.save_geocode_cache(address, lat, lon)
+
+    # Should be retrievable with long TTL
+    result = tmp_db.get_cached_geocode(address, cache_days=90)
+    assert result is not None
+
+    # Should NOT be retrievable with 0-day TTL (i.e., immediately expired)
+    result = tmp_db.get_cached_geocode(address, cache_days=0)
+    assert result is None
+
+
+def test_geocode_cache_miss(tmp_db: Database) -> None:
+    """Geocode cache miss returns None."""
+    result = tmp_db.get_cached_geocode("NonexistentCity XYZ", cache_days=90)
+    assert result is None
+
+
+def test_travel_time_cache_save_and_retrieve(tmp_db: Database) -> None:
+    """Travel time cache stores and retrieves minutes by route key."""
+    origin = "52.3676,4.9041"
+    dest = "52.1326,5.2913"
+    mode = "car"
+    minutes = 45.5
+
+    tmp_db.save_travel_time_cache(origin, dest, mode, minutes)
+
+    result = tmp_db.get_cached_travel_time(origin, dest, mode, cache_days=14)
+    assert result == minutes
+
+
+def test_travel_time_cache_multiple_modes(tmp_db: Database) -> None:
+    """Travel time cache distinguishes between different transport modes."""
+    origin = "52.3676,4.9041"
+    dest = "52.1326,5.2913"
+
+    tmp_db.save_travel_time_cache(origin, dest, "car", 45.0)
+    tmp_db.save_travel_time_cache(origin, dest, "bike", 120.0)
+    tmp_db.save_travel_time_cache(origin, dest, "ns_public_transport", 60.0)
+
+    car_result = tmp_db.get_cached_travel_time(origin, dest, "car", 14)
+    bike_result = tmp_db.get_cached_travel_time(origin, dest, "bike", 14)
+    pt_result = tmp_db.get_cached_travel_time(origin, dest, "ns_public_transport", 14)
+
+    assert car_result == 45.0
+    assert bike_result == 120.0
+    assert pt_result == 60.0
+
+
+def test_travel_time_cache_ttl_expired(tmp_db: Database) -> None:
+    """Expired travel time cache entries are not returned."""
+    origin = "52.3676,4.9041"
+    dest = "52.1326,5.2913"
+    mode = "car"
+
+    tmp_db.save_travel_time_cache(origin, dest, mode, 45.0)
+
+    # Should be retrievable with long TTL
+    result = tmp_db.get_cached_travel_time(origin, dest, mode, cache_days=14)
+    assert result is not None
+
+    # Should NOT be retrievable with 0-day TTL
+    result = tmp_db.get_cached_travel_time(origin, dest, mode, cache_days=0)
+    assert result is None
+
+
+def test_travel_time_cache_miss(tmp_db: Database) -> None:
+    """Travel time cache miss returns None."""
+    result = tmp_db.get_cached_travel_time("1.0,1.0", "2.0,2.0", "car", 14)
+    assert result is None
+
+
+def test_travel_time_cache_replace_updates(tmp_db: Database) -> None:
+    """Updating an existing travel time cache entry updates the timestamp."""
+    origin = "52.3676,4.9041"
+    dest = "52.1326,5.2913"
+    mode = "car"
+
+    tmp_db.save_travel_time_cache(origin, dest, mode, 45.0)
+    result1 = tmp_db.get_cached_travel_time(origin, dest, mode, 14)
+    assert result1 == 45.0
+
+    # Update the same cache entry
+    tmp_db.save_travel_time_cache(origin, dest, mode, 50.0)
+    result2 = tmp_db.get_cached_travel_time(origin, dest, mode, 14)
+    assert result2 == 50.0

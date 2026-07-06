@@ -241,8 +241,123 @@ def test_calculate_travel_times_geocode_failure(
     """calculate_travel_times marks location unknown when geocoding fails."""
     from job_scout.travel import calculate_travel_times
 
-    monkeypatch.setattr("job_scout.travel._geocode", lambda _addr: None)
+    monkeypatch.setattr("job_scout.travel._geocode", lambda *_a, **_kw: None)
     times, unknown, distance = calculate_travel_times("Fake City XYZ", base_config)
     # Home geocode failed — no times returned
     assert times == []
     assert distance is None
+
+
+def test_geocode_cache_hit_skips_network(
+    base_config: Config, tmp_db, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Second geocode call with identical address uses cache and skips network."""
+    from unittest.mock import Mock
+
+    from job_scout.travel import _geocode
+
+    # Mock the HTTP request
+    mock_request = Mock()
+    call_count = 0
+
+    def mock_get(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        mock_request.return_value.json.return_value = [
+            {"lon": "4.9041", "lat": "52.3676"}
+        ]
+        mock_request.return_value.raise_for_status = Mock()
+        return mock_request.return_value
+
+    monkeypatch.setattr("job_scout.travel.requests.get", mock_get)
+
+    address = "Amsterdam, Netherlands"
+
+    # First call should hit the network
+    result1 = _geocode(address, tmp_db, cache_days=90)
+    assert result1 == (4.9041, 52.3676)
+    assert call_count == 1
+
+    # Second call should use cache, not hit network
+    result2 = _geocode(address, tmp_db, cache_days=90)
+    assert result2 == (4.9041, 52.3676)
+    assert call_count == 1  # Still 1, cache was used
+
+
+def test_travel_time_cache_hit_skips_network(
+    base_config: Config, tmp_db, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Second travel time call with identical route uses cache and skips network."""
+    from unittest.mock import Mock
+
+    from job_scout.travel import _get_osrm_time
+
+    # Mock the HTTP request
+    call_count = 0
+
+    def mock_get(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        resp = Mock()
+        resp.json.return_value = {
+            "code": "Ok",
+            "routes": [{"duration": 2700}],  # 45 minutes
+        }
+        resp.raise_for_status = Mock()
+        return resp
+
+    monkeypatch.setattr("job_scout.travel.requests.get", mock_get)
+
+    origin = (4.9041, 52.3676)
+    destination = (5.2913, 52.1326)
+
+    # First call should hit the network
+    result1 = _get_osrm_time(origin, destination, "driving", tmp_db, cache_days=14)
+    assert result1 == 45.0
+    assert call_count == 1
+
+    # Second call should use cache, not hit network
+    result2 = _get_osrm_time(origin, destination, "driving", tmp_db, cache_days=14)
+    assert result2 == 45.0
+    assert call_count == 1  # Still 1, cache was used
+
+
+def test_address_change_bypasses_geocode_cache(
+    base_config: Config, tmp_db, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Changing home address naturally bypasses geocode cache (different key)."""
+    from unittest.mock import Mock
+
+    from job_scout.travel import _geocode
+
+    call_count = 0
+
+    def mock_get(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        resp = Mock()
+        if call_count == 1:
+            # First address
+            resp.json.return_value = [{"lon": "4.9041", "lat": "52.3676"}]
+        else:
+            # Second address
+            resp.json.return_value = [{"lon": "13.4050", "lat": "52.5200"}]
+        resp.raise_for_status = Mock()
+        return resp
+
+    monkeypatch.setattr("job_scout.travel.requests.get", mock_get)
+
+    # First address
+    result1 = _geocode("Amsterdam, Netherlands", tmp_db, cache_days=90)
+    assert result1 == (4.9041, 52.3676)
+    assert call_count == 1
+
+    # Different address — cache miss, hits network
+    result2 = _geocode("Berlin, Germany", tmp_db, cache_days=90)
+    assert result2 == (13.4050, 52.5200)
+    assert call_count == 2
+
+    # Back to first address — uses cache
+    result3 = _geocode("Amsterdam, Netherlands", tmp_db, cache_days=90)
+    assert result3 == (4.9041, 52.3676)
+    assert call_count == 2  # Still 2, cache was used

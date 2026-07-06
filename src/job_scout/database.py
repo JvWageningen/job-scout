@@ -7,7 +7,7 @@ import json
 import sqlite3
 from collections.abc import Generator
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -134,6 +134,26 @@ class Database:
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_started_at ON runs(started_at DESC)"
             )
+            # Create geocode cache table
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS geocode_cache (
+                    normalized_address TEXT PRIMARY KEY,
+                    lat REAL NOT NULL,
+                    lon REAL NOT NULL,
+                    cached_at TEXT NOT NULL
+                )
+            """)
+            # Create travel time cache table
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS travel_time_cache (
+                    origin_key TEXT NOT NULL,
+                    destination_key TEXT NOT NULL,
+                    mode TEXT NOT NULL,
+                    minutes REAL NOT NULL,
+                    cached_at TEXT NOT NULL,
+                    PRIMARY KEY (origin_key, destination_key, mode)
+                )
+            """)
 
     def _backfill_dedup_keys(self, conn: sqlite3.Connection) -> None:
         """Populate dedup_key for rows written before the column existed.
@@ -671,3 +691,132 @@ class Database:
                 )
             )
         return entries
+
+    def get_cached_geocode(
+        self, address: str, cache_days: int
+    ) -> tuple[float, float] | None:
+        """Retrieve cached geocode for an address if still valid.
+
+        Args:
+            address: Address string to look up.
+            cache_days: Cache validity period in days.
+
+        Returns:
+            (lon, lat) tuple if cached and valid, None otherwise.
+        """
+        norm_addr = self._normalize_address(address)
+        with self._conn() as conn:
+            row = conn.execute(
+                """
+                SELECT lat, lon, cached_at FROM geocode_cache
+                WHERE normalized_address = ?
+                """,
+                (norm_addr,),
+            ).fetchone()
+
+        if not row:
+            return None
+
+        cached_at = datetime.fromisoformat(row[2])
+        age_days = (datetime.now(UTC) - cached_at).days
+        if age_days >= cache_days:
+            return None
+
+        return float(row[1]), float(row[0])  # (lon, lat)
+
+    def save_geocode_cache(self, address: str, lat: float, lon: float) -> None:
+        """Cache a geocoded address.
+
+        Args:
+            address: Original address string.
+            lat: Latitude.
+            lon: Longitude.
+        """
+        norm_addr = self._normalize_address(address)
+        with self._conn() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO geocode_cache
+                  (normalized_address, lat, lon, cached_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (norm_addr, lat, lon, datetime.now(UTC).isoformat()),
+            )
+
+    def get_cached_travel_time(
+        self, origin_key: str, destination_key: str, mode: str, cache_days: int
+    ) -> float | None:
+        """Retrieve cached travel time if still valid.
+
+        Args:
+            origin_key: Origin location key.
+            destination_key: Destination location key.
+            mode: Travel mode (e.g. 'car', 'bike', 'public_transport').
+            cache_days: Cache validity period in days.
+
+        Returns:
+            Travel time in minutes if cached and valid, None otherwise.
+        """
+        with self._conn() as conn:
+            row = conn.execute(
+                """
+                SELECT minutes, cached_at FROM travel_time_cache
+                WHERE origin_key = ? AND destination_key = ? AND mode = ?
+                """,
+                (origin_key, destination_key, mode),
+            ).fetchone()
+
+        if not row:
+            return None
+
+        cached_at = datetime.fromisoformat(row[1])
+        age_days = (datetime.now(UTC) - cached_at).days
+        if age_days >= cache_days:
+            return None
+
+        return float(row[0])
+
+    def save_travel_time_cache(
+        self,
+        origin_key: str,
+        destination_key: str,
+        mode: str,
+        minutes: float,
+    ) -> None:
+        """Cache a travel time result.
+
+        Args:
+            origin_key: Origin location key.
+            destination_key: Destination location key.
+            mode: Travel mode (e.g. 'car', 'bike', 'public_transport').
+            minutes: Travel time in minutes.
+        """
+        with self._conn() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO travel_time_cache
+                  (origin_key, destination_key, mode, minutes, cached_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    origin_key,
+                    destination_key,
+                    mode,
+                    minutes,
+                    datetime.now(UTC).isoformat(),
+                ),
+            )
+
+    @staticmethod
+    def _normalize_address(address: str) -> str:
+        """Normalize an address string for caching.
+
+        Lowercases and collapses whitespace to create a consistent key.
+
+        Args:
+            address: Address string to normalize.
+
+        Returns:
+            Normalized address key.
+        """
+        return " ".join(address.lower().split())

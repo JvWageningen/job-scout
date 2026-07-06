@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import math
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import requests
 from loguru import logger
 
 from job_scout.models import Config, TravelMode, TravelTime
+
+if TYPE_CHECKING:
+    from job_scout.database import Database
 
 NOMINATIM_BASE = "https://nominatim.openstreetmap.org"
 OSRM_BASE = "https://router.project-osrm.org/route/v1"
@@ -51,15 +54,28 @@ def _haversine_km(
     return _EARTH_RADIUS_KM * 2 * math.asin(math.sqrt(a))
 
 
-def _geocode(address: str) -> tuple[float, float] | None:
+def _geocode(
+    address: str,
+    db: Database | None = None,
+    cache_days: int = 90,
+) -> tuple[float, float] | None:
     """Geocode an address using Nominatim OSM. Returns (lon, lat) or None.
 
     Args:
         address: Human-readable address string.
+        db: Optional database for caching geocode results.
+        cache_days: Cache validity period in days (default 90).
 
     Returns:
         (longitude, latitude) tuple, or None if geocoding fails.
     """
+    # Check cache first
+    if db:
+        cached = db.get_cached_geocode(address, cache_days)
+        if cached is not None:
+            logger.debug(f"Geocode cache hit for '{address}'")
+            return cached
+
     try:
         resp = requests.get(
             f"{NOMINATIM_BASE}/search",
@@ -70,7 +86,12 @@ def _geocode(address: str) -> tuple[float, float] | None:
         resp.raise_for_status()
         results: list[dict[str, str]] = resp.json()
         if results:
-            return float(results[0]["lon"]), float(results[0]["lat"])
+            lon = float(results[0]["lon"])
+            lat = float(results[0]["lat"])
+            # Save to cache
+            if db:
+                db.save_geocode_cache(address, lat, lon)
+            return lon, lat
     except requests.RequestException as e:
         logger.warning(f"Geocoding failed for '{address}': {e}")
     return None
@@ -80,6 +101,8 @@ def _get_osrm_time(
     origin: tuple[float, float],
     destination: tuple[float, float],
     profile: str,
+    db: Database | None = None,
+    cache_days: int = 14,
 ) -> float | None:
     """Get travel time in minutes from the free OSRM public server.
 
@@ -87,10 +110,24 @@ def _get_osrm_time(
         origin: (lon, lat) of origin.
         destination: (lon, lat) of destination.
         profile: OSRM profile ('driving' or 'bike').
+        db: Optional database for caching travel time results.
+        cache_days: Cache validity period in days (default 14).
 
     Returns:
         Travel time in minutes, or None on failure.
     """
+    # Build cache keys
+    origin_key = f"{origin[0]},{origin[1]}"
+    dest_key = f"{destination[0]},{destination[1]}"
+    mode_key = f"osrm_{profile}"
+
+    # Check cache first
+    if db:
+        cached = db.get_cached_travel_time(origin_key, dest_key, mode_key, cache_days)
+        if cached is not None:
+            logger.debug(f"Travel time cache hit (OSRM {profile})")
+            return cached
+
     coords = f"{origin[0]},{origin[1]};{destination[0]},{destination[1]}"
     try:
         resp = requests.get(
@@ -104,7 +141,11 @@ def _get_osrm_time(
         if data.get("code") != "Ok":
             return None
         duration_s: float = data["routes"][0]["duration"]
-        return round(duration_s / 60, 1)
+        minutes = round(duration_s / 60, 1)
+        # Save to cache
+        if db:
+            db.save_travel_time_cache(origin_key, dest_key, mode_key, minutes)
+        return minutes
     except requests.RequestException as e:
         logger.warning(f"OSRM '{profile}' request failed: {e}")
     except (KeyError, IndexError) as e:
@@ -117,6 +158,8 @@ def _get_ors_time(
     destination: tuple[float, float],
     profile: str,
     api_key: str,
+    db: Database | None = None,
+    cache_days: int = 14,
 ) -> float | None:
     """Get travel time in minutes from OpenRouteService.
 
@@ -125,10 +168,24 @@ def _get_ors_time(
         destination: (lon, lat) of destination.
         profile: ORS routing profile (e.g. 'driving-car').
         api_key: OpenRouteService API key.
+        db: Optional database for caching travel time results.
+        cache_days: Cache validity period in days (default 14).
 
     Returns:
         Travel time in minutes, or None on failure.
     """
+    # Build cache keys
+    origin_key = f"{origin[0]},{origin[1]}"
+    dest_key = f"{destination[0]},{destination[1]}"
+    mode_key = f"ors_{profile}"
+
+    # Check cache first
+    if db:
+        cached = db.get_cached_travel_time(origin_key, dest_key, mode_key, cache_days)
+        if cached is not None:
+            logger.debug(f"Travel time cache hit (ORS {profile})")
+            return cached
+
     try:
         resp = requests.post(
             f"{ORS_BASE}/directions/{profile}",
@@ -139,7 +196,11 @@ def _get_ors_time(
         resp.raise_for_status()
         data: dict[str, Any] = resp.json()
         duration_s: float = data["routes"][0]["summary"]["duration"]
-        return round(duration_s / 60, 1)
+        minutes = round(duration_s / 60, 1)
+        # Save to cache
+        if db:
+            db.save_travel_time_cache(origin_key, dest_key, mode_key, minutes)
+        return minutes
     except requests.RequestException as e:
         logger.warning(f"ORS '{profile}' request failed: {e}")
     except (KeyError, IndexError) as e:
@@ -151,6 +212,8 @@ def _get_ns_time(
     origin: tuple[float, float],
     destination: tuple[float, float],
     api_key: str,
+    db: Database | None = None,
+    cache_days: int = 14,
 ) -> float | None:
     """Get public transport travel time in minutes from NS Journey Planner.
 
@@ -158,10 +221,24 @@ def _get_ns_time(
         origin: (lon, lat) of origin.
         destination: (lon, lat) of destination.
         api_key: NS API subscription key.
+        db: Optional database for caching travel time results.
+        cache_days: Cache validity period in days (default 14).
 
     Returns:
         Travel time in minutes, or None on failure.
     """
+    # Build cache keys
+    origin_key = f"{origin[0]},{origin[1]}"
+    dest_key = f"{destination[0]},{destination[1]}"
+    mode_key = "ns_public_transport"
+
+    # Check cache first
+    if db:
+        cached = db.get_cached_travel_time(origin_key, dest_key, mode_key, cache_days)
+        if cached is not None:
+            logger.debug("Travel time cache hit (NS public transport)")
+            return cached
+
     try:
         resp = requests.get(
             f"{NS_BASE}/trips",
@@ -181,7 +258,11 @@ def _get_ns_time(
         trips: list[dict[str, Any]] = resp.json().get("trips", [])
         if not trips:
             return None
-        return _parse_ns_duration(trips[0])
+        minutes = _parse_ns_duration(trips[0])
+        # Save to cache if we got a result
+        if minutes is not None and db:
+            db.save_travel_time_cache(origin_key, dest_key, mode_key, minutes)
+        return minutes
     except requests.RequestException as e:
         logger.warning(f"NS API request failed: {e}")
     except (KeyError, IndexError) as e:
@@ -234,14 +315,17 @@ def is_remote_location(location: str) -> bool:
 def calculate_travel_times(
     job_location: str,
     config: Config,
+    db: Database | None = None,
 ) -> tuple[list[TravelTime], bool, float | None]:
     """Calculate travel times from home to the job location.
 
     Parallelizes car/bike routing and public transport API calls.
+    Results are cached per-user to avoid repeated network calls.
 
     Args:
         job_location: Location string from the job listing.
         config: Application configuration with API keys and home address.
+        db: Optional database for caching geocode and travel time results.
 
     Returns:
         Tuple of (travel_times list, location_unknown flag, distance_km).
@@ -250,12 +334,12 @@ def calculate_travel_times(
         logger.info(f"Remote/vague location '{job_location}' — skipping travel time")
         return [], True, None
 
-    home_coords = _geocode(config.home_address)
+    home_coords = _geocode(config.home_address, db, config.geocode_cache_days)
     if not home_coords:
         logger.warning(f"Could not geocode home address: {config.home_address}")
         return [], False, None
 
-    job_coords = _geocode(job_location)
+    job_coords = _geocode(job_location, db, config.geocode_cache_days)
     if not job_coords:
         logger.info(f"Could not geocode '{job_location}' — marking location unknown")
         return [], True, None
@@ -268,9 +352,15 @@ def calculate_travel_times(
 
     with ThreadPoolExecutor(max_workers=2) as executor:
         future_car_bike = executor.submit(
-            _car_bike_travel_times, home_coords, job_coords, config
+            _car_bike_travel_times,
+            home_coords,
+            job_coords,
+            config,
+            db,
         )
-        future_ns = executor.submit(_ns_travel_time, home_coords, job_coords, config)
+        future_ns = executor.submit(
+            _ns_travel_time, home_coords, job_coords, config, db
+        )
 
         travel_times.extend(future_car_bike.result())
         travel_times.append(future_ns.result())
@@ -282,6 +372,7 @@ def _car_bike_travel_times(
     home: tuple[float, float],
     job: tuple[float, float],
     config: Config,
+    db: Database | None = None,
 ) -> list[TravelTime]:
     """Build car and bike TravelTime objects via OSRM (free) or ORS.
 
@@ -292,6 +383,7 @@ def _car_bike_travel_times(
         home: Home coordinates (lon, lat).
         job: Job coordinates (lon, lat).
         config: Application configuration.
+        db: Optional database for caching travel time results.
 
     Returns:
         List of TravelTime for CAR and BIKE modes.
@@ -301,8 +393,22 @@ def _car_bike_travel_times(
     bike_min = None
 
     with ThreadPoolExecutor(max_workers=2) as executor:
-        future_car = executor.submit(_get_osrm_time, home, job, "driving")
-        future_bike = executor.submit(_get_osrm_time, home, job, "bike")
+        future_car = executor.submit(
+            _get_osrm_time,
+            home,
+            job,
+            "driving",
+            db,
+            config.travel_cache_days,
+        )
+        future_bike = executor.submit(
+            _get_osrm_time,
+            home,
+            job,
+            "bike",
+            db,
+            config.travel_cache_days,
+        )
 
         car_min = future_car.result()
         bike_min = future_bike.result()
@@ -310,9 +416,23 @@ def _car_bike_travel_times(
     # Fallback to ORS if configured and OSRM failed
     if config.ors_api_key:
         if car_min is None:
-            car_min = _get_ors_time(home, job, "driving-car", config.ors_api_key)
+            car_min = _get_ors_time(
+                home,
+                job,
+                "driving-car",
+                config.ors_api_key,
+                db,
+                config.travel_cache_days,
+            )
         if bike_min is None:
-            bike_min = _get_ors_time(home, job, "cycling-regular", config.ors_api_key)
+            bike_min = _get_ors_time(
+                home,
+                job,
+                "cycling-regular",
+                config.ors_api_key,
+                db,
+                config.travel_cache_days,
+            )
     return [
         TravelTime(
             mode=TravelMode.CAR,
@@ -333,6 +453,7 @@ def _ns_travel_time(
     home: tuple[float, float],
     job: tuple[float, float],
     config: Config,
+    db: Database | None = None,
 ) -> TravelTime:
     """Build a public transport TravelTime object via NS API.
 
@@ -340,6 +461,7 @@ def _ns_travel_time(
         home: Home coordinates (lon, lat).
         job: Job coordinates (lon, lat).
         config: Application configuration.
+        db: Optional database for caching travel time results.
 
     Returns:
         TravelTime for PUBLIC_TRANSPORT mode.
@@ -350,7 +472,7 @@ def _ns_travel_time(
             mode=TravelMode.PUBLIC_TRANSPORT, available=False, error="No NS API key"
         )
 
-    pt_min = _get_ns_time(home, job, config.ns_api_key)
+    pt_min = _get_ns_time(home, job, config.ns_api_key, db, config.travel_cache_days)
     return TravelTime(
         mode=TravelMode.PUBLIC_TRANSPORT,
         minutes=pt_min,

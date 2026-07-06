@@ -142,6 +142,8 @@ uv run job-scout config set min_salary 3000 --user alex
 | `max_travel_pt` | `60` | Max public transport time (minutes; requires NS key) |
 | `max_travel_bike` | `45` | Max bike travel time (minutes; requires ORS key) |
 | `max_distance_km` | — | Max straight-line distance in km (no API key needed) |
+| `geocode_cache_days` | `90` | Cache validity for geocoded addresses (days) |
+| `travel_cache_days` | `14` | Cache validity for travel time results (days) |
 | `fit_score_threshold` | `60` | Minimum fit score (0–100) |
 | `quick_eval_threshold` | `40` | Quick evaluation minimum score |
 | `min_salary` | — | Minimum gross monthly salary (EUR) |

@@ -152,6 +152,8 @@ class Config(BaseModel):
     )
     custom_sites: list[CustomSite] = Field(default_factory=list)
     dashboard_token: str | None = None
+    geocode_cache_days: int = 90
+    travel_cache_days: int = 14
 
     @field_validator("jobspy_sites", mode="before")
     @classmethod
