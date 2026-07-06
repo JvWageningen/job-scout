@@ -6,7 +6,7 @@ import secrets
 import threading
 from datetime import datetime
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -254,6 +254,63 @@ def create_app() -> FastAPI:
             )
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc  # noqa: B904
+
+    @app.get("/api/jobs/export")
+    def export_jobs(
+        user: str | None = None,
+        format: str = Query("json", pattern="^(csv|json)$"),
+        status: str = Query("all", pattern="^(all|matched|rejected)$"),
+    ) -> str | list[dict[str, Any]]:
+        """Export jobs in CSV or JSON format.
+
+        Args:
+            user: User name (required).
+            format: Export format ('csv' or 'json', default 'json').
+            status: Job status filter ('all', 'matched', or 'rejected',
+                default 'all').
+
+        Returns:
+            CSV string or JSON-formatted job list.
+
+        Raises:
+            HTTPException: If user is not provided or not found.
+        """
+        from job_scout.exporter import JobExporter
+
+        if not user:
+            raise HTTPException(status_code=400, detail="User is required")
+        if user not in list_users():
+            raise HTTPException(status_code=404, detail=f"User '{user}' not found")
+
+        try:
+            db_path = user_db_path(user)
+            if not db_path.exists():
+                return []
+
+            db = Database(db_path)
+
+            # Get jobs based on status filter
+            if status == "matched":
+                jobs = db.get_recent_matches(limit=10000)
+            elif status == "rejected":
+                jobs = db.get_rejected_jobs(limit=10000)
+            else:  # all
+                jobs = db.get_all_jobs()
+
+            # Export to requested format
+            format_literal = cast(Literal["csv", "json"], format)
+            content = JobExporter.export(jobs, format=format_literal)
+
+            if format == "csv":
+                # Return CSV as plain text
+                return content
+            else:
+                # Return JSON as parsed list
+                import json
+
+                return cast(list[dict[str, Any]], json.loads(content))
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     @app.get("/api/runs/history")
     def get_runs_history(

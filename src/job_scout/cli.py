@@ -7,7 +7,7 @@ import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import click
 from loguru import logger
@@ -1124,6 +1124,72 @@ def _print_rejected_job(job: JobListing) -> None:
         else:
             click.echo("Reason:  Travel, salary, or vacation filter")
     click.echo(f"URL:     {job.url}")
+
+
+@jobs.command("export")
+@click.option(
+    "--format",
+    type=click.Choice(["csv", "json"]),
+    default="json",
+    show_default=True,
+    help="Export format",
+)
+@click.option(
+    "--status",
+    type=click.Choice(["all", "matched", "rejected"]),
+    default="all",
+    show_default=True,
+    help="Job status filter",
+)
+@click.option(
+    "--output",
+    "output_file",
+    type=click.Path(),
+    default=None,
+    help="Output file (default: stdout)",
+)
+@click.option("--user", "user_name", default=None, help="User whose jobs to export")
+def jobs_export(
+    format: str,
+    status: str,
+    output_file: str | None,
+    user_name: str | None,
+) -> None:
+    """Export jobs to CSV or JSON format.
+
+    Args:
+        format: Export format (csv or json).
+        status: Job status filter (all, matched, or rejected).
+        output_file: Output file path (optional).
+        user_name: User whose jobs to export (optional).
+    """
+    from job_scout.exporter import JobExporter
+
+    target = _require_single_user(user_name)
+    db = Database(user_db_path(target))
+
+    # Get jobs based on status filter
+    if status == "matched":
+        jobs = db.get_recent_matches(limit=10000)
+    elif status == "rejected":
+        jobs = db.get_rejected_jobs(limit=10000)
+    else:  # all
+        jobs = db.get_all_jobs()
+
+    if not jobs:
+        click.echo("No jobs to export.")
+        return
+
+    # Export to requested format
+    content = JobExporter.export(jobs, format=cast(Literal["csv", "json"], format))
+
+    # Output to file or stdout
+    if output_file:
+        output_path = Path(output_file)
+        output_path.write_text(content)
+        click.echo(f"Exported {len(jobs)} jobs to {output_path.absolute()}")
+    else:
+        click.echo(content)
 
 
 @cli.group()

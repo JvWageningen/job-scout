@@ -646,6 +646,17 @@ class Database:
             rows = conn.execute(sql, params).fetchall()
         return [self._row_to_job(r) for r in rows]
 
+    def get_all_jobs(self) -> list[JobListing]:
+        """Return all jobs in the database.
+
+        Returns:
+            List of all JobListing instances.
+        """
+        with self._conn() as conn:
+            sql = "SELECT * FROM jobs ORDER BY seen_at DESC"
+            rows = conn.execute(sql).fetchall()
+        return [self._row_to_job(r) for r in rows]
+
     def _row_to_job(self, row: sqlite3.Row) -> JobListing:
         """Convert a database row to a JobListing.
 
