@@ -45,7 +45,7 @@ jobs:
 
       - name: Python Semantic Release
         id: release
-        uses: python-semantic-release/python-semantic-release@v9
+        uses: python-semantic-release/python-semantic-release@v10.6.1
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
 
@@ -56,7 +56,7 @@ jobs:
 
       - name: Upload artifacts to GitHub Release
         if: steps.release.outputs.released == 'true'
-        uses: python-semantic-release/upload-to-gh-release@v9
+        uses: python-semantic-release/publish-action@v10.6.1
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           tag: ${{ steps.release.outputs.tag }}
