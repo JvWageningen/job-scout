@@ -39,7 +39,9 @@ def install_schedule(hour: int = 8, minute: int = 0) -> None:
     from job_scout.config import get_data_dir
 
     log_path = get_data_dir() / "logs" / "cron.log"
-    cron_line = f"{minute} {hour} * * * {cmd} run >> {log_path} 2>&1 {_CRON_MARKER}"
+    cron_line = (
+        f"{minute} {hour} * * * {cmd} run --all >> {log_path} 2>&1 {_CRON_MARKER}"
+    )
 
     existing = _read_crontab()
     lines = [ln for ln in existing.splitlines() if _CRON_MARKER not in ln]

@@ -167,3 +167,20 @@ def test_check_schedule_status_reports_installed_entry() -> None:
     with patch("subprocess.run", return_value=_done(stdout=entry + "\n")):
         result = check_schedule_status()
     assert result.startswith("Installed:")
+
+
+def test_install_schedule_includes_all_flag() -> None:
+    """install_schedule generates a cron line containing --all flag."""
+    written: list[str] = []
+
+    def fake_run(cmd: list[str], **kwargs: Any) -> CompletedProcess[str]:
+        if "-l" in cmd:
+            return _done(stdout="")
+        written.append(str(kwargs.get("input", "")))
+        return _done()
+
+    with patch("subprocess.run", side_effect=fake_run):
+        install_schedule(hour=8, minute=0)
+
+    assert written
+    assert "--all" in written[0]
