@@ -1558,9 +1558,12 @@ async function checkGlobalSetup() {
         }
         const config = await response.json();
 
-        // Check if profile_description is set (indicates initialized global config)
+        // global_initialized reflects the raw on-disk global config, not a
+        // per-user field -- Config fields always carry defaults, so this is
+        // the only reliable way to tell "never initialized" from "using
+        // defaults".
         const setupSection = document.getElementById('global-setup-section');
-        if (!config.profile_description && setupSection) {
+        if (!config.global_initialized && setupSection) {
             setupSection.classList.remove('hidden');
             // Hide user section and tabs when setup is needed
             const userSection = document.getElementById('user-section');

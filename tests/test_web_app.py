@@ -124,6 +124,47 @@ class TestGetConfig:
         response = client.get("/api/config?user=nonexistent")
         assert response.status_code == 404
 
+    def test_global_initialized_false_before_setup(self, monkeypatch) -> None:  # noqa: ANN001
+        """global_initialized must be false before any global config is written.
+
+        Uses its own isolated data dir rather than the shared ``client``
+        fixture, since that fixture pre-writes a global config for the
+        convenience of other tests.
+        """
+        import importlib
+
+        import job_scout.config as config_module
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            monkeypatch.setenv("JOB_SCOUT_DATA_DIR", tmpdir)
+            importlib.reload(config_module)
+            try:
+                app = create_app()
+                response = TestClient(app).get("/api/config")
+                assert response.status_code == 200
+                assert response.json()["global_initialized"] is False
+            finally:
+                importlib.reload(config_module)
+
+    def test_global_initialized_true_after_setup(self, client: TestClient) -> None:
+        """global_initialized must be true once global config has been written."""
+        init_response = client.post(
+            "/api/global-init", json={"llm_provider": "claude_cli"}
+        )
+        assert init_response.status_code == 200
+
+        response = client.get("/api/config")
+        assert response.status_code == 200
+        assert response.json()["global_initialized"] is True
+
+    def test_global_initialized_absent_for_per_user_config(
+        self, client: TestClient, test_user: str
+    ) -> None:
+        """global_initialized is a global-only concept; per-user config omits it."""
+        response = client.get(f"/api/config?user={test_user}")
+        assert response.status_code == 200
+        assert "global_initialized" not in response.json()
+
 
 class TestGetMatchedJobs:
     """Tests for GET /api/jobs/matched endpoint."""

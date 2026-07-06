@@ -155,7 +155,7 @@ def create_app() -> FastAPI:
                 config = build_effective_config(user)
             else:
                 # Return the global config with defaults filled in
-                from job_scout.config import load_llm_config
+                from job_scout.config import load_global_config, load_llm_config
 
                 config = load_llm_config()
         except Exception as exc:
@@ -166,6 +166,15 @@ def create_app() -> FastAPI:
         for key in config_dict:
             if "key" in key.lower() and config_dict[key]:
                 config_dict[key] = f"***{str(config_dict[key])[-4:]}"
+
+        if not user:
+            # Config fields always carry Pydantic defaults, so presence of a
+            # field like llm_provider can't distinguish "never initialized"
+            # from "using defaults". Check the raw on-disk global config
+            # instead -- it's only ever non-empty once /api/global-init (or
+            # a subsequent global settings save) has actually written to it.
+            config_dict["global_initialized"] = bool(load_global_config())
+
         return config_dict
 
     @app.get("/api/jobs/matched")
