@@ -178,6 +178,12 @@ class Config(BaseModel):
     dashboard_token: str | None = None
     geocode_cache_days: int = 90
     travel_cache_days: int = 14
+    linkedin_import_allow_url_fetch: bool = False
+    linkedin_profile_url: str | None = None
+    schedule_hour: int = 8
+    schedule_minute: int = 0
+    schedule_days: str = "1-5"
+    schedule_paused: bool = False
 
     @field_validator("jobspy_sites", mode="before")
     @classmethod
@@ -210,6 +216,28 @@ class Config(BaseModel):
             raise ValueError(
                 f"Invalid jobspy sites: {invalid_sites}. "
                 f"Valid options are: {sorted(valid_sites)}"
+            )
+        return v
+
+    @field_validator("schedule_days", mode="before")
+    @classmethod
+    def validate_schedule_days(cls, v: str) -> str:
+        """Validate that schedule_days uses valid cron day-of-week syntax.
+
+        Args:
+            v: Day-of-week string (cron format).
+
+        Returns:
+            Validated day-of-week string.
+
+        Raises:
+            ValueError: If the format is invalid.
+        """
+        valid_presets = {"*", "0", "1", "2", "3", "4", "5", "6", "0-6", "1-5", "0,6"}
+        if v not in valid_presets:
+            raise ValueError(
+                f"Invalid schedule_days: {v!r}. "
+                f"Valid presets are: {sorted(valid_presets)}"
             )
         return v
 
@@ -279,13 +307,23 @@ class RunHistoryEntry(BaseModel):
     errors: int
 
 
+class CvRole(BaseModel):
+    """A single role in the candidate's work history."""
+
+    title: str
+    company: str
+    start_date: str | None = None
+    end_date: str | None = None
+    description: str | None = None
+
+
 class CvProfile(BaseModel):
     """Structured CV profile extracted and validated by the LLM."""
 
     skills: list[str] = Field(default_factory=list)
     years_experience: int | None = None
     education: list[str] = Field(default_factory=list)
-    past_roles: list[str] = Field(default_factory=list)
+    past_roles: list[CvRole] = Field(default_factory=list)
 
 
 class ApplicationTracker:

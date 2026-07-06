@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import click
 from loguru import logger
@@ -688,6 +689,12 @@ def _execute_run(name: str, *, dry_run: bool = False, full: bool = False) -> Non
     from job_scout.llm.factory import get_llm_client  # noqa: PLC0415
 
     config = build_effective_config(name)
+
+    # Check if schedule is paused
+    if config.schedule_paused:
+        logger.info(f"Job search skipped for '{name}': schedule is paused")
+        return
+
     if not config.profile_description:
         click.echo(
             f"No profile for '{name}'. Run 'job-scout init --user {name}' first.",
@@ -1322,9 +1329,227 @@ def profile_cv_summary(user_name: str | None) -> None:
     if profile.past_roles:
         click.echo("\nPast Roles:")
         for role in profile.past_roles:
-            click.echo(f"  - {role}")
+            dates = ""
+            if role.start_date:
+                dates = f" ({role.start_date}"
+                if role.end_date:
+                    dates += f" - {role.end_date})"
+                else:
+                    dates += " - present)"
+            click.echo(f"  - {role.title} at {role.company}{dates}")
+            if role.description:
+                click.echo(f"    {role.description}")
 
     click.echo()
+
+
+@profile_group.command("import-linkedin")
+@click.option("--user", "user_name", default=None, help="User to import for")
+@click.option(
+    "--file",
+    "export_file",
+    default=None,
+    type=click.Path(exists=True),
+    help="Path to LinkedIn data export ZIP file",
+)
+@click.option(
+    "--paste",
+    "paste_mode",
+    is_flag=True,
+    help="Read profile text from stdin (paste from LinkedIn profile page)",
+)
+@click.option(
+    "--url",
+    "profile_url",
+    default=None,
+    help="LinkedIn profile URL (requires --allow-fetch)",
+)
+@click.option(
+    "--allow-fetch",
+    "allow_fetch",
+    is_flag=True,
+    help=(
+        "Allow fetching profile from URL. WARNING: This may violate LinkedIn's ToS. "
+        "Use at your own risk."
+    ),
+)
+def profile_import_linkedin(
+    user_name: str | None,
+    export_file: str | None,
+    paste_mode: bool,
+    profile_url: str | None,
+    allow_fetch: bool,
+) -> None:
+    """Import LinkedIn profile data to enrich CV profile.
+
+    Three import methods:
+    1. --file: LinkedIn data export ZIP (safest, from "Download your data")
+    2. --paste: Paste LinkedIn profile page text (safe, manual)
+    3. --url: Fetch from profile URL (risky, requires --allow-fetch, may violate ToS)
+
+    The imported data fills gaps in the CV profile without overwriting existing data.
+    """
+    from job_scout.config import build_effective_config, user_db_path
+    from job_scout.cv_parser import parse_cv
+    from job_scout.cv_profile import get_or_parse_cv_profile
+    from job_scout.linkedin_import import (
+        LinkedInProfileImporter,
+        compute_linkedin_hash,
+        merge_linkedin_into_profile,
+    )
+
+    target = _require_single_user(user_name)
+    config = build_effective_config(target)
+    db = Database(user_db_path(target))
+
+    # Get current CV profile
+    if not config.cv_path:
+        click.echo(
+            f"No CV path configured. Run 'job-scout init --user {target}' first.",
+            err=True,
+        )
+        sys.exit(1)
+
+    try:
+        raw_cv_text = parse_cv(config.cv_path)
+    except FileNotFoundError as e:
+        click.echo(str(e), err=True)
+        sys.exit(1)
+
+    if not raw_cv_text:
+        click.echo("Failed to extract text from CV file.", err=True)
+        sys.exit(1)
+
+    # Get LLM client for CV profile parsing
+    try:
+        client = get_llm_client(config)
+    except LLMError as e:
+        click.echo(f"LLM configuration error: {e}", err=True)
+        sys.exit(1)
+
+    ok, err = client.check_available()
+    if not ok:
+        click.echo(f"LLM not available: {err}", err=True)
+        sys.exit(1)
+
+    # Load current CV profile
+    current_profile = get_or_parse_cv_profile(raw_cv_text, client, db)
+
+    # Import LinkedIn data based on method
+    linkedin_data: dict[str, list[Any]] = {}
+
+    if export_file:
+        click.echo(f"Parsing LinkedIn export ZIP: {export_file}")
+        try:
+            linkedin_data = LinkedInProfileImporter.parse_export(export_file)
+        except Exception as e:
+            click.echo(f"Failed to parse export: {e}", err=True)
+            sys.exit(1)
+
+    elif paste_mode:
+        click.echo(
+            "Paste LinkedIn profile text (profile page or PDF export), "
+            "then press Ctrl+D (Unix) or Ctrl+Z+Enter (Windows):"
+        )
+        try:
+            pasted_text = sys.stdin.read()
+        except KeyboardInterrupt:
+            click.echo("Cancelled.", err=True)
+            sys.exit(1)
+
+        if not pasted_text.strip():
+            click.echo("No text provided.", err=True)
+            sys.exit(1)
+
+        linkedin_data = LinkedInProfileImporter.parse_pasted_text(pasted_text)
+
+    elif profile_url:
+        if not allow_fetch:
+            click.echo(
+                "LinkedIn URL fetch requires --allow-fetch flag. "
+                "This may violate LinkedIn's ToS. Use at your own risk.",
+                err=True,
+            )
+            sys.exit(1)
+
+        click.echo(f"Fetching LinkedIn profile from {profile_url}...")
+        try:
+            linkedin_data = LinkedInProfileImporter.fetch_profile_url(
+                profile_url, allow_fetch=True
+            )
+        except Exception as e:
+            click.echo(f"Failed to fetch profile: {e}", err=True)
+            sys.exit(1)
+
+    else:
+        click.echo(
+            "Must provide one of: --file, --paste, or --url (with --allow-fetch)",
+            err=True,
+        )
+        sys.exit(1)
+
+    if not linkedin_data or not any(
+        linkedin_data.get(k) for k in ("skills", "education", "past_roles")
+    ):
+        click.echo("No data extracted from LinkedIn.", err=True)
+        sys.exit(1)
+
+    # Merge and show diff
+    merged_profile, diff = merge_linkedin_into_profile(current_profile, linkedin_data)
+
+    click.echo("\n" + "=" * 50)
+    click.echo("Proposed changes:")
+    click.echo("=" * 50)
+
+    added_skills = diff.get("added_skills", [])
+    if added_skills:
+        click.echo(f"\nNew Skills ({len(added_skills)}):")
+        for skill in added_skills:
+            click.echo(f"  + {skill}")
+
+    added_education = diff.get("added_education", [])
+    if added_education:
+        click.echo(f"\nNew Education ({len(added_education)}):")
+        for edu in added_education:
+            click.echo(f"  + {edu}")
+
+    added_roles = diff.get("added_roles", [])
+    if added_roles:
+        click.echo(f"\nNew Roles ({len(added_roles)}):")
+        for role in added_roles:
+            role_dict = role if isinstance(role, dict) else role.model_dump()
+            dates = ""
+            if role_dict.get("start_date"):
+                dates = f" ({role_dict['start_date']}"
+                if role_dict.get("end_date"):
+                    dates += f" - {role_dict['end_date']})"
+                else:
+                    dates += " - present)"
+            click.echo(f"  + {role_dict['title']} at {role_dict['company']}{dates}")
+
+    click.echo("\n" + "=" * 50)
+    if click.confirm("Apply these changes?"):
+        # Save merged profile to cache
+        try:
+            from job_scout.cv_parser import compute_cv_hash
+
+            cv_hash = compute_cv_hash(raw_cv_text)
+            cache_json = json.dumps(merged_profile.model_dump())
+            db.save_cv_profile_cache(cv_hash, cache_json)
+
+            # Also cache the LinkedIn data for audit
+            linkedin_hash = compute_linkedin_hash(linkedin_data)
+            db.save_cv_profile_cache(
+                f"linkedin_{linkedin_hash}", json.dumps(linkedin_data)
+            )
+
+            click.echo("Profile updated successfully!")
+        except Exception as e:
+            click.echo(f"Failed to save profile: {e}", err=True)
+            sys.exit(1)
+    else:
+        click.echo("Cancelled.", err=True)
+        sys.exit(1)
 
 
 @cli.group("approval")
@@ -1383,28 +1608,48 @@ def schedule_group() -> None:
 @schedule_group.command("install")
 @click.option("--hour", default=8, show_default=True, help="Hour to run (0-23)")
 @click.option("--minute", default=0, show_default=True, help="Minute to run (0-59)")
-def schedule_install(hour: int, minute: int) -> None:
+@click.option(
+    "--days",
+    default="1-5",
+    show_default=True,
+    help="Day-of-week (cron syntax, e.g. '1-5' for Mon-Fri, '*' for daily)",
+)
+@click.option(
+    "--user", "user_name", default=None, help="User to schedule (None for global)"
+)
+def schedule_install(hour: int, minute: int, days: str, user_name: str | None) -> None:
     """Install a daily cron job for job-scout run."""
     try:
-        install_schedule(hour, minute)
-        click.echo(f"Schedule installed: daily at {hour:02d}:{minute:02d}")
+        install_schedule(hour=hour, minute=minute, days=days, user=user_name)
+        subject = user_name or "global"
+        click.echo(
+            f"Schedule installed for {subject}: "
+            f"daily at {hour:02d}:{minute:02d} on days {days}"
+        )
     except RuntimeError as exc:
         click.echo(f"Failed to install schedule: {exc}", err=True)
         sys.exit(1)
 
 
 @schedule_group.command("status")
-def schedule_status() -> None:
+@click.option(
+    "--user", "user_name", default=None, help="User to check (None for global)"
+)
+def schedule_status(user_name: str | None) -> None:
     """Show whether a cron schedule is currently installed."""
-    click.echo(check_schedule_status())
+    click.echo(check_schedule_status(user=user_name))
 
 
 @schedule_group.command("remove")
-def schedule_remove() -> None:
+@click.option(
+    "--user", "user_name", default=None, help="User to remove (None for global)"
+)
+def schedule_remove(user_name: str | None) -> None:
     """Remove the daily cron job for job-scout run."""
     try:
-        remove_schedule()
-        click.echo("Schedule removed successfully")
+        remove_schedule(user=user_name)
+        subject = user_name or "global"
+        click.echo(f"Schedule removed successfully for {subject}")
     except RuntimeError as exc:
         click.echo(f"Failed to remove schedule: {exc}", err=True)
         sys.exit(1)
