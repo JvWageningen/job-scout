@@ -38,11 +38,10 @@ build-backend = "uv_build"
 
 [tool.semantic_release]
 version_toml = ["pyproject.toml:project.version"]
-build_command = "uv build"
 branch = "main"
 commit_message = "chore(release): {version}\n\n[skip ci]"
 
-[tool.semantic_release.changelog]
+[tool.semantic_release.changelog.default_templates]
 changelog_file = "CHANGELOG.md"
 
 [tool.ruff]

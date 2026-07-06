@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import tempfile
+import threading
 from collections.abc import Generator
 from pathlib import Path
 
@@ -720,9 +721,13 @@ class TestRun:
     ) -> None:
         """Test that run status is properly tracked in registry."""
 
-        # Verify a run can be started
+        # Block the background thread inside the mocked execution so the
+        # "running" state can be observed deterministically, rather than
+        # racing the (otherwise near-instant) background thread to completion.
+        release_run = threading.Event()
+
         def mock_execute_run(name, *, dry_run=False, full=False):
-            pass
+            release_run.wait(timeout=5)
 
         monkeypatch.setattr("job_scout.cli._execute_run", mock_execute_run)
         monkeypatch.setattr(
@@ -747,6 +752,8 @@ class TestRun:
             entry = _run_registry.get(test_user)
             assert entry is not None
             assert entry["status"] == "running"
+
+        release_run.set()
 
 
 class TestKeywords:

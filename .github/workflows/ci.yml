@@ -48,6 +48,14 @@ jobs:
         uses: python-semantic-release/python-semantic-release@v10.6.1
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
+          build: false
+
+      # The semantic-release action runs in its own Docker container, which
+      # does not have uv on PATH, so the build happens here on the runner
+      # instead of via its build_command hook.
+      - name: Build distribution
+        if: steps.release.outputs.released == 'true'
+        run: uv build
 
       - name: Generate SHA256 checksums for release artifacts
         if: steps.release.outputs.released == 'true'
