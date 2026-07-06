@@ -13,6 +13,7 @@ class LocalLLMClient:
     Supports any server implementing the OpenAI API specification, such as:
     - Ollama (default: http://localhost:11434/v1)
     - LM Studio
+    - llama-swap (auto-swapping GGUF model proxy)
     - vLLM
     - llama.cpp server
     - text-generation-webui

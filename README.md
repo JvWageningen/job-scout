@@ -192,7 +192,7 @@ job-scout supports four LLM backends, selectable globally and overridable per pi
 - **`claude_cli`** (default) — shells out to the local Claude Code CLI (`claude`)
 - **`zai`** — Z AI's GLM models via their OpenAI-compatible REST API
 - **`kilo_cli`** — the Kilo Code CLI, routing to Z AI or other providers
-- **`local`** — any OpenAI-compatible server on your own machine or local network: [Ollama](https://ollama.com), [LM Studio](https://lmstudio.ai), vLLM, llama.cpp server, text-generation-webui, LocalAI, etc.
+- **`local`** — any OpenAI-compatible server on your own machine or local network: [Ollama](https://ollama.com), [LM Studio](https://lmstudio.ai), [llama-swap](https://github.com/pkdoc/llama-swap) (model auto-swap proxy), vLLM, llama.cpp server, text-generation-webui, LocalAI, etc.
 
 ```bash
 # Switch the default provider
