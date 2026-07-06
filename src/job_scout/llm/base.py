@@ -11,6 +11,9 @@ CallPurpose = Literal[
     "keywords",
     "cv_parsing",
     "resume_tailoring",
+    "cover_letter",
+    "screening_questions",
+    "screening_answers",
 ]
 
 

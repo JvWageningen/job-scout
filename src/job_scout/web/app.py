@@ -150,7 +150,7 @@ def create_app() -> FastAPI:
         try:
             config = build_effective_config(user) if user else Config()
         except Exception as exc:
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
+            raise HTTPException(status_code=500, detail=str(exc)) from exc  # noqa: B904
 
         # Mask secret fields (show only last 4 chars)
         config_dict = config.model_dump()
@@ -205,7 +205,7 @@ def create_app() -> FastAPI:
                 limit=limit, min_score=min_score, source=source, sort=sort
             )
         except Exception as exc:
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
+            raise HTTPException(status_code=500, detail=str(exc)) from exc  # noqa: B904
 
     @app.get("/api/jobs/rejected")
     def get_rejected_jobs(
@@ -253,7 +253,7 @@ def create_app() -> FastAPI:
                 limit=limit, min_score=min_score, source=source, sort=sort
             )
         except Exception as exc:
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
+            raise HTTPException(status_code=500, detail=str(exc)) from exc  # noqa: B904
 
     @app.get("/api/runs/history")
     def get_runs_history(
@@ -300,7 +300,7 @@ def create_app() -> FastAPI:
                 for e in history
             ]
         except Exception as exc:
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
+            raise HTTPException(status_code=500, detail=str(exc)) from exc  # noqa: B904
 
     @app.get("/api/schedule/status")
     def get_schedule_status(user: str | None = None) -> dict[str, str]:
@@ -316,7 +316,7 @@ def create_app() -> FastAPI:
             status = check_schedule_status(user=user)
             return {"status": status}
         except Exception as exc:
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
+            raise HTTPException(status_code=500, detail=str(exc)) from exc  # noqa: B904
 
     @app.get("/api/logs")
     def list_logs(user: str | None = None) -> list[dict[str, Any]]:
@@ -357,7 +357,7 @@ def create_app() -> FastAPI:
                 )
             return log_files
         except Exception as exc:
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
+            raise HTTPException(status_code=500, detail=str(exc)) from exc  # noqa: B904
 
     @app.get("/api/logs/{filename}")
     def get_log_file(
@@ -413,7 +413,7 @@ def create_app() -> FastAPI:
         except HTTPException:
             raise
         except Exception as exc:
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
+            raise HTTPException(status_code=500, detail=str(exc)) from exc  # noqa: B904
 
     # --- POST Endpoints for Configuration ---
 
@@ -443,7 +443,7 @@ def create_app() -> FastAPI:
             write_global_config(existing_data)
             return {"status": "Global configuration initialized successfully"}
         except Exception as exc:
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
+            raise HTTPException(status_code=500, detail=str(exc)) from exc  # noqa: B904
 
     @app.post("/api/users")
     def create_user(body: dict[str, Any]) -> dict[str, str]:
@@ -476,7 +476,7 @@ def create_app() -> FastAPI:
             apply_user_init(name, config_fields)
             return {"status": f"User '{name}' created successfully"}
         except Exception as exc:
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
+            raise HTTPException(status_code=500, detail=str(exc)) from exc  # noqa: B904
 
     @app.post("/api/config")
     def update_config(body: dict[str, Any]) -> dict[str, Any]:
@@ -508,7 +508,7 @@ def create_app() -> FastAPI:
                 except ValueError as e:
                     errors[key] = str(e)
         except Exception as exc:
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
+            raise HTTPException(status_code=500, detail=str(exc)) from exc  # noqa: B904
 
         if errors:
             return {"status": "partial", "errors": errors}
@@ -539,7 +539,7 @@ def create_app() -> FastAPI:
             update_secrets(secret_data)
             return {"status": "secrets updated"}
         except Exception as exc:
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
+            raise HTTPException(status_code=500, detail=str(exc)) from exc  # noqa: B904
 
     @app.get("/api/sites")
     def get_sites(user: str | None = None) -> list[dict[str, Any]]:
@@ -564,7 +564,7 @@ def create_app() -> FastAPI:
             sites: list[dict[str, Any]] = cfg.get("custom_sites", [])
             return sites
         except Exception as exc:
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
+            raise HTTPException(status_code=500, detail=str(exc)) from exc  # noqa: B904
 
     @app.get("/api/profile/cv-summary")
     def get_cv_profile(user: str | None = None) -> dict[str, Any]:
@@ -602,7 +602,7 @@ def create_app() -> FastAPI:
             # Parse raw CV text
             try:
                 raw_cv_text = parse_cv(config.cv_path)
-            except FileNotFoundError:
+            except FileNotFoundError as _:
                 return {"error": f"CV file not found at {config.cv_path}"}
 
             if not raw_cv_text:
@@ -627,7 +627,7 @@ def create_app() -> FastAPI:
                 "cv_profile": profile.model_dump(),
             }
         except Exception as exc:
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
+            raise HTTPException(status_code=500, detail=str(exc)) from exc  # noqa: B904
 
     @app.post("/api/sites")
     def add_site(body: dict[str, Any]) -> dict[str, str]:
@@ -680,7 +680,7 @@ def create_app() -> FastAPI:
         except HTTPException:
             raise
         except Exception as exc:
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
+            raise HTTPException(status_code=500, detail=str(exc)) from exc  # noqa: B904
 
     @app.delete("/api/sites")
     def remove_site(
@@ -727,7 +727,7 @@ def create_app() -> FastAPI:
         except HTTPException:
             raise
         except Exception as exc:
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
+            raise HTTPException(status_code=500, detail=str(exc)) from exc  # noqa: B904
 
     @app.post("/api/schedule")
     def set_schedule(body: dict[str, Any]) -> dict[str, str]:
@@ -758,7 +758,7 @@ def create_app() -> FastAPI:
         except HTTPException:
             raise
         except Exception as exc:
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
+            raise HTTPException(status_code=500, detail=str(exc)) from exc  # noqa: B904
 
     @app.delete("/api/schedule")
     def unset_schedule(user: str | None = None) -> dict[str, str]:
@@ -778,7 +778,7 @@ def create_app() -> FastAPI:
             subject = user or "global"
             return {"status": f"Schedule removed for {subject}"}
         except Exception as exc:
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
+            raise HTTPException(status_code=500, detail=str(exc)) from exc  # noqa: B904
 
     @app.post("/api/llm/test-connection")
     def test_llm_connection(body: dict[str, Any]) -> dict[str, Any]:
@@ -1076,7 +1076,7 @@ def create_app() -> FastAPI:
                 "jobs": [job.model_dump() for job in queue],
             }
         except Exception as exc:
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
+            raise HTTPException(status_code=500, detail=str(exc)) from exc  # noqa: B904
 
     @app.post("/api/approval/approve")
     def approve_job_endpoint(
@@ -1115,7 +1115,7 @@ def create_app() -> FastAPI:
         except HTTPException:
             raise
         except Exception as exc:
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
+            raise HTTPException(status_code=500, detail=str(exc)) from exc  # noqa: B904
 
     @app.post("/api/jobs/{job_id}/status")
     def update_job_status_endpoint(
@@ -1149,7 +1149,7 @@ def create_app() -> FastAPI:
             try:
                 new_status = JobStatus(status)
             except ValueError:
-                raise HTTPException(
+                raise HTTPException(  # noqa: B904
                     status_code=400,
                     detail=f"Invalid status: {status}",
                 ) from None
@@ -1166,7 +1166,7 @@ def create_app() -> FastAPI:
         except HTTPException:
             raise
         except Exception as exc:
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
+            raise HTTPException(status_code=500, detail=str(exc)) from exc  # noqa: B904
 
     @app.get("/api/keywords")
     def get_keywords(user: str | None = None) -> dict[str, Any]:
@@ -1193,7 +1193,7 @@ def create_app() -> FastAPI:
                 "title_exclude": config.title_exclude_keywords or [],
             }
         except Exception as exc:
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
+            raise HTTPException(status_code=500, detail=str(exc)) from exc  # noqa: B904
 
     @app.post("/api/keywords/refresh")
     def refresh_keywords(body: dict[str, Any]) -> dict[str, Any]:
@@ -1238,7 +1238,352 @@ def create_app() -> FastAPI:
         except HTTPException:
             raise
         except Exception as exc:
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
+            raise HTTPException(status_code=500, detail=str(exc)) from exc  # noqa: B904
+
+    @app.post("/api/profile/cover-letter/{job_id}")
+    def generate_cover_letter_endpoint(
+        job_id: int, user: str | None = None
+    ) -> dict[str, Any]:
+        """Generate a cover letter for a job.
+
+        Args:
+            job_id: ID of the job to generate a cover letter for.
+            user: User name (required).
+
+        Returns:
+            Dictionary with cover_letter text or error message.
+
+        Raises:
+            HTTPException: If user not provided, job not found, or generation fails.
+        """
+        if not user:
+            raise HTTPException(status_code=400, detail="User is required")
+        if user not in list_users():
+            raise HTTPException(status_code=404, detail=f"User '{user}' not found")
+
+        try:
+            from job_scout.config import (  # noqa: PLC0415
+                build_effective_config,
+                user_db_path,
+            )
+            from job_scout.cover_letter_generator import (
+                generate_cover_letter,  # noqa: PLC0415
+            )
+            from job_scout.cv_parser import parse_cv  # noqa: PLC0415
+            from job_scout.cv_profile import get_or_parse_cv_profile  # noqa: PLC0415
+            from job_scout.database import Database  # noqa: PLC0415
+            from job_scout.llm.base import LLMError  # noqa: PLC0415
+            from job_scout.llm.factory import get_llm_client  # noqa: PLC0415
+            from job_scout.models import JobStatus  # noqa: PLC0415
+
+            config = build_effective_config(user)
+            db = Database(user_db_path(user))
+
+            # Get the job
+            job = db.get_job(job_id)
+            if not job:
+                raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+
+            # Check status
+            if job.status not in [
+                JobStatus.APPROVED,
+                JobStatus.READY,
+                JobStatus.SUBMITTED,
+                JobStatus.INTERVIEWING,
+                JobStatus.OFFER,
+            ]:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Job has status {job.status.value}; must be APPROVED or later"
+                    ),
+                )
+
+            if not job.description:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Job has no description",
+                )
+
+            # Get CV and profile
+            if not config.cv_path:
+                raise HTTPException(
+                    status_code=400,
+                    detail="CV path not configured",
+                )
+
+            try:
+                raw_cv_text = parse_cv(config.cv_path)
+            except FileNotFoundError as _:
+                raise HTTPException(  # noqa: B904
+                    status_code=400,
+                    detail=f"CV file not found at {config.cv_path}",
+                )
+
+            if not raw_cv_text:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Failed to extract text from CV",
+                )
+
+            try:
+                client = get_llm_client(config)
+            except LLMError as e:
+                raise HTTPException(  # noqa: B904
+                    status_code=400,
+                    detail=f"LLM configuration error: {str(e)}",
+                )
+
+            ok, err = client.check_available()
+            if not ok:
+                raise HTTPException(status_code=400, detail=f"LLM not available: {err}")
+
+            cv_profile = get_or_parse_cv_profile(raw_cv_text, client, db)
+
+            cover_letter = generate_cover_letter(
+                cv_profile,
+                job.description,
+                job.title,
+                job.company,
+                client=client,
+            )
+
+            if not cover_letter:
+                raise HTTPException(
+                    status_code=500,
+                    detail="Failed to generate cover letter",
+                )
+
+            db.save_cover_letter(job_id, cover_letter)
+
+            return {
+                "cover_letter": cover_letter,
+                "message": "Cover letter generated successfully",
+            }
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc  # noqa: B904
+
+    @app.get("/api/profile/cover-letter/{job_id}")
+    def get_cover_letter_endpoint(
+        job_id: int, user: str | None = None
+    ) -> dict[str, Any]:
+        """Get a previously generated cover letter.
+
+        Args:
+            job_id: ID of the job.
+            user: User name (required).
+
+        Returns:
+            Dictionary with cover_letter text or error message.
+
+        Raises:
+            HTTPException: If user not provided or cover letter not found.
+        """
+        if not user:
+            raise HTTPException(status_code=400, detail="User is required")
+        if user not in list_users():
+            raise HTTPException(status_code=404, detail=f"User '{user}' not found")
+
+        try:
+            from job_scout.config import user_db_path  # noqa: PLC0415
+            from job_scout.database import Database  # noqa: PLC0415
+
+            db = Database(user_db_path(user))
+            cover_letter = db.get_cover_letter(job_id)
+
+            if not cover_letter:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"No cover letter found for job {job_id}",
+                )
+
+            return {"cover_letter": cover_letter}
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc  # noqa: B904
+
+    @app.post("/api/profile/screening-answers/{job_id}")
+    def answer_screening_questions_endpoint(
+        job_id: int, user: str | None = None
+    ) -> dict[str, Any]:
+        """Extract and answer screening questions for a job.
+
+        Args:
+            job_id: ID of the job.
+            user: User name (required).
+
+        Returns:
+            Dictionary with questions and answers lists or error message.
+
+        Raises:
+            HTTPException: If user not provided, job not found, or generation fails.
+        """
+        if not user:
+            raise HTTPException(status_code=400, detail="User is required")
+        if user not in list_users():
+            raise HTTPException(status_code=404, detail=f"User '{user}' not found")
+
+        try:
+            from job_scout.config import (  # noqa: PLC0415
+                build_effective_config,
+                user_db_path,
+            )
+            from job_scout.cover_letter_generator import (  # noqa: PLC0415
+                answer_screening_questions,
+                extract_screening_questions,
+            )
+            from job_scout.cv_parser import parse_cv  # noqa: PLC0415
+            from job_scout.cv_profile import get_or_parse_cv_profile  # noqa: PLC0415
+            from job_scout.database import Database  # noqa: PLC0415
+            from job_scout.llm.base import LLMError  # noqa: PLC0415
+            from job_scout.llm.factory import get_llm_client  # noqa: PLC0415
+            from job_scout.models import JobStatus  # noqa: PLC0415
+
+            config = build_effective_config(user)
+            db = Database(user_db_path(user))
+
+            # Get the job
+            job = db.get_job(job_id)
+            if not job:
+                raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+
+            # Check status
+            if job.status not in [
+                JobStatus.APPROVED,
+                JobStatus.READY,
+                JobStatus.SUBMITTED,
+                JobStatus.INTERVIEWING,
+                JobStatus.OFFER,
+            ]:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Job has status {job.status.value}; must be APPROVED or later"
+                    ),
+                )
+
+            if not job.description:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Job has no description",
+                )
+
+            # Get CV and profile
+            if not config.cv_path:
+                raise HTTPException(
+                    status_code=400,
+                    detail="CV path not configured",
+                )
+
+            try:
+                raw_cv_text = parse_cv(config.cv_path)
+            except FileNotFoundError as _:
+                raise HTTPException(  # noqa: B904
+                    status_code=400,
+                    detail=f"CV file not found at {config.cv_path}",
+                )
+
+            if not raw_cv_text:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Failed to extract text from CV",
+                )
+
+            try:
+                client = get_llm_client(config)
+            except LLMError as e:
+                raise HTTPException(  # noqa: B904
+                    status_code=400,
+                    detail=f"LLM configuration error: {str(e)}",
+                )
+
+            ok, err = client.check_available()
+            if not ok:
+                raise HTTPException(status_code=400, detail=f"LLM not available: {err}")
+
+            cv_profile = get_or_parse_cv_profile(raw_cv_text, client, db)
+
+            # Extract and answer questions
+            questions = extract_screening_questions(job.description, client=client)
+            if not questions:
+                raise HTTPException(
+                    status_code=500,
+                    detail="No screening questions could be extracted",
+                )
+
+            answers = answer_screening_questions(
+                questions,
+                cv_profile,
+                job.description,
+                client=client,
+            )
+
+            # Save to database
+            db.save_screening_questions(job_id, questions, answers)
+
+            # Build response with Q&A pairs
+            qa_pairs = []
+            for question in questions:
+                qa_pairs.append(
+                    {
+                        "question": question,
+                        "answer": answers.get(question, ""),
+                    }
+                )
+
+            return {
+                "qa_pairs": qa_pairs,
+                "message": "Screening questions answered successfully",
+            }
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc  # noqa: B904
+
+    @app.get("/api/profile/screening-answers/{job_id}")
+    def get_screening_answers_endpoint(
+        job_id: int, user: str | None = None
+    ) -> dict[str, Any]:
+        """Get previously generated screening question answers.
+
+        Args:
+            job_id: ID of the job.
+            user: User name (required).
+
+        Returns:
+            Dictionary with qa_pairs list or error message.
+
+        Raises:
+            HTTPException: If user not provided or answers not found.
+        """
+        if not user:
+            raise HTTPException(status_code=400, detail="User is required")
+        if user not in list_users():
+            raise HTTPException(status_code=404, detail=f"User '{user}' not found")
+
+        try:
+            from job_scout.config import user_db_path  # noqa: PLC0415
+            from job_scout.database import Database  # noqa: PLC0415
+
+            db = Database(user_db_path(user))
+            qa_list = db.get_screening_questions(job_id)
+
+            if not qa_list:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"No screening answers found for job {job_id}",
+                )
+
+            qa_pairs = [{"question": q, "answer": a} for q, a in qa_list]
+
+            return {"qa_pairs": qa_pairs}
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc  # noqa: B904
 
     return app
 

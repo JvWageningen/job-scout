@@ -1752,6 +1752,308 @@ def profile_get_resume(
         click.echo(tailored)
 
 
+@profile_group.command("generate-cover-letter")
+@click.argument("job_id", type=int)
+@click.option("--user", "user_name", default=None, help="User to generate for")
+@click.option(
+    "--force",
+    is_flag=True,
+    default=False,
+    help="Regenerate even if one exists",
+)
+def profile_generate_cover_letter(
+    job_id: int, user_name: str | None, force: bool
+) -> None:
+    """Generate a cover letter for a specific job.
+
+    The job must be in APPROVED status or later to generate a cover letter.
+    """
+    from job_scout.config import build_effective_config, user_db_path
+    from job_scout.cover_letter_generator import generate_cover_letter
+    from job_scout.cv_profile import get_or_parse_cv_profile
+    from job_scout.database import Database
+    from job_scout.llm.factory import get_llm_client
+    from job_scout.models import JobStatus
+
+    target = _require_single_user(user_name)
+    config = build_effective_config(target)
+    db = Database(user_db_path(target))
+
+    # Fetch the job
+    job = db.get_job(job_id)
+    if not job:
+        click.echo(f"Job #{job_id} not found.", err=True)
+        sys.exit(1)
+
+    # Check job status
+    if job.status not in [
+        JobStatus.APPROVED,
+        JobStatus.READY,
+        JobStatus.SUBMITTED,
+        JobStatus.INTERVIEWING,
+        JobStatus.OFFER,
+    ]:
+        click.echo(
+            f"Job #{job_id} has status {job.status.value}. "
+            f"Must be APPROVED or later to generate a cover letter.",
+            err=True,
+        )
+        sys.exit(1)
+
+    if not job.description:
+        click.echo(
+            f"Job #{job_id} has no description. Cannot generate cover letter.",
+            err=True,
+        )
+        sys.exit(1)
+
+    # Check if already generated
+    existing = db.get_cover_letter(job_id)
+    if existing and not force:
+        click.echo(
+            f"Cover letter already generated for job #{job_id}. "
+            f"Use --force to regenerate.",
+        )
+        if click.confirm("Regenerate?"):
+            pass  # Continue to generate
+        else:
+            click.echo(existing)
+            return
+
+    # Get CV and profile
+    if not config.cv_path:
+        click.echo(
+            f"No CV path configured. Run 'job-scout init --user {target}' first.",
+            err=True,
+        )
+        sys.exit(1)
+
+    try:
+        from job_scout.cv_parser import parse_cv  # noqa: PLC0415
+
+        raw_cv_text = parse_cv(config.cv_path)
+    except FileNotFoundError as e:
+        click.echo(str(e), err=True)
+        sys.exit(1)
+
+    if not raw_cv_text:
+        click.echo("Failed to extract text from CV file.", err=True)
+        sys.exit(1)
+
+    try:
+        client = get_llm_client(config)
+    except LLMError as e:
+        click.echo(f"LLM configuration error: {e}", err=True)
+        sys.exit(1)
+
+    ok, err = client.check_available()
+    if not ok:
+        click.echo(f"LLM not available: {err}", err=True)
+        sys.exit(1)
+
+    cv_profile = get_or_parse_cv_profile(raw_cv_text, client, db)
+
+    click.echo(f"Generating cover letter for: {job.title} @ {job.company}...")
+    cover_letter = generate_cover_letter(
+        cv_profile,
+        job.description,
+        job.title,
+        job.company,
+        client=client,
+    )
+
+    if not cover_letter:
+        click.echo("Failed to generate cover letter.", err=True)
+        sys.exit(1)
+
+    # Save to database
+    db.save_cover_letter(job_id, cover_letter)
+    click.echo("Cover letter generated and saved.")
+
+    click.echo("\nCover Letter Preview:\n" + "=" * 50)
+    click.echo(cover_letter)
+
+
+@profile_group.command("get-cover-letter")
+@click.argument("job_id", type=int)
+@click.option("--user", "user_name", default=None, help="User to retrieve for")
+def profile_get_cover_letter(job_id: int, user_name: str | None) -> None:
+    """Display a previously generated cover letter.
+
+    Retrieves a cover letter that was previously generated for a job.
+    """
+    from job_scout.config import user_db_path
+    from job_scout.database import Database
+
+    target = _require_single_user(user_name)
+    db = Database(user_db_path(target))
+
+    # Fetch the cover letter
+    cover_letter = db.get_cover_letter(job_id)
+    if not cover_letter:
+        click.echo(f"No cover letter found for job #{job_id}.", err=True)
+        sys.exit(1)
+
+    click.echo(f"Cover Letter for Job #{job_id}:\n" + "=" * 50)
+    click.echo(cover_letter)
+
+
+@profile_group.command("answer-screening")
+@click.argument("job_id", type=int)
+@click.option("--user", "user_name", default=None, help="User to answer for")
+@click.option(
+    "--force",
+    is_flag=True,
+    default=False,
+    help="Regenerate even if answers exist",
+)
+def profile_answer_screening(job_id: int, user_name: str | None, force: bool) -> None:
+    """Extract and answer screening questions for a job.
+
+    Automatically extracts likely screening questions from the job description
+    and generates thoughtful answers based on the CV profile.
+    """
+    from job_scout.config import build_effective_config, user_db_path
+    from job_scout.cover_letter_generator import (
+        answer_screening_questions,
+        extract_screening_questions,
+    )
+    from job_scout.cv_profile import get_or_parse_cv_profile
+    from job_scout.database import Database
+    from job_scout.llm.factory import get_llm_client
+    from job_scout.models import JobStatus
+
+    target = _require_single_user(user_name)
+    config = build_effective_config(target)
+    db = Database(user_db_path(target))
+
+    # Fetch the job
+    job = db.get_job(job_id)
+    if not job:
+        click.echo(f"Job #{job_id} not found.", err=True)
+        sys.exit(1)
+
+    # Check job status
+    if job.status not in [
+        JobStatus.APPROVED,
+        JobStatus.READY,
+        JobStatus.SUBMITTED,
+        JobStatus.INTERVIEWING,
+        JobStatus.OFFER,
+    ]:
+        click.echo(
+            f"Job #{job_id} has status {job.status.value}. "
+            f"Must be APPROVED or later to answer screening questions.",
+            err=True,
+        )
+        sys.exit(1)
+
+    if not job.description:
+        click.echo(
+            f"Job #{job_id} has no description. Cannot answer screening questions.",
+            err=True,
+        )
+        sys.exit(1)
+
+    # Check if already answered
+    existing_qa = db.get_screening_questions(job_id)
+    if existing_qa and not force:
+        click.echo(
+            f"Screening questions already answered for job #{job_id}. "
+            f"Use --force to regenerate."
+        )
+        if not click.confirm("Regenerate?"):
+            # Display existing answers
+            click.echo("\nExisting Q&A:\n" + "=" * 50)
+            for question, answer in existing_qa:
+                click.echo(f"Q: {question}")
+                click.echo(f"A: {answer}\n")
+            return
+
+    # Get CV and profile
+    if not config.cv_path:
+        click.echo(
+            f"No CV path configured. Run 'job-scout init --user {target}' first.",
+            err=True,
+        )
+        sys.exit(1)
+
+    try:
+        from job_scout.cv_parser import parse_cv  # noqa: PLC0415
+
+        raw_cv_text = parse_cv(config.cv_path)
+    except FileNotFoundError as e:
+        click.echo(str(e), err=True)
+        sys.exit(1)
+
+    if not raw_cv_text:
+        click.echo("Failed to extract text from CV file.", err=True)
+        sys.exit(1)
+
+    try:
+        client = get_llm_client(config)
+    except LLMError as e:
+        click.echo(f"LLM configuration error: {e}", err=True)
+        sys.exit(1)
+
+    ok, err = client.check_available()
+    if not ok:
+        click.echo(f"LLM not available: {err}", err=True)
+        sys.exit(1)
+
+    cv_profile = get_or_parse_cv_profile(raw_cv_text, client, db)
+
+    click.echo(f"Extracting screening questions for: {job.title} @ {job.company}...")
+    questions = extract_screening_questions(job.description, client=client)
+
+    if not questions:
+        click.echo("No screening questions could be extracted.", err=True)
+        sys.exit(1)
+
+    click.echo(f"Extracted {len(questions)} questions. Generating answers...")
+    answers = answer_screening_questions(
+        questions,
+        cv_profile,
+        job.description,
+        client=client,
+    )
+
+    # Save to database
+    db.save_screening_questions(job_id, questions, answers)
+    click.echo("Screening questions and answers saved.")
+
+    click.echo("\nQ&A Preview:\n" + "=" * 50)
+    for question in questions:
+        click.echo(f"Q: {question}")
+        click.echo(f"A: {answers.get(question, 'No answer generated')}\n")
+
+
+@profile_group.command("get-answers")
+@click.argument("job_id", type=int)
+@click.option("--user", "user_name", default=None, help="User to retrieve for")
+def profile_get_answers(job_id: int, user_name: str | None) -> None:
+    """Display previously generated screening question answers.
+
+    Retrieves Q&A that were previously generated for a job.
+    """
+    from job_scout.config import user_db_path
+    from job_scout.database import Database
+
+    target = _require_single_user(user_name)
+    db = Database(user_db_path(target))
+
+    # Fetch the Q&A
+    qa_list = db.get_screening_questions(job_id)
+    if not qa_list:
+        click.echo(f"No screening Q&A found for job #{job_id}.", err=True)
+        sys.exit(1)
+
+    click.echo(f"Screening Q&A for Job #{job_id}:\n" + "=" * 50)
+    for question, answer in qa_list:
+        click.echo(f"Q: {question}")
+        click.echo(f"A: {answer}\n")
+
+
 @cli.group("approval")
 def approval_group() -> None:
     """Manage job application approvals."""

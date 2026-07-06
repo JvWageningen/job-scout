@@ -182,6 +182,34 @@ class Database:
                 "CREATE INDEX IF NOT EXISTS idx_job_id_resume ON "
                 "tailored_resumes(job_id)"
             )
+            # Create cover letters table
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS cover_letters (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    job_id INTEGER NOT NULL UNIQUE,
+                    cover_letter_text TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (job_id) REFERENCES jobs(id)
+                )
+            """)
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_job_id_cover ON cover_letters(job_id)"
+            )
+            # Create screening questions table
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS screening_questions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    job_id INTEGER NOT NULL,
+                    question TEXT NOT NULL,
+                    answer TEXT,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (job_id) REFERENCES jobs(id)
+                )
+            """)
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_job_id_screening ON "
+                "screening_questions(job_id)"
+            )
 
     def _backfill_dedup_keys(self, conn: sqlite3.Connection) -> None:
         """Populate dedup_key for rows written before the column existed.
@@ -917,6 +945,89 @@ class Database:
                 """,
                 (job_id, tailored_text, datetime.now(UTC).isoformat()),
             )
+
+    def get_cover_letter(self, job_id: int) -> str | None:
+        """Retrieve a previously generated cover letter for a job.
+
+        Args:
+            job_id: ID of the job.
+
+        Returns:
+            Cover letter text if it exists, None otherwise.
+        """
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT cover_letter_text FROM cover_letters WHERE job_id = ?",
+                (job_id,),
+            ).fetchone()
+        return row[0] if row else None
+
+    def save_cover_letter(self, job_id: int, cover_letter_text: str) -> None:
+        """Save a generated cover letter for a job.
+
+        Args:
+            job_id: ID of the job.
+            cover_letter_text: The cover letter content.
+        """
+        with self._conn() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO cover_letters
+                  (job_id, cover_letter_text, created_at)
+                VALUES (?, ?, ?)
+                """,
+                (job_id, cover_letter_text, datetime.now(UTC).isoformat()),
+            )
+
+    def get_screening_questions(self, job_id: int) -> list[tuple[str, str | None]]:
+        """Retrieve screening questions and answers for a job.
+
+        Args:
+            job_id: ID of the job.
+
+        Returns:
+            List of (question, answer) tuples. If no questions exist,
+            returns an empty list.
+        """
+        with self._conn() as conn:
+            rows = conn.execute(
+                """
+                SELECT question, answer FROM screening_questions
+                WHERE job_id = ? ORDER BY id
+                """,
+                (job_id,),
+            ).fetchall()
+        return [(row[0], row[1]) for row in rows]
+
+    def save_screening_questions(
+        self,
+        job_id: int,
+        questions: list[str],
+        answers: dict[str, str] | None = None,
+    ) -> None:
+        """Save screening questions and answers for a job.
+
+        Args:
+            job_id: ID of the job.
+            questions: List of screening questions.
+            answers: Optional dict mapping questions to answers.
+        """
+        answers = answers or {}
+        with self._conn() as conn:
+            # Delete existing questions for this job
+            conn.execute("DELETE FROM screening_questions WHERE job_id = ?", (job_id,))
+            # Insert new questions and answers
+            now = datetime.now(UTC).isoformat()
+            for question in questions:
+                answer = answers.get(question)
+                conn.execute(
+                    """
+                    INSERT INTO screening_questions
+                      (job_id, question, answer, created_at)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (job_id, question, answer, now),
+                )
 
     def approve_job(
         self, job_id: int, approved_by: str, notes: str | None = None
