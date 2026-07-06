@@ -725,6 +725,9 @@ class TestRun:
             pass
 
         monkeypatch.setattr("job_scout.cli._execute_run", mock_execute_run)
+        monkeypatch.setattr(
+            "job_scout.evaluator.check_llm_available", lambda config: (True, None)
+        )
 
         # Clear registry
         from job_scout.web.app import _registry_lock, _run_registry
