@@ -81,6 +81,27 @@
                 <!-- Matched Jobs -->
                 <div class="jobs-section">
                     <h3>Recently Matched Jobs</h3>
+                    <div class="jobs-filters">
+                        <div class="filter-group">
+                            <label for="matched-min-score">Min Score:</label>
+                            <input type="number" id="matched-min-score" min="0" max="100" placeholder="Any">
+                        </div>
+                        <div class="filter-group">
+                            <label for="matched-source">Source:</label>
+                            <select id="matched-source">
+                                <option value="">All Sources</option>
+                            </select>
+                        </div>
+                        <div class="filter-group">
+                            <label for="matched-sort">Sort By:</label>
+                            <select id="matched-sort">
+                                <option value="date_desc">Newest First</option>
+                                <option value="date_asc">Oldest First</option>
+                                <option value="score_desc">Highest Score</option>
+                                <option value="score_asc">Lowest Score</option>
+                            </select>
+                        </div>
+                    </div>
                     <div id="matched-jobs-container" class="jobs-container">
                         <p class="loading">Loading...</p>
                     </div>
@@ -89,6 +110,27 @@
                 <!-- Rejected Jobs -->
                 <div class="jobs-section">
                     <h3>Recently Rejected Jobs</h3>
+                    <div class="jobs-filters">
+                        <div class="filter-group">
+                            <label for="rejected-min-score">Min Score:</label>
+                            <input type="number" id="rejected-min-score" min="0" max="100" placeholder="Any">
+                        </div>
+                        <div class="filter-group">
+                            <label for="rejected-source">Source:</label>
+                            <select id="rejected-source">
+                                <option value="">All Sources</option>
+                            </select>
+                        </div>
+                        <div class="filter-group">
+                            <label for="rejected-sort">Sort By:</label>
+                            <select id="rejected-sort">
+                                <option value="date_desc">Newest First</option>
+                                <option value="date_asc">Oldest First</option>
+                                <option value="score_desc">Highest Score</option>
+                                <option value="score_asc">Lowest Score</option>
+                            </select>
+                        </div>
+                    </div>
                     <div id="rejected-jobs-container" class="jobs-container">
                         <p class="loading">Loading...</p>
                     </div>

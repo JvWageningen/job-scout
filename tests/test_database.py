@@ -208,3 +208,392 @@ def test_multiple_pending_notifications(tmp_db: Database) -> None:
 
     pending = tmp_db.get_pending_notifications()
     assert len(pending) == 3
+
+
+def test_get_recent_matches_with_min_score_filter(tmp_db: Database) -> None:
+    """get_recent_matches filters by min_score correctly."""
+    jobs = [
+        JobListing(
+            title="High Score Job",
+            company="Co",
+            url="https://example.com/high",
+            source="indeed",
+            status=JobStatus.MATCHED,
+            fit_score=85,
+            fit_reasoning="Good",
+            seen_at=datetime.now(UTC),
+        ),
+        JobListing(
+            title="Low Score Job",
+            company="Co",
+            url="https://example.com/low",
+            source="indeed",
+            status=JobStatus.MATCHED,
+            fit_score=30,
+            fit_reasoning="Bad",
+            seen_at=datetime.now(UTC),
+        ),
+        JobListing(
+            title="Medium Score Job",
+            company="Co",
+            url="https://example.com/medium",
+            source="indeed",
+            status=JobStatus.MATCHED,
+            fit_score=60,
+            fit_reasoning="OK",
+            seen_at=datetime.now(UTC),
+        ),
+    ]
+
+    for job in jobs:
+        tmp_db.save_job(job)
+
+    # Get all matches
+    all_matches = tmp_db.get_recent_matches(limit=10)
+    assert len(all_matches) == 3
+
+    # Filter by min_score = 70
+    high_matches = tmp_db.get_recent_matches(limit=10, min_score=70)
+    assert len(high_matches) == 1
+    assert high_matches[0].fit_score == 85
+
+    # Filter by min_score = 50
+    above_50 = tmp_db.get_recent_matches(limit=10, min_score=50)
+    assert len(above_50) == 2
+    assert all(j.fit_score >= 50 for j in above_50)
+
+
+def test_get_recent_matches_with_source_filter(tmp_db: Database) -> None:
+    """get_recent_matches filters by source correctly."""
+    jobs = [
+        JobListing(
+            title="Indeed Job",
+            company="Co",
+            url="https://example.com/indeed",
+            source="indeed",
+            status=JobStatus.MATCHED,
+            fit_score=80,
+            fit_reasoning="Good",
+            seen_at=datetime.now(UTC),
+        ),
+        JobListing(
+            title="LinkedIn Job",
+            company="Co",
+            url="https://example.com/linkedin",
+            source="linkedin",
+            status=JobStatus.MATCHED,
+            fit_score=75,
+            fit_reasoning="Good",
+            seen_at=datetime.now(UTC),
+        ),
+        JobListing(
+            title="Another Indeed Job",
+            company="Co",
+            url="https://example.com/indeed2",
+            source="indeed",
+            status=JobStatus.MATCHED,
+            fit_score=70,
+            fit_reasoning="OK",
+            seen_at=datetime.now(UTC),
+        ),
+    ]
+
+    for job in jobs:
+        tmp_db.save_job(job)
+
+    # Filter by source = indeed
+    indeed_jobs = tmp_db.get_recent_matches(limit=10, source="indeed")
+    assert len(indeed_jobs) == 2
+    assert all(j.source == "indeed" for j in indeed_jobs)
+
+    # Filter by source = linkedin
+    linkedin_jobs = tmp_db.get_recent_matches(limit=10, source="linkedin")
+    assert len(linkedin_jobs) == 1
+    assert linkedin_jobs[0].source == "linkedin"
+
+
+def test_get_recent_matches_sort_by_score_desc(tmp_db: Database) -> None:
+    """get_recent_matches sorts by score descending."""
+    jobs = [
+        JobListing(
+            title="Job 1",
+            company="Co",
+            url="https://example.com/1",
+            source="indeed",
+            status=JobStatus.MATCHED,
+            fit_score=50,
+            fit_reasoning="OK",
+            seen_at=datetime.now(UTC),
+        ),
+        JobListing(
+            title="Job 2",
+            company="Co",
+            url="https://example.com/2",
+            source="indeed",
+            status=JobStatus.MATCHED,
+            fit_score=90,
+            fit_reasoning="Great",
+            seen_at=datetime.now(UTC),
+        ),
+        JobListing(
+            title="Job 3",
+            company="Co",
+            url="https://example.com/3",
+            source="indeed",
+            status=JobStatus.MATCHED,
+            fit_score=70,
+            fit_reasoning="Good",
+            seen_at=datetime.now(UTC),
+        ),
+    ]
+
+    for job in jobs:
+        tmp_db.save_job(job)
+
+    results = tmp_db.get_recent_matches(limit=10, sort="score_desc")
+    assert len(results) == 3
+    assert results[0].fit_score == 90
+    assert results[1].fit_score == 70
+    assert results[2].fit_score == 50
+
+
+def test_get_recent_matches_sort_by_score_asc(tmp_db: Database) -> None:
+    """get_recent_matches sorts by score ascending."""
+    jobs = [
+        JobListing(
+            title="Job 1",
+            company="Co",
+            url="https://example.com/1",
+            source="indeed",
+            status=JobStatus.MATCHED,
+            fit_score=50,
+            fit_reasoning="OK",
+            seen_at=datetime.now(UTC),
+        ),
+        JobListing(
+            title="Job 2",
+            company="Co",
+            url="https://example.com/2",
+            source="indeed",
+            status=JobStatus.MATCHED,
+            fit_score=90,
+            fit_reasoning="Great",
+            seen_at=datetime.now(UTC),
+        ),
+        JobListing(
+            title="Job 3",
+            company="Co",
+            url="https://example.com/3",
+            source="indeed",
+            status=JobStatus.MATCHED,
+            fit_score=70,
+            fit_reasoning="Good",
+            seen_at=datetime.now(UTC),
+        ),
+    ]
+
+    for job in jobs:
+        tmp_db.save_job(job)
+
+    results = tmp_db.get_recent_matches(limit=10, sort="score_asc")
+    assert len(results) == 3
+    assert results[0].fit_score == 50
+    assert results[1].fit_score == 70
+    assert results[2].fit_score == 90
+
+
+def test_get_recent_matches_sort_by_date_desc(tmp_db: Database) -> None:
+    """get_recent_matches sorts by date descending (default)."""
+    from datetime import timedelta
+
+    base_time = datetime.now(UTC)
+    jobs = [
+        JobListing(
+            title="Job 1",
+            company="Co",
+            url="https://example.com/1",
+            source="indeed",
+            status=JobStatus.MATCHED,
+            fit_score=75,
+            fit_reasoning="Good",
+            seen_at=base_time,
+        ),
+        JobListing(
+            title="Job 2",
+            company="Co",
+            url="https://example.com/2",
+            source="indeed",
+            status=JobStatus.MATCHED,
+            fit_score=75,
+            fit_reasoning="Good",
+            seen_at=base_time + timedelta(hours=1),
+        ),
+        JobListing(
+            title="Job 3",
+            company="Co",
+            url="https://example.com/3",
+            source="indeed",
+            status=JobStatus.MATCHED,
+            fit_score=75,
+            fit_reasoning="Good",
+            seen_at=base_time + timedelta(hours=2),
+        ),
+    ]
+
+    for job in jobs:
+        tmp_db.save_job(job)
+
+    results = tmp_db.get_recent_matches(limit=10, sort="date_desc")
+    assert len(results) == 3
+    assert results[0].title == "Job 3"
+    assert results[1].title == "Job 2"
+    assert results[2].title == "Job 1"
+
+
+def test_get_rejected_jobs_with_min_score_filter(tmp_db: Database) -> None:
+    """get_rejected_jobs filters by min_score correctly."""
+    jobs = [
+        JobListing(
+            title="High Score Rejected",
+            company="Co",
+            url="https://example.com/high",
+            source="indeed",
+            status=JobStatus.REJECTED,
+            fit_score=45,
+            fit_reasoning="Bad",
+            seen_at=datetime.now(UTC),
+        ),
+        JobListing(
+            title="Low Score Rejected",
+            company="Co",
+            url="https://example.com/low",
+            source="indeed",
+            status=JobStatus.REJECTED,
+            fit_score=20,
+            fit_reasoning="Very bad",
+            seen_at=datetime.now(UTC),
+        ),
+    ]
+
+    for job in jobs:
+        tmp_db.save_job(job)
+
+    # Get all rejected
+    all_rejected = tmp_db.get_rejected_jobs(limit=10)
+    assert len(all_rejected) == 2
+
+    # Filter by min_score = 30
+    above_30 = tmp_db.get_rejected_jobs(limit=10, min_score=30)
+    assert len(above_30) == 1
+    assert above_30[0].fit_score == 45
+
+
+def test_get_rejected_jobs_with_source_filter(tmp_db: Database) -> None:
+    """get_rejected_jobs filters by source correctly."""
+    jobs = [
+        JobListing(
+            title="Indeed Rejected",
+            company="Co",
+            url="https://example.com/indeed",
+            source="indeed",
+            status=JobStatus.REJECTED,
+            fit_score=25,
+            fit_reasoning="Bad",
+            seen_at=datetime.now(UTC),
+        ),
+        JobListing(
+            title="LinkedIn Rejected",
+            company="Co",
+            url="https://example.com/linkedin",
+            source="linkedin",
+            status=JobStatus.REJECTED,
+            fit_score=30,
+            fit_reasoning="Bad",
+            seen_at=datetime.now(UTC),
+        ),
+    ]
+
+    for job in jobs:
+        tmp_db.save_job(job)
+
+    # Filter by source
+    indeed_rejected = tmp_db.get_rejected_jobs(limit=10, source="indeed")
+    assert len(indeed_rejected) == 1
+    assert indeed_rejected[0].source == "indeed"
+
+
+def test_sql_injection_safety_in_source_filter(tmp_db: Database) -> None:
+    """Source filter using parameterized queries is safe from SQL injection."""
+    job = JobListing(
+        title="Test Job",
+        company="Co",
+        url="https://example.com/test",
+        source="indeed",
+        status=JobStatus.MATCHED,
+        fit_score=75,
+        fit_reasoning="Good",
+        seen_at=datetime.now(UTC),
+    )
+    tmp_db.save_job(job)
+
+    # Try to inject SQL via source parameter
+    malicious_source = "' OR '1'='1"
+
+    # This should not raise an error and should not return any jobs
+    results = tmp_db.get_recent_matches(limit=10, source=malicious_source)
+    assert len(results) == 0
+
+    # Try another injection technique
+    malicious_source2 = "'; DROP TABLE jobs; --"
+    results2 = tmp_db.get_recent_matches(limit=10, source=malicious_source2)
+    assert len(results2) == 0
+
+    # Verify the job table still exists and has our job
+    all_jobs = tmp_db.get_recent_matches(limit=10)
+    assert len(all_jobs) == 1
+
+
+def test_combined_filters_min_score_and_source(tmp_db: Database) -> None:
+    """get_recent_matches correctly applies both min_score and source filters."""
+    jobs = [
+        JobListing(
+            title="Indeed High",
+            company="Co",
+            url="https://example.com/1",
+            source="indeed",
+            status=JobStatus.MATCHED,
+            fit_score=85,
+            fit_reasoning="Good",
+            seen_at=datetime.now(UTC),
+        ),
+        JobListing(
+            title="Indeed Low",
+            company="Co",
+            url="https://example.com/2",
+            source="indeed",
+            status=JobStatus.MATCHED,
+            fit_score=40,
+            fit_reasoning="Bad",
+            seen_at=datetime.now(UTC),
+        ),
+        JobListing(
+            title="LinkedIn High",
+            company="Co",
+            url="https://example.com/3",
+            source="linkedin",
+            status=JobStatus.MATCHED,
+            fit_score=80,
+            fit_reasoning="Good",
+            seen_at=datetime.now(UTC),
+        ),
+    ]
+
+    for job in jobs:
+        tmp_db.save_job(job)
+
+    # Filter by source=indeed AND min_score=70
+    results = tmp_db.get_recent_matches(limit=10, source="indeed", min_score=70)
+    assert len(results) == 1
+    assert results[0].title == "Indeed High"
+    assert results[0].source == "indeed"
+    assert results[0].fit_score >= 70

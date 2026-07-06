@@ -220,6 +220,394 @@ class TestGetRejectedJobs:
         assert jobs[0]["fit_score"] == 20
 
 
+class TestGetMatchedJobsFiltering:
+    """Tests for filtering and sorting in GET /api/jobs/matched endpoint."""
+
+    def test_get_matched_jobs_with_min_score_filter(
+        self, client: TestClient, test_user: str, temp_data_dir: Path
+    ) -> None:
+        """Test filtering matched jobs by minimum score."""
+        db_path = user_db_path(test_user)
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        db = Database(db_path)
+
+        # Create jobs with different scores
+        jobs_data = [
+            ("High Score", 85),
+            ("Low Score", 30),
+            ("Medium Score", 60),
+        ]
+
+        for title, score in jobs_data:
+            job = JobListing(
+                title=title,
+                company="Test Corp",
+                url=f"https://example.com/{title.lower().replace(' ', '-')}",
+                source="indeed",
+                status=JobStatus.MATCHED,
+                fit_score=score,
+            )
+            db.save_job(job)
+
+        # Get all matched jobs
+        response = client.get(f"/api/jobs/matched?user={test_user}&limit=20")
+        assert response.status_code == 200
+        assert len(response.json()) == 3
+
+        # Filter by min_score = 70
+        response = client.get(
+            f"/api/jobs/matched?user={test_user}&limit=20&min_score=70"
+        )
+        assert response.status_code == 200
+        results = response.json()
+        assert len(results) == 1
+        assert results[0]["title"] == "High Score"
+        assert results[0]["fit_score"] == 85
+
+    def test_get_matched_jobs_with_source_filter(
+        self, client: TestClient, test_user: str, temp_data_dir: Path
+    ) -> None:
+        """Test filtering matched jobs by source."""
+        db_path = user_db_path(test_user)
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        db = Database(db_path)
+
+        # Create jobs with different sources
+        jobs_data = [
+            ("Indeed Job", "indeed"),
+            ("LinkedIn Job", "linkedin"),
+            ("Another Indeed Job", "indeed"),
+        ]
+
+        for title, source in jobs_data:
+            job = JobListing(
+                title=title,
+                company="Test Corp",
+                url=f"https://example.com/{title.lower().replace(' ', '-')}",
+                source=source,
+                status=JobStatus.MATCHED,
+                fit_score=75,
+            )
+            db.save_job(job)
+
+        # Get all matched jobs
+        response = client.get(f"/api/jobs/matched?user={test_user}&limit=20")
+        assert response.status_code == 200
+        assert len(response.json()) == 3
+
+        # Filter by source = indeed
+        response = client.get(
+            f"/api/jobs/matched?user={test_user}&limit=20&source=indeed"
+        )
+        assert response.status_code == 200
+        results = response.json()
+        assert len(results) == 2
+        assert all(j["source"] == "indeed" for j in results)
+
+    def test_get_matched_jobs_sort_by_score_desc(
+        self, client: TestClient, test_user: str, temp_data_dir: Path
+    ) -> None:
+        """Test sorting matched jobs by score descending."""
+        db_path = user_db_path(test_user)
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        db = Database(db_path)
+
+        # Create jobs with different scores
+        scores = [50, 90, 70]
+        for idx, score in enumerate(scores):
+            job = JobListing(
+                title=f"Job {idx}",
+                company="Test Corp",
+                url=f"https://example.com/job-{idx}",
+                source="indeed",
+                status=JobStatus.MATCHED,
+                fit_score=score,
+            )
+            db.save_job(job)
+
+        # Sort by score descending
+        response = client.get(
+            f"/api/jobs/matched?user={test_user}&limit=20&sort=score_desc"
+        )
+        assert response.status_code == 200
+        results = response.json()
+        assert len(results) == 3
+        assert results[0]["fit_score"] == 90
+        assert results[1]["fit_score"] == 70
+        assert results[2]["fit_score"] == 50
+
+    def test_get_matched_jobs_sort_by_score_asc(
+        self, client: TestClient, test_user: str, temp_data_dir: Path
+    ) -> None:
+        """Test sorting matched jobs by score ascending."""
+        db_path = user_db_path(test_user)
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        db = Database(db_path)
+
+        # Create jobs with different scores
+        scores = [50, 90, 70]
+        for idx, score in enumerate(scores):
+            job = JobListing(
+                title=f"Job {idx}",
+                company="Test Corp",
+                url=f"https://example.com/job-{idx}",
+                source="indeed",
+                status=JobStatus.MATCHED,
+                fit_score=score,
+            )
+            db.save_job(job)
+
+        # Sort by score ascending
+        response = client.get(
+            f"/api/jobs/matched?user={test_user}&limit=20&sort=score_asc"
+        )
+        assert response.status_code == 200
+        results = response.json()
+        assert len(results) == 3
+        assert results[0]["fit_score"] == 50
+        assert results[1]["fit_score"] == 70
+        assert results[2]["fit_score"] == 90
+
+    def test_get_matched_jobs_invalid_sort_parameter(
+        self, client: TestClient, test_user: str, temp_data_dir: Path
+    ) -> None:
+        """Test that invalid sort parameter returns 400."""
+        # Create an empty database
+        db_path = user_db_path(test_user)
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        Database(db_path)
+
+        response = client.get(
+            f"/api/jobs/matched?user={test_user}&limit=20&sort=invalid_sort"
+        )
+        assert response.status_code == 400
+
+    def test_get_matched_jobs_sql_injection_in_source(
+        self, client: TestClient, test_user: str, temp_data_dir: Path
+    ) -> None:
+        """Test that source filter is safe from SQL injection."""
+        db_path = user_db_path(test_user)
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        db = Database(db_path)
+
+        job = JobListing(
+            title="Real Job",
+            company="Test Corp",
+            url="https://example.com/real",
+            source="indeed",
+            status=JobStatus.MATCHED,
+            fit_score=75,
+        )
+        db.save_job(job)
+
+        # Try SQL injection
+        malicious_source = "' OR '1'='1"
+        response = client.get(
+            f"/api/jobs/matched?user={test_user}&limit=20&source={malicious_source}"
+        )
+        assert response.status_code == 200
+        results = response.json()
+        # Should return no results (no jobs with that source)
+        assert len(results) == 0
+
+        # Verify original job still exists
+        response = client.get(f"/api/jobs/matched?user={test_user}&limit=20")
+        assert len(response.json()) == 1
+
+    def test_get_matched_jobs_combined_filters(
+        self, client: TestClient, test_user: str, temp_data_dir: Path
+    ) -> None:
+        """Test applying multiple filters together."""
+        db_path = user_db_path(test_user)
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        db = Database(db_path)
+
+        # Create jobs with various combinations
+        test_data = [
+            ("Indeed High", "indeed", 85),
+            ("Indeed Low", "indeed", 40),
+            ("LinkedIn High", "linkedin", 80),
+        ]
+
+        for title, source, score in test_data:
+            job = JobListing(
+                title=title,
+                company="Test Corp",
+                url=f"https://example.com/{title.lower().replace(' ', '-')}",
+                source=source,
+                status=JobStatus.MATCHED,
+                fit_score=score,
+            )
+            db.save_job(job)
+
+        # Filter by source=indeed AND min_score=70
+        response = client.get(
+            f"/api/jobs/matched?user={test_user}&limit=20&source=indeed&min_score=70"
+        )
+        assert response.status_code == 200
+        results = response.json()
+        assert len(results) == 1
+        assert results[0]["title"] == "Indeed High"
+        assert results[0]["source"] == "indeed"
+        assert results[0]["fit_score"] >= 70
+
+
+class TestGetRejectedJobsFiltering:
+    """Tests for filtering and sorting in GET /api/jobs/rejected endpoint."""
+
+    def test_get_rejected_jobs_with_min_score_filter(
+        self, client: TestClient, test_user: str, temp_data_dir: Path
+    ) -> None:
+        """Test filtering rejected jobs by minimum score."""
+        db_path = user_db_path(test_user)
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        db = Database(db_path)
+
+        # Create rejected jobs with different scores
+        jobs_data = [
+            ("Higher Score", 45),
+            ("Lower Score", 20),
+        ]
+
+        for title, score in jobs_data:
+            job = JobListing(
+                title=title,
+                company="Test Corp",
+                url=f"https://example.com/{title.lower().replace(' ', '-')}",
+                source="indeed",
+                status=JobStatus.REJECTED,
+                fit_score=score,
+            )
+            db.save_job(job)
+
+        # Get all rejected jobs
+        response = client.get(f"/api/jobs/rejected?user={test_user}&limit=20")
+        assert response.status_code == 200
+        assert len(response.json()) == 2
+
+        # Filter by min_score = 30
+        response = client.get(
+            f"/api/jobs/rejected?user={test_user}&limit=20&min_score=30"
+        )
+        assert response.status_code == 200
+        results = response.json()
+        assert len(results) == 1
+        assert results[0]["title"] == "Higher Score"
+        assert results[0]["fit_score"] == 45
+
+    def test_get_rejected_jobs_with_source_filter(
+        self, client: TestClient, test_user: str, temp_data_dir: Path
+    ) -> None:
+        """Test filtering rejected jobs by source."""
+        db_path = user_db_path(test_user)
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        db = Database(db_path)
+
+        # Create rejected jobs with different sources
+        jobs_data = [
+            ("Indeed Rejected", "indeed"),
+            ("LinkedIn Rejected", "linkedin"),
+        ]
+
+        for title, source in jobs_data:
+            job = JobListing(
+                title=title,
+                company="Test Corp",
+                url=f"https://example.com/{title.lower().replace(' ', '-')}",
+                source=source,
+                status=JobStatus.REJECTED,
+                fit_score=25,
+            )
+            db.save_job(job)
+
+        # Filter by source = indeed
+        response = client.get(
+            f"/api/jobs/rejected?user={test_user}&limit=20&source=indeed"
+        )
+        assert response.status_code == 200
+        results = response.json()
+        assert len(results) == 1
+        assert results[0]["source"] == "indeed"
+
+    def test_get_rejected_jobs_sort_by_score_desc(
+        self, client: TestClient, test_user: str, temp_data_dir: Path
+    ) -> None:
+        """Test sorting rejected jobs by score descending."""
+        db_path = user_db_path(test_user)
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        db = Database(db_path)
+
+        # Create rejected jobs with different scores
+        scores = [20, 50, 35]
+        for idx, score in enumerate(scores):
+            job = JobListing(
+                title=f"Rejected {idx}",
+                company="Test Corp",
+                url=f"https://example.com/rejected-{idx}",
+                source="indeed",
+                status=JobStatus.REJECTED,
+                fit_score=score,
+            )
+            db.save_job(job)
+
+        # Sort by score descending
+        response = client.get(
+            f"/api/jobs/rejected?user={test_user}&limit=20&sort=score_desc"
+        )
+        assert response.status_code == 200
+        results = response.json()
+        assert len(results) == 3
+        assert results[0]["fit_score"] == 50
+        assert results[1]["fit_score"] == 35
+        assert results[2]["fit_score"] == 20
+
+    def test_get_rejected_jobs_invalid_sort_parameter(
+        self, client: TestClient, test_user: str, temp_data_dir: Path
+    ) -> None:
+        """Test that invalid sort parameter returns 400."""
+        # Create an empty database
+        db_path = user_db_path(test_user)
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        Database(db_path)
+
+        response = client.get(
+            f"/api/jobs/rejected?user={test_user}&limit=20&sort=bad_sort"
+        )
+        assert response.status_code == 400
+
+    def test_get_rejected_jobs_sql_injection_in_source(
+        self, client: TestClient, test_user: str, temp_data_dir: Path
+    ) -> None:
+        """Test that source filter is safe from SQL injection."""
+        db_path = user_db_path(test_user)
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        db = Database(db_path)
+
+        job = JobListing(
+            title="Real Rejected Job",
+            company="Test Corp",
+            url="https://example.com/real-rejected",
+            source="indeed",
+            status=JobStatus.REJECTED,
+            fit_score=25,
+        )
+        db.save_job(job)
+
+        # Try SQL injection with quote
+        malicious_source = "'; DROP TABLE jobs; --"
+        response = client.get(
+            f"/api/jobs/rejected?user={test_user}&limit=20&source={malicious_source}"
+        )
+        assert response.status_code == 200
+        results = response.json()
+        # Should return no results
+        assert len(results) == 0
+
+        # Verify job table still exists
+        response = client.get(f"/api/jobs/rejected?user={test_user}&limit=20")
+        assert len(response.json()) == 1
+
+
 class TestGetScheduleStatus:
     """Tests for GET /api/schedule/status endpoint."""
 

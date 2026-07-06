@@ -160,13 +160,21 @@ def create_app() -> FastAPI:
 
     @app.get("/api/jobs/matched")
     def get_matched_jobs(
-        user: str | None = None, limit: int = Query(20, ge=1, le=100)
+        user: str | None = None,
+        limit: int = Query(20, ge=1, le=100),
+        min_score: int | None = Query(None, ge=0, le=100),
+        source: str | None = None,
+        sort: str = Query("date_desc"),
     ) -> list[JobListing]:
-        """Get recently matched jobs for a user.
+        """Get recently matched jobs for a user with optional filtering and sorting.
 
         Args:
             user: User name (required).
             limit: Maximum number of jobs to return (default 20, max 100).
+            min_score: Optional minimum fit score filter (0-100).
+            source: Optional source name filter (exact match).
+            sort: Sort order - 'score_desc', 'score_asc', 'date_desc'
+                (default), or 'date_asc'.
 
         Returns:
             List of matched job listings.
@@ -179,24 +187,42 @@ def create_app() -> FastAPI:
         if user not in list_users():
             raise HTTPException(status_code=404, detail=f"User '{user}' not found")
 
+        # Validate sort parameter
+        valid_sorts = {"score_desc", "score_asc", "date_desc", "date_asc"}
+        if sort not in valid_sorts:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid sort value. Must be one of: {', '.join(valid_sorts)}",
+            )
+
         try:
             db_path = user_db_path(user)
             if not db_path.exists():
                 return []
             db = Database(db_path)
-            return db.get_recent_matches(limit)
+            return db.get_recent_matches(
+                limit=limit, min_score=min_score, source=source, sort=sort
+            )
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     @app.get("/api/jobs/rejected")
     def get_rejected_jobs(
-        user: str | None = None, limit: int = Query(20, ge=1, le=100)
+        user: str | None = None,
+        limit: int = Query(20, ge=1, le=100),
+        min_score: int | None = Query(None, ge=0, le=100),
+        source: str | None = None,
+        sort: str = Query("date_desc"),
     ) -> list[JobListing]:
-        """Get recently rejected jobs for a user.
+        """Get recently rejected jobs for a user with optional filtering and sorting.
 
         Args:
             user: User name (required).
             limit: Maximum number of jobs to return (default 20, max 100).
+            min_score: Optional minimum fit score filter (0-100).
+            source: Optional source name filter (exact match).
+            sort: Sort order - 'score_desc', 'score_asc', 'date_desc'
+                (default), or 'date_asc'.
 
         Returns:
             List of rejected job listings.
@@ -209,12 +235,22 @@ def create_app() -> FastAPI:
         if user not in list_users():
             raise HTTPException(status_code=404, detail=f"User '{user}' not found")
 
+        # Validate sort parameter
+        valid_sorts = {"score_desc", "score_asc", "date_desc", "date_asc"}
+        if sort not in valid_sorts:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid sort value. Must be one of: {', '.join(valid_sorts)}",
+            )
+
         try:
             db_path = user_db_path(user)
             if not db_path.exists():
                 return []
             db = Database(db_path)
-            return db.get_rejected_jobs(limit)
+            return db.get_rejected_jobs(
+                limit=limit, min_score=min_score, source=source, sort=sort
+            )
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
 

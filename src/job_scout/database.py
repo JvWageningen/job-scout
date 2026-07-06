@@ -417,32 +417,100 @@ class Database:
             ).fetchall()
         return [self._row_to_job(r) for r in rows]
 
-    def get_recent_matches(self, limit: int = 20) -> list[JobListing]:
-        """Return the most recently matched jobs.
+    def get_recent_matches(
+        self,
+        limit: int = 20,
+        min_score: int | None = None,
+        source: str | None = None,
+        sort: str = "date_desc",
+    ) -> list[JobListing]:
+        """Return the most recently matched jobs with optional filtering and sorting.
 
         Args:
             limit: Maximum number of results.
+            min_score: Optional minimum fit score to filter by (inclusive).
+            source: Optional source name to filter by (exact match).
+            sort: Sort order - one of 'score_desc', 'score_asc',
+                'date_desc' (default), 'date_asc'.
 
         Returns:
             List of matched JobListing instances.
         """
+        # Map sort options to SQL ORDER BY clauses
+        sort_map = {
+            "score_desc": "fit_score DESC",
+            "score_asc": "fit_score ASC",
+            "date_desc": "seen_at DESC",
+            "date_asc": "seen_at ASC",
+        }
+        order_clause = sort_map.get(sort, "seen_at DESC")
+
+        # Build WHERE clause conditionally
+        where_parts = ["status = ?"]
+        params: list[int | str] = ["matched"]
+
+        if min_score is not None:
+            where_parts.append("fit_score >= ?")
+            params.append(min_score)
+
+        if source is not None:
+            where_parts.append("source = ?")
+            params.append(source)
+
+        where_clause = " AND ".join(where_parts)
+        params.append(limit)
+
         with self._conn() as conn:
-            sql = "SELECT * FROM jobs WHERE status='matched' ORDER BY seen_at DESC LIMIT ?"  # noqa: E501
-            rows = conn.execute(sql, (limit,)).fetchall()
+            sql = f"SELECT * FROM jobs WHERE {where_clause} ORDER BY {order_clause} LIMIT ?"  # noqa: E501
+            rows = conn.execute(sql, params).fetchall()
         return [self._row_to_job(r) for r in rows]
 
-    def get_rejected_jobs(self, limit: int = 20) -> list[JobListing]:
-        """Return the most recently rejected jobs.
+    def get_rejected_jobs(
+        self,
+        limit: int = 20,
+        min_score: int | None = None,
+        source: str | None = None,
+        sort: str = "date_desc",
+    ) -> list[JobListing]:
+        """Return the most recently rejected jobs with optional filtering and sorting.
 
         Args:
             limit: Maximum number of results.
+            min_score: Optional minimum fit score to filter by (inclusive).
+            source: Optional source name to filter by (exact match).
+            sort: Sort order - one of 'score_desc', 'score_asc',
+                'date_desc' (default), 'date_asc'.
 
         Returns:
             List of rejected JobListing instances.
         """
+        # Map sort options to SQL ORDER BY clauses
+        sort_map = {
+            "score_desc": "fit_score DESC",
+            "score_asc": "fit_score ASC",
+            "date_desc": "seen_at DESC",
+            "date_asc": "seen_at ASC",
+        }
+        order_clause = sort_map.get(sort, "seen_at DESC")
+
+        # Build WHERE clause conditionally
+        where_parts = ["status = ?"]
+        params: list[int | str] = ["rejected"]
+
+        if min_score is not None:
+            where_parts.append("fit_score >= ?")
+            params.append(min_score)
+
+        if source is not None:
+            where_parts.append("source = ?")
+            params.append(source)
+
+        where_clause = " AND ".join(where_parts)
+        params.append(limit)
+
         with self._conn() as conn:
-            sql = "SELECT * FROM jobs WHERE status='rejected' ORDER BY seen_at DESC LIMIT ?"  # noqa: E501
-            rows = conn.execute(sql, (limit,)).fetchall()
+            sql = f"SELECT * FROM jobs WHERE {where_clause} ORDER BY {order_clause} LIMIT ?"  # noqa: E501
+            rows = conn.execute(sql, params).fetchall()
         return [self._row_to_job(r) for r in rows]
 
     def _row_to_job(self, row: sqlite3.Row) -> JobListing:

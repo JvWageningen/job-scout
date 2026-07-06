@@ -175,6 +175,28 @@ function setupEventListeners() {
             initializeGlobalSetup();
         });
     }
+
+    // Filter controls for matched jobs
+    const matchedMinScore = document.getElementById('matched-min-score');
+    const matchedSource = document.getElementById('matched-source');
+    const matchedSort = document.getElementById('matched-sort');
+
+    [matchedMinScore, matchedSource, matchedSort].forEach((el) => {
+        if (el) {
+            el.addEventListener('change', loadMatchedJobs);
+        }
+    });
+
+    // Filter controls for rejected jobs
+    const rejectedMinScore = document.getElementById('rejected-min-score');
+    const rejectedSource = document.getElementById('rejected-source');
+    const rejectedSort = document.getElementById('rejected-sort');
+
+    [rejectedMinScore, rejectedSource, rejectedSort].forEach((el) => {
+        if (el) {
+            el.addEventListener('change', loadRejectedJobs);
+        }
+    });
 }
 
 /**
@@ -246,7 +268,7 @@ async function loadDashboard() {
 }
 
 /**
- * Load and display recently matched jobs
+ * Load and display recently matched jobs with filtering and sorting
  */
 async function loadMatchedJobs() {
     if (!currentUser) {
@@ -257,7 +279,27 @@ async function loadMatchedJobs() {
     container.innerHTML = '<p class="loading">Loading matched jobs...</p>';
 
     try {
-        const response = await fetchWithAuth(`${API_BASE}/jobs/matched?user=${encodeURIComponent(currentUser)}&limit=20`);
+        // Get filter values from UI
+        const minScore = document.getElementById('matched-min-score').value;
+        const source = document.getElementById('matched-source').value;
+        const sort = document.getElementById('matched-sort').value;
+
+        // Build query string
+        const params = new URLSearchParams({
+            user: currentUser,
+            limit: '20',
+        });
+        if (minScore) {
+            params.append('min_score', minScore);
+        }
+        if (source) {
+            params.append('source', source);
+        }
+        if (sort) {
+            params.append('sort', sort);
+        }
+
+        const response = await fetchWithAuth(`${API_BASE}/jobs/matched?${params.toString()}`);
         if (!response.ok) {
             container.innerHTML = '<p class="empty">Failed to load matched jobs</p>';
             return;
@@ -271,6 +313,7 @@ async function loadMatchedJobs() {
         }
 
         container.innerHTML = jobs.map((job) => renderJobCard(job, false)).join('');
+        updateSourceDropdown(jobs, 'matched-source');
     } catch (error) {
         console.error('Error loading matched jobs:', error);
         container.innerHTML = '<p class="empty">Error loading matched jobs</p>';
@@ -278,7 +321,7 @@ async function loadMatchedJobs() {
 }
 
 /**
- * Load and display recently rejected jobs
+ * Load and display recently rejected jobs with filtering and sorting
  */
 async function loadRejectedJobs() {
     if (!currentUser) {
@@ -289,7 +332,27 @@ async function loadRejectedJobs() {
     container.innerHTML = '<p class="loading">Loading rejected jobs...</p>';
 
     try {
-        const response = await fetchWithAuth(`${API_BASE}/jobs/rejected?user=${encodeURIComponent(currentUser)}&limit=20`);
+        // Get filter values from UI
+        const minScore = document.getElementById('rejected-min-score').value;
+        const source = document.getElementById('rejected-source').value;
+        const sort = document.getElementById('rejected-sort').value;
+
+        // Build query string
+        const params = new URLSearchParams({
+            user: currentUser,
+            limit: '20',
+        });
+        if (minScore) {
+            params.append('min_score', minScore);
+        }
+        if (source) {
+            params.append('source', source);
+        }
+        if (sort) {
+            params.append('sort', sort);
+        }
+
+        const response = await fetchWithAuth(`${API_BASE}/jobs/rejected?${params.toString()}`);
         if (!response.ok) {
             container.innerHTML = '<p class="empty">Failed to load rejected jobs</p>';
             return;
@@ -303,6 +366,7 @@ async function loadRejectedJobs() {
         }
 
         container.innerHTML = jobs.map((job) => renderJobCard(job, true)).join('');
+        updateSourceDropdown(jobs, 'rejected-source');
     } catch (error) {
         console.error('Error loading rejected jobs:', error);
         container.innerHTML = '<p class="empty">Error loading rejected jobs</p>';
@@ -344,6 +408,48 @@ function renderJobCard(job, rejected) {
             <p><a href="${escapeHtml(job.url)}" target="_blank" rel="noopener noreferrer">View Job →</a></p>
         </div>
     `;
+}
+
+/**
+ * Update source dropdown with unique sources from loaded jobs
+ *
+ * @param {Array<Object>} jobs - Array of job objects
+ * @param {string} dropdownId - ID of the source dropdown element
+ */
+function updateSourceDropdown(jobs, dropdownId) {
+    const dropdown = document.getElementById(dropdownId);
+    if (!dropdown) {
+        return;
+    }
+
+    // Get unique sources from jobs
+    const sources = new Set();
+    jobs.forEach((job) => {
+        if (job.source) {
+            sources.add(job.source);
+        }
+    });
+
+    // Get current selected value
+    const currentValue = dropdown.value;
+
+    // Clear existing options except the first one (All Sources)
+    dropdown.innerHTML = '<option value="">All Sources</option>';
+
+    // Add unique sources as options
+    Array.from(sources)
+        .sort()
+        .forEach((source) => {
+            const option = document.createElement('option');
+            option.value = source;
+            option.textContent = source;
+            dropdown.appendChild(option);
+        });
+
+    // Restore the previously selected value if it still exists
+    if (currentValue && Array.from(dropdown.options).some((opt) => opt.value === currentValue)) {
+        dropdown.value = currentValue;
+    }
 }
 
 /**
