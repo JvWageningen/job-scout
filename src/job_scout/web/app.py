@@ -1165,13 +1165,13 @@ def create_app() -> FastAPI:
         """Get the approval queue for jobs awaiting approval.
 
         Args:
-            user: User name (optional).
+            user: User name. Required; jobs are stored per-user.
 
         Returns:
             Dictionary with approval queue status and job listings.
 
         Raises:
-            HTTPException: If user does not exist.
+            HTTPException: If user is missing or does not exist.
         """
         if not user:
             raise HTTPException(status_code=400, detail="User is required")

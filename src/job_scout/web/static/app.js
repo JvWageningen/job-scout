@@ -1902,10 +1902,16 @@ async function testNotificationChannel() {
  */
 async function loadApprovalQueue() {
     const container = document.getElementById('approval-queue-container');
+
+    if (!currentUser) {
+        container.innerHTML = '<p>Select a user to view their approval queue.</p>';
+        return;
+    }
+
     container.innerHTML = '<p class="loading">Loading approval queue...</p>';
 
     try {
-        const response = await fetchWithAuth(`${API_BASE}/approval/queue`);
+        const response = await fetchWithAuth(`${API_BASE}/approval/queue?user=${encodeURIComponent(currentUser)}`);
         if (!response.ok) {
             throw new Error(`HTTP error! status: ${response.status}`);
         }
