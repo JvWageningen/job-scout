@@ -361,14 +361,75 @@ The web dashboard includes an **Analytics** tab displaying recent runs in a tabl
 
 ### Scheduling
 
+Per-user cron scheduling lets each user run job searches on their own schedule. Each scheduled job fires at its configured time and weekdays, running `job-scout run --user <name>` for that user.
+
+#### Schedule a Specific User
+
 ```bash
-uv run job-scout schedule install           # daily cron at 08:00
-uv run job-scout schedule install --hour 7  # daily cron at 07:00
-uv run job-scout schedule status            # check if cron is installed
-uv run job-scout schedule remove            # remove the cron job
+# Install cron job for user 'alice' at 08:00 on weekdays (Monday-Friday)
+uv run job-scout schedule install --user alice
+
+# Install at 07:00 on weekends (Saturday-Sunday)
+uv run job-scout schedule install --user alice --hour 7 --days 0,6
+
+# Check alice's schedule status
+uv run job-scout schedule status --user alice
+
+# Remove alice's schedule
+uv run job-scout schedule remove --user alice
 ```
 
-The cron job runs `job-scout run --all`, picking up all configured users automatically. Secrets are read from `data/secrets.yaml` so no environment configuration is needed for cron.
+#### Weekday Options (Cron Syntax)
+
+The `--days` parameter uses cron day-of-week syntax (0 = Sunday, 1 = Monday, ... 6 = Saturday):
+
+- `1-5` - Weekdays only, Monday-Friday (default)
+- `*` - Every day
+- `0,6` - Weekends only (Saturday and Sunday)
+- `0` - Sunday only
+- `1` - Monday only
+- etc.
+
+#### Global Schedule (Backward Compatibility)
+
+For a single-user setup or to run all users at the same time:
+
+```bash
+# Install global cron (runs 'job-scout run --all')
+uv run job-scout schedule install
+
+# Install global cron at 07:00
+uv run job-scout schedule install --hour 7
+
+# Check global schedule
+uv run job-scout schedule status
+
+# Remove global schedule
+uv run job-scout schedule remove
+```
+
+#### Pause a User's Schedule
+
+To temporarily stop a user's scheduled runs without removing the cron job, set the `schedule_paused` field in their config via the web dashboard (Schedule tab) or CLI:
+
+```bash
+uv run job-scout config set schedule_paused true --user alice
+uv run job-scout config set schedule_paused false --user alice
+```
+
+When a paused user's cron job fires, it logs the pause and exits immediately with no processing.
+
+#### Web Dashboard Schedule Tab
+
+Each user can configure their own schedule (hour, minute, weekdays, pause toggle) via the web dashboard's Schedule tab. To manage a user's schedule:
+
+1. Open the dashboard at `http://localhost:8000`
+2. Select the user from the "Select User" dropdown
+3. Go to the Schedule tab
+4. Adjust hour, minute, weekdays, and toggle "Pause this user's scheduled runs"
+5. Click "Save Schedule" to install the cron job and save the configuration
+
+Secrets are read from `data/secrets.yaml` so no environment configuration is needed for cron.
 
 ## Project Structure
 

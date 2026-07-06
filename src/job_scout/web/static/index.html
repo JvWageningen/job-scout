@@ -523,6 +523,7 @@
             <!-- Schedule Section -->
             <section id="schedule-section" class="section hidden tab-content" data-tab="schedule">
                 <h2>Schedule</h2>
+                <p class="info-text">Select a user above to configure their schedule. Each user's job search runs on their configured schedule.</p>
                 <div id="schedule-status"></div>
                 <form id="schedule-form">
                     <div class="form-group">
@@ -533,7 +534,28 @@
                         <label for="schedule-minute">Minute (0-59):</label>
                         <input type="number" id="schedule-minute" min="0" max="59" value="0">
                     </div>
-                    <button type="submit" class="btn btn-primary">Install Schedule</button>
+                    <div class="form-group">
+                        <label for="schedule-days">Days (cron syntax):</label>
+                        <select id="schedule-days">
+                            <option value="*">Every day (*)</option>
+                            <option value="1-5" selected>Weekdays (1-5, Mon-Fri)</option>
+                            <option value="0,6">Weekends (0,6, Sat-Sun)</option>
+                            <option value="0">Sunday (0)</option>
+                            <option value="1">Monday (1)</option>
+                            <option value="2">Tuesday (2)</option>
+                            <option value="3">Wednesday (3)</option>
+                            <option value="4">Thursday (4)</option>
+                            <option value="5">Friday (5)</option>
+                            <option value="6">Saturday (6)</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="schedule-paused">
+                            Pause this user's scheduled runs
+                        </label>
+                    </div>
+                    <button type="submit" class="btn btn-primary">Save Schedule</button>
                     <button type="button" id="remove-schedule-btn" class="btn btn-secondary">Remove Schedule</button>
                 </form>
             </section>

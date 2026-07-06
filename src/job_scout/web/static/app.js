@@ -1331,38 +1331,99 @@ async function refreshKeywords() {
 /**
  * Load and display schedule status
  */
+/**
+ * Load schedule data for the current user
+ */
 async function loadScheduleStatus() {
+    if (!currentUser) {
+        document.getElementById('schedule-status').innerHTML =
+            '<p style="color: #999;">Please select a user to view their schedule</p>';
+        return;
+    }
+
     try {
-        const response = await fetchWithAuth(`${API_BASE}/schedule/status`);
-        if (!response.ok) {
-            return;
+        // Load schedule status
+        const response = await fetchWithAuth(
+            `${API_BASE}/schedule/status?user=${encodeURIComponent(currentUser)}`
+        );
+        if (response.ok) {
+            const data = await response.json();
+            const statusDiv = document.getElementById('schedule-status');
+            statusDiv.innerHTML =
+                `<p><strong>Current Status:</strong> ${escapeHtml(data.status)}</p>`;
         }
 
-        const data = await response.json();
-        const statusDiv = document.getElementById('schedule-status');
-        statusDiv.innerHTML = `<p><strong>Current Status:</strong> ${escapeHtml(data.status)}</p>`;
+        // Load schedule config from user's config
+        const configResponse = await fetchWithAuth(
+            `${API_BASE}/config?user=${encodeURIComponent(currentUser)}`
+        );
+        if (configResponse.ok) {
+            const config = await configResponse.json();
+            document.getElementById('schedule-hour').value = config.schedule_hour || 8;
+            document.getElementById('schedule-minute').value =
+                config.schedule_minute || 0;
+            document.getElementById('schedule-days').value = config.schedule_days || '1-5';
+            document.getElementById('schedule-paused').checked =
+                config.schedule_paused || false;
+        }
     } catch (error) {
         console.error('Error loading schedule status:', error);
     }
 }
 
 /**
- * Install a schedule
+ * Install or update a schedule for the current user
  */
 async function installSchedule() {
+    if (!currentUser) {
+        alert('Please select a user first');
+        return;
+    }
+
     const hour = parseInt(document.getElementById('schedule-hour').value);
     const minute = parseInt(document.getElementById('schedule-minute').value);
+    const days = document.getElementById('schedule-days').value;
+    const paused = document.getElementById('schedule-paused').checked;
 
-    if (isNaN(hour) || isNaN(minute) || hour < 0 || hour >= 24 || minute < 0 || minute >= 60) {
+    if (
+        isNaN(hour) ||
+        isNaN(minute) ||
+        hour < 0 ||
+        hour >= 24 ||
+        minute < 0 ||
+        minute >= 60
+    ) {
         alert('Invalid hour or minute');
         return;
     }
 
     try {
+        // First, save the schedule fields to config
+        const configResponse = await fetchWithAuth(`${API_BASE}/config`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                user: currentUser,
+                values: {
+                    schedule_hour: hour,
+                    schedule_minute: minute,
+                    schedule_days: days,
+                    schedule_paused: paused,
+                },
+            }),
+        });
+
+        if (!configResponse.ok) {
+            const error = await configResponse.json();
+            alert(`Error: ${error.detail || 'Failed to save schedule config'}`);
+            return;
+        }
+
+        // Then install the cron job
         const response = await fetchWithAuth(`${API_BASE}/schedule`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ hour, minute }),
+            body: JSON.stringify({ hour, minute, days, user: currentUser }),
         });
 
         if (!response.ok) {
@@ -1371,7 +1432,7 @@ async function installSchedule() {
             return;
         }
 
-        alert('Schedule installed successfully');
+        alert('Schedule saved and installed successfully');
         await loadScheduleStatus();
     } catch (error) {
         console.error('Error installing schedule:', error);
@@ -1380,17 +1441,25 @@ async function installSchedule() {
 }
 
 /**
- * Remove the schedule
+ * Remove the schedule for the current user
  */
 async function removeSchedule() {
+    if (!currentUser) {
+        alert('Please select a user first');
+        return;
+    }
+
     if (!confirm('Remove the scheduled job?')) {
         return;
     }
 
     try {
-        const response = await fetchWithAuth(`${API_BASE}/schedule`, {
-            method: 'DELETE',
-        });
+        const response = await fetchWithAuth(
+            `${API_BASE}/schedule?user=${encodeURIComponent(currentUser)}`,
+            {
+                method: 'DELETE',
+            }
+        );
 
         if (!response.ok) {
             const error = await response.json();

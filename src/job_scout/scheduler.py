@@ -23,52 +23,97 @@ def _find_job_scout_cmd() -> str:
     return f"{sys.executable} -m job_scout"
 
 
-def install_schedule(hour: int = 8, minute: int = 0) -> None:
-    """Install a daily cron job that runs job-scout at the given time.
+def _get_marker_for_user(user: str | None = None) -> str:
+    """Return the cron marker string for a given user.
 
-    Replaces any existing job-scout cron entries.
+    For backward compatibility, the global schedule (no user) uses the plain marker.
+    Per-user schedules embed the username in the marker.
+
+    Args:
+        user: User name, or None for global schedule.
+
+    Returns:
+        Cron marker string.
+    """
+    if user is None:
+        return _CRON_MARKER
+    return f"{_CRON_MARKER}:{user}"
+
+
+def install_schedule(
+    hour: int = 8, minute: int = 0, days: str = "1-5", user: str | None = None
+) -> None:
+    """Install a daily cron job for a user or globally.
+
+    For a given user, installs a per-user schedule running 'job-scout run --user
+    <name>'.
+    If user is None (backward compatible), installs a global schedule running
+    'job-scout run --all'.
 
     Args:
         hour: Hour of day to run (0-23).
         minute: Minute of the hour to run (0-59).
+        days: Day-of-week specification (cron syntax, e.g., "1-5" for Mon-Fri).
+        user: User name for per-user schedule, or None for global.
 
     Raises:
         RuntimeError: If crontab cannot be updated.
     """
     cmd = _find_job_scout_cmd()
-    from job_scout.config import get_data_dir
+    from job_scout.config import get_data_dir, user_logs_dir
 
-    log_path = get_data_dir() / "logs" / "cron.log"
+    marker = _get_marker_for_user(user)
+    if user is None:
+        log_path = get_data_dir() / "logs" / "cron.log"
+        run_arg = "run --all"
+    else:
+        log_path = user_logs_dir(user) / "cron.log"
+        run_arg = f"run --user {user}"
+
     cron_line = (
-        f"{minute} {hour} * * * {cmd} run --all >> {log_path} 2>&1 {_CRON_MARKER}"
+        f"{minute} {hour} * * {days} {cmd} {run_arg} >> {log_path} 2>&1 {marker}"
     )
 
     existing = _read_crontab()
-    lines = [ln for ln in existing.splitlines() if _CRON_MARKER not in ln]
+    lines = [ln for ln in existing.splitlines() if marker not in ln]
     lines.append(cron_line)
     _write_crontab("\n".join(lines) + "\n")
-    logger.info(f"Cron schedule installed: daily at {hour:02d}:{minute:02d}")
+    subject = user or "global"
+    logger.info(
+        f"Cron schedule installed for {subject}: "
+        f"daily at {hour:02d}:{minute:02d} on days {days}"
+    )
 
 
-def remove_schedule() -> None:
-    """Remove any job-scout cron entries."""
+def remove_schedule(user: str | None = None) -> None:
+    """Remove job-scout cron entries for a user or globally.
+
+    Args:
+        user: User name for per-user removal, or None to remove global schedule.
+    """
+    marker = _get_marker_for_user(user)
     existing = _read_crontab()
-    lines = [ln for ln in existing.splitlines() if _CRON_MARKER not in ln]
+    lines = [ln for ln in existing.splitlines() if marker not in ln]
     _write_crontab("\n".join(lines) + "\n")
-    logger.info("Cron schedule removed")
+    logger.info(f"Cron schedule removed for {user or 'global'}")
 
 
-def check_schedule_status() -> str:
+def check_schedule_status(user: str | None = None) -> str:
     """Return a description of the current cron schedule status.
+
+    Args:
+        user: User name to check, or None to check global schedule.
 
     Returns:
         Human-readable status string.
     """
+    marker = _get_marker_for_user(user)
     existing = _read_crontab()
-    entries = [ln for ln in existing.splitlines() if _CRON_MARKER in ln]
+    entries = [ln for ln in existing.splitlines() if marker in ln]
     if not entries:
-        return "No job-scout schedule installed."
-    return "Installed: " + entries[0].replace(_CRON_MARKER, "").strip()
+        subject = f"user '{user}'" if user else "global"
+        return f"No job-scout schedule installed for {subject}."
+    return "Installed: " + entries[0].replace(marker, "").strip()
 
 
 def _read_crontab() -> str:

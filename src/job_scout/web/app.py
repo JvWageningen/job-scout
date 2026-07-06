@@ -303,14 +303,17 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     @app.get("/api/schedule/status")
-    def get_schedule_status() -> dict[str, str]:
-        """Get the current schedule status.
+    def get_schedule_status(user: str | None = None) -> dict[str, str]:
+        """Get the current schedule status for a user or globally.
+
+        Args:
+            user: User name, or None for global schedule.
 
         Returns:
             Dictionary with schedule status message.
         """
         try:
-            status = check_schedule_status()
+            status = check_schedule_status(user=user)
             return {"status": status}
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -723,7 +726,7 @@ def create_app() -> FastAPI:
         """Install a daily schedule for job-scout runs.
 
         Args:
-            body: Request body with 'hour' and 'minute'.
+            body: Request body with 'hour', 'minute', 'days', and optional 'user'.
 
         Returns:
             Dictionary with status message.
@@ -734,18 +737,27 @@ def create_app() -> FastAPI:
         try:
             hour = int(body.get("hour", 8))
             minute = int(body.get("minute", 0))
+            days = body.get("days", "1-5")
+            user = body.get("user")
             if not (0 <= hour < 24 and 0 <= minute < 60):
                 raise HTTPException(status_code=400, detail="Invalid hour or minute")
-            install_schedule(hour=hour, minute=minute)
-            return {"status": f"Schedule installed for {hour:02d}:{minute:02d}"}
+            install_schedule(hour=hour, minute=minute, days=days, user=user)
+            subject = user or "global"
+            return {
+                "status": f"Schedule installed for {subject} "
+                f"at {hour:02d}:{minute:02d} on days {days}"
+            }
         except HTTPException:
             raise
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     @app.delete("/api/schedule")
-    def unset_schedule() -> dict[str, str]:
-        """Remove the daily schedule.
+    def unset_schedule(user: str | None = None) -> dict[str, str]:
+        """Remove the daily schedule for a user or globally.
+
+        Args:
+            user: User name, or None for global schedule.
 
         Returns:
             Dictionary with status message.
@@ -754,8 +766,9 @@ def create_app() -> FastAPI:
             HTTPException: If schedule removal fails.
         """
         try:
-            remove_schedule()
-            return {"status": "Schedule removed"}
+            remove_schedule(user=user)
+            subject = user or "global"
+            return {"status": f"Schedule removed for {subject}"}
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
 

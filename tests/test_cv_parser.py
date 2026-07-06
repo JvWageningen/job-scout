@@ -107,7 +107,7 @@ def test_parse_cv_structured_extracts_profile(tmp_path: Path) -> None:
     from unittest.mock import MagicMock
 
     from job_scout.cv_parser import parse_cv_structured
-    from job_scout.models import CvProfile, CvRole
+    from job_scout.models import CvProfile
 
     cv_text = "10 years of Python programming..."
     client = MagicMock()

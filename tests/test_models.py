@@ -368,6 +368,8 @@ def test_cv_profile_serialisation() -> None:
     assert restored.education == profile.education
     assert len(restored.past_roles) == len(profile.past_roles)
     assert restored.past_roles[0].title == profile.past_roles[0].title
+
+
 def test_job_status_extended() -> None:
     """Verify new application lifecycle statuses exist."""
     # Verify all expected statuses exist

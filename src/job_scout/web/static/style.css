@@ -598,6 +598,12 @@ footer {
     margin-top: 10px;
 }
 
+.info-text {
+    color: #666;
+    font-size: 0.95em;
+    margin-bottom: 15px;
+}
+
 .cv-info-item {
     margin-bottom: 15px;
     padding-bottom: 10px;
