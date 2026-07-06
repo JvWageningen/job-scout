@@ -367,6 +367,40 @@ class TestStaticFiles:
         assert "css" in response.headers["content-type"]
 
 
+class TestGlobalInit:
+    """Tests for POST /api/global-init endpoint."""
+
+    def test_initialize_global_success(self, client: TestClient) -> None:
+        """Test initializing global configuration."""
+        response = client.post(
+            "/api/global-init",
+            json={"llm_provider": "zai"},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert "initialized" in data["status"].lower()
+
+    def test_initialize_global_update(self, client: TestClient) -> None:
+        """Test that initializing global config can be updated."""
+        # First initialization
+        response1 = client.post(
+            "/api/global-init",
+            json={"llm_provider": "zai"},
+        )
+        assert response1.status_code == 200
+
+        # Second initialization with different values should succeed (update)
+        response2 = client.post(
+            "/api/global-init",
+            json={"llm_provider": "claude_cli"},
+        )
+        assert response2.status_code == 200
+
+        # Verify the update took effect
+        config = client.get("/api/config").json()
+        assert config["llm_provider"] == "claude_cli"
+
+
 class TestPostUsers:
     """Tests for POST /api/users endpoint."""
 
@@ -658,6 +692,59 @@ class TestRun:
         response = client.post("/api/run", json={"user": None, "dry_run": True})
         # Should either succeed (global run) or give clear error
         assert response.status_code in (200, 400, 500)
+
+    def test_run_all_users_success(
+        self, client: TestClient, temp_data_dir: Path, monkeypatch
+    ) -> None:
+        """Test running all users sequentially."""
+        from job_scout.config import save_user_config, user_dir
+
+        # Create two test users
+        for user_name in ["user1", "user2"]:
+            user_dir(user_name).mkdir(parents=True, exist_ok=True)
+            save_user_config(
+                user_name,
+                {
+                    "name": user_name,
+                    "profile_description": "Test profile",
+                },
+            )
+
+        # Mock execution to avoid real LLM/network calls
+        def mock_execute_run(name, *, dry_run=False, full=False):
+            pass
+
+        monkeypatch.setattr("job_scout.cli._execute_run", mock_execute_run)
+        monkeypatch.setattr(
+            "job_scout.evaluator.check_llm_available", lambda config: (True, None)
+        )
+
+        response = client.post(
+            "/api/run",
+            json={"all": True, "dry_run": True, "full": False},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "running"
+        assert "all 2 users" in data["message"].lower()
+
+    def test_run_all_users_no_users_configured(self, client: TestClient) -> None:
+        """Test running all users when none are configured."""
+        response = client.post(
+            "/api/run",
+            json={"all": True, "dry_run": True},
+        )
+        assert response.status_code == 400
+        assert "No users configured" in response.json()["detail"]
+
+    def test_run_user_and_all_conflicting(self, client: TestClient) -> None:
+        """Test that specifying both user and all returns an error."""
+        response = client.post(
+            "/api/run",
+            json={"user": "testuser", "all": True, "dry_run": True},
+        )
+        assert response.status_code == 400
+        assert "Cannot specify both" in response.json()["detail"]
 
     def test_run_pipeline_nonexistent_user(self, client: TestClient) -> None:
         """Test pipeline run with nonexistent user."""

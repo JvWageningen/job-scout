@@ -14,6 +14,27 @@
         </header>
 
         <main>
+            <!-- Global Setup Section (shown when no global config exists) -->
+            <section id="global-setup-section" class="section hidden">
+                <h2>First-Time Setup</h2>
+                <p>Initialize global settings to get started.</p>
+                <form id="global-setup-form">
+                    <div class="form-group">
+                        <label for="global-llm-provider">LLM Provider:</label>
+                        <select id="global-llm-provider">
+                            <option value="claude_cli">Claude CLI</option>
+                            <option value="zai">Z.AI</option>
+                            <option value="kilo_cli">Kilo CLI</option>
+                            <option value="local">Local (Ollama/LM Studio)</option>
+                        </select>
+                    </div>
+                    <p style="font-size: 0.9em; color: #666;">
+                        You can configure LLM settings in detail later in the LLM Settings tab.
+                    </p>
+                    <button type="submit" class="btn btn-primary">Initialize</button>
+                </form>
+            </section>
+
             <!-- Tab Navigation -->
             <nav class="tabs">
                 <button class="tab-btn active" data-tab="dashboard">Dashboard</button>

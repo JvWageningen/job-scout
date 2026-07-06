@@ -6,7 +6,7 @@
 // API base URL
 const API_BASE = '/api';
 
-// Current user state
+// Current user state (null for global, "all" for all users, or a specific user name)
 let currentUser = null;
 
 // Dashboard token stored in sessionStorage
@@ -15,6 +15,7 @@ let dashboardToken = sessionStorage.getItem('dashboardToken');
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', () => {
     setupEventListeners();
+    checkGlobalSetup();
     loadUsers();
 });
 
@@ -61,8 +62,13 @@ function setupEventListeners() {
 
     if (userSelect) {
         userSelect.addEventListener('change', (e) => {
-            currentUser = e.target.value;
-            if (currentUser) {
+            currentUser = e.target.value || null;
+            if (currentUser === 'all') {
+                // Show dashboard for all-users run
+                showDashboard();
+                // Don't load per-user data for all-users mode
+            } else if (currentUser) {
+                // Show dashboard for single user
                 showDashboard();
                 loadDashboard();
                 loadAllUserData();
@@ -161,6 +167,14 @@ function setupEventListeners() {
             }
         });
     }
+
+    const globalSetupForm = document.getElementById('global-setup-form');
+    if (globalSetupForm) {
+        globalSetupForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            initializeGlobalSetup();
+        });
+    }
 }
 
 /**
@@ -177,9 +191,15 @@ async function loadUsers() {
         const users = await response.json();
         const userSelect = document.getElementById('user-select');
 
-        // Clear existing options except the first placeholder
-        while (userSelect.options.length > 1) {
-            userSelect.remove(1);
+        // Clear existing options
+        userSelect.innerHTML = '<option value="">-- Choose a user --</option>';
+
+        // Add "all" option only if there are users
+        if (users.length > 1) {
+            const allOption = document.createElement('option');
+            allOption.value = 'all';
+            allOption.textContent = '-- All Users --';
+            userSelect.appendChild(allOption);
         }
 
         // Add user options
@@ -485,16 +505,23 @@ async function runPipeline() {
     runBtn.textContent = 'Running...';
 
     try {
+        const body = {
+            dry_run: dryRun,
+            full: full,
+        };
+        // Add either 'user' or 'all' to request
+        if (currentUser === 'all') {
+            body.all = true;
+        } else {
+            body.user = currentUser;
+        }
+
         const response = await fetchWithAuth(`${API_BASE}/run`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
             },
-            body: JSON.stringify({
-                user: currentUser,
-                dry_run: dryRun,
-                full: full,
-            }),
+            body: JSON.stringify(body),
         });
 
         if (!response.ok) {
@@ -1138,6 +1165,71 @@ async function createUser(name) {
     } catch (error) {
         console.error('Error creating user:', error);
         alert('Error creating user');
+    }
+}
+
+/**
+ * Check if global setup is needed and show/hide the setup section
+ */
+async function checkGlobalSetup() {
+    try {
+        const response = await fetchWithAuth(`${API_BASE}/config`);
+        if (!response.ok) {
+            return;
+        }
+        const config = await response.json();
+
+        // Check if profile_description is set (indicates initialized global config)
+        const setupSection = document.getElementById('global-setup-section');
+        if (!config.profile_description && setupSection) {
+            setupSection.classList.remove('hidden');
+            // Hide user section and tabs when setup is needed
+            const userSection = document.getElementById('user-section');
+            const tabs = document.querySelector('.tabs');
+            if (userSection) userSection.classList.add('hidden');
+            if (tabs) tabs.classList.add('hidden');
+        } else if (setupSection) {
+            setupSection.classList.add('hidden');
+        }
+    } catch (error) {
+        console.error('Error checking global setup:', error);
+    }
+}
+
+/**
+ * Initialize global configuration
+ */
+async function initializeGlobalSetup() {
+    const provider = document.getElementById('global-llm-provider').value;
+
+    try {
+        const response = await fetchWithAuth(`${API_BASE}/global-init`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                llm_provider: provider,
+            }),
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            alert(`Error: ${error.detail || 'Failed to initialize'}`);
+            return;
+        }
+
+        alert('Global configuration initialized successfully');
+        // Hide setup section and show user section
+        const setupSection = document.getElementById('global-setup-section');
+        const userSection = document.getElementById('user-section');
+        const tabs = document.querySelector('.tabs');
+        if (setupSection) setupSection.classList.add('hidden');
+        if (userSection) userSection.classList.remove('hidden');
+        if (tabs) tabs.classList.remove('hidden');
+        // Refresh users list
+        await loadUsers();
+    } catch (error) {
+        console.error('Error initializing global setup:', error);
+        alert('Error initializing global setup: ' + error.message);
     }
 }
 

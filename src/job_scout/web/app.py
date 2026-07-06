@@ -6,7 +6,7 @@ import secrets
 import threading
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -15,6 +15,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import FileResponse, JSONResponse
 
 from job_scout.config import (
+    GLOBAL_FIELDS,
     apply_user_init,
     build_effective_config,
     list_users,
@@ -329,6 +330,34 @@ def create_app() -> FastAPI:
 
     # --- POST Endpoints for Configuration ---
 
+    @app.post("/api/global-init")
+    def initialize_global(body: dict[str, Any]) -> dict[str, str]:
+        """Initialize the global configuration (first-time setup).
+
+        Args:
+            body: Request body with optional global config field values.
+
+        Returns:
+            Dictionary with status message.
+
+        Raises:
+            HTTPException: If init fails.
+        """
+        from job_scout.config import load_global_config, write_global_config
+
+        try:
+            # Filter to only global-allowed fields
+            global_fields = {
+                k: v for k, v in body.items() if k in GLOBAL_FIELDS and v is not None
+            }
+            # Load and merge with existing config
+            existing_data = load_global_config()
+            existing_data.update(global_fields)
+            write_global_config(existing_data)
+            return {"status": "Global configuration initialized successfully"}
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+
     @app.post("/api/users")
     def create_user(body: dict[str, Any]) -> dict[str, str]:
         """Create a new user with initial configuration.
@@ -630,11 +659,12 @@ def create_app() -> FastAPI:
 
     @app.post("/api/run")
     def start_run(body: dict[str, Any]) -> dict[str, Any]:
-        """Start a background pipeline run for a user.
+        """Start a background pipeline run for a user or all users.
 
         Args:
-            body: Request body with 'user' (optional), 'dry_run' (bool, default True),
-                  and 'full' (bool, default False).
+            body: Request body with 'user', 'all', 'dry_run', and 'full' flags.
+                  'user' selects one user, 'all' runs all users sequentially.
+                  'dry_run' and 'full' control pipeline behavior.
 
         Returns:
             Dictionary with 'status' and 'message'.
@@ -646,73 +676,110 @@ def create_app() -> FastAPI:
         from job_scout.evaluator import check_llm_available
 
         user = body.get("user")
+        all_users = body.get("all", False)
         dry_run = body.get("dry_run", True)
         full = body.get("full", False)
+
+        # Validate parameters
+        if user and all_users:
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot specify both 'user' and 'all'",
+            )
 
         if user and user not in list_users():
             raise HTTPException(status_code=404, detail=f"User '{user}' not found")
 
-        # Check if a run is already in progress for this user
-        with _registry_lock:
-            if user in _run_registry and _run_registry[user]["status"] == "running":
+        # Determine target users
+        if all_users:
+            users_list = list_users()
+            if not users_list:
                 raise HTTPException(
-                    status_code=409,
-                    detail=f"Run already in progress for user '{user or 'global'}'",
+                    status_code=400,
+                    detail="No users configured. Create a user first.",
                 )
+            target_users: list[str | None] = cast(list[str | None], users_list)
+        else:
+            target_users = [user] if user else [None]
 
-            # Initialize the registry entry
-            _run_registry[user] = {
-                "status": "running",
-                "start_time": datetime.now(),
-                "end_time": None,
-                "result": None,
-                "error": None,
-            }
+        # Check if any run is already in progress
+        with _registry_lock:
+            for target_user in target_users:
+                if (
+                    target_user in _run_registry
+                    and _run_registry[target_user]["status"] == "running"
+                ):
+                    user_label = target_user or "global"
+                    raise HTTPException(
+                        status_code=409,
+                        detail=f"Run already in progress for user '{user_label}'",
+                    )
+
+            # Initialize registry entries for all target users
+            for target_user in target_users:
+                _run_registry[target_user] = {
+                    "status": "running",
+                    "start_time": datetime.now(),
+                    "end_time": None,
+                    "result": None,
+                    "error": None,
+                }
 
         def _run_task() -> None:
-            """Background task to run the pipeline."""
-            try:
-                config = build_effective_config(user) if user else None
-                if config and not config.profile_description:
-                    with _registry_lock:
-                        _run_registry[user]["status"] = "error"
-                        _run_registry[user]["error"] = (
-                            f"No profile configured for user '{user}'"
-                        )
-                    return
-
-                if user:
-                    # Check LLM availability
-                    config = build_effective_config(user)
-                    ok, err = check_llm_available(config)
-                    if not ok:
+            """Background task to run the pipeline for target user(s)."""
+            for target_user in target_users:
+                try:
+                    if target_user:
+                        config = build_effective_config(target_user)
+                    else:
+                        config = None
+                    if config and not config.profile_description:
                         with _registry_lock:
-                            _run_registry[user]["status"] = "error"
-                            _run_registry[user]["error"] = err
-                        return
+                            _run_registry[target_user]["status"] = "error"
+                            _run_registry[target_user]["error"] = (
+                                f"No profile configured for user '{target_user}'"
+                            )
+                        continue
 
-                    # Execute the run
-                    _execute_run(user, dry_run=dry_run, full=full)
-                else:
-                    # Global run (no user specified)
-                    from job_scout.cli import _execute_run_global
+                    if target_user:
+                        # Check LLM availability
+                        config = build_effective_config(target_user)
+                        ok, err = check_llm_available(config)
+                        if not ok:
+                            with _registry_lock:
+                                _run_registry[target_user]["status"] = "error"
+                                _run_registry[target_user]["error"] = err
+                            continue
 
-                    _execute_run_global(dry_run=dry_run, full=full)
+                        # Execute the run
+                        _execute_run(target_user, dry_run=dry_run, full=full)
+                    else:
+                        # Global run (no user specified)
+                        from job_scout.cli import _execute_run_global
 
-                with _registry_lock:
-                    _run_registry[user]["status"] = "done"
-                    _run_registry[user]["end_time"] = datetime.now()
-            except (Exception, SystemExit) as e:
-                logger.exception(f"Error during pipeline run for {user or 'global'}")
-                with _registry_lock:
-                    _run_registry[user]["status"] = "error"
-                    _run_registry[user]["error"] = str(e)
-                    _run_registry[user]["end_time"] = datetime.now()
+                        _execute_run_global(dry_run=dry_run, full=full)
+
+                    with _registry_lock:
+                        _run_registry[target_user]["status"] = "done"
+                        _run_registry[target_user]["end_time"] = datetime.now()
+                except (Exception, SystemExit) as e:
+                    logger.exception(
+                        f"Error during pipeline run for {target_user or 'global'}"
+                    )
+                    with _registry_lock:
+                        _run_registry[target_user]["status"] = "error"
+                        _run_registry[target_user]["error"] = str(e)
+                        _run_registry[target_user]["end_time"] = datetime.now()
 
         # Start the background thread
         thread = threading.Thread(target=_run_task, daemon=True)
         thread.start()
 
+        if all_users:
+            return {
+                "status": "running",
+                "message": f"Pipeline run started for all {len(target_users)} users",
+            }
         return {
             "status": "running",
             "message": f"Pipeline run started for user '{user or 'global'}'",
