@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import secrets
 import threading
 from datetime import datetime
@@ -569,7 +570,13 @@ def create_app() -> FastAPI:
         try:
             for key, value in values.items():
                 try:
-                    set_config_value(key, str(value), user=user)
+                    # For list values from JSON, use json.dumps to preserve proper
+                    # formatting (double quotes) instead of Python repr (single quotes).
+                    if isinstance(value, list):
+                        str_value = json.dumps(value)
+                    else:
+                        str_value = str(value) if value is not None else ""
+                    set_config_value(key, str_value, user=user)
                 except ValueError as e:
                     errors[key] = str(e)
         except Exception as exc:
