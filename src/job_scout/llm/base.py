@@ -4,7 +4,14 @@ from __future__ import annotations
 
 from typing import Literal, Protocol, runtime_checkable
 
-CallPurpose = Literal["evaluation", "quick_eval", "screening", "keywords", "cv_parsing"]
+CallPurpose = Literal[
+    "evaluation",
+    "quick_eval",
+    "screening",
+    "keywords",
+    "cv_parsing",
+    "resume_tailoring",
+]
 
 
 class LLMError(RuntimeError):

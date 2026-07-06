@@ -1552,6 +1552,192 @@ def profile_import_linkedin(
         sys.exit(1)
 
 
+@profile_group.command("tailor-resume")
+@click.argument("job_id", type=int)
+@click.option("--user", "user_name", default=None, help="User to tailor for")
+@click.option(
+    "--output",
+    "output_pdf",
+    default=None,
+    type=click.Path(),
+    help="Path to save PDF (e.g., ~/tailored_resume.pdf)",
+)
+def profile_tailor_resume(
+    job_id: int, user_name: str | None, output_pdf: str | None
+) -> None:
+    """Tailor a resume for a specific approved job.
+
+    Generates a resume customized for the target job by highlighting
+    relevant skills and experience. Job must be APPROVED or later in
+    the application lifecycle.
+
+    Can optionally generate a PDF version of the tailored resume.
+    """
+    from pathlib import Path
+
+    from job_scout.config import build_effective_config, user_db_path
+    from job_scout.cv_parser import parse_cv
+    from job_scout.cv_profile import get_or_parse_cv_profile
+    from job_scout.database import Database
+    from job_scout.llm.factory import get_llm_client
+    from job_scout.models import JobStatus
+    from job_scout.resume_tailor import (
+        generate_resume_pdf,
+        tailor_resume_text,
+    )
+
+    target = _require_single_user(user_name)
+    config = build_effective_config(target)
+    db = Database(user_db_path(target))
+
+    # Fetch the job
+    job = db.get_job(job_id)
+    if not job:
+        click.echo(f"Job #{job_id} not found.", err=True)
+        sys.exit(1)
+
+    # Check job status - must be approved or later
+    if job.status not in [
+        JobStatus.APPROVED,
+        JobStatus.READY,
+        JobStatus.SUBMITTED,
+        JobStatus.INTERVIEWING,
+        JobStatus.OFFER,
+    ]:
+        click.echo(
+            f"Job #{job_id} has status {job.status.value}. "
+            f"Must be APPROVED or later to tailor resume.",
+            err=True,
+        )
+        sys.exit(1)
+
+    # Get CV and profile
+    if not config.cv_path:
+        click.echo(
+            f"No CV path configured. Run 'job-scout init --user {target}' first.",
+            err=True,
+        )
+        sys.exit(1)
+
+    try:
+        raw_cv_text = parse_cv(config.cv_path)
+    except FileNotFoundError as e:
+        click.echo(str(e), err=True)
+        sys.exit(1)
+
+    if not raw_cv_text:
+        click.echo("Failed to extract text from CV file.", err=True)
+        sys.exit(1)
+
+    try:
+        client = get_llm_client(config)
+    except LLMError as e:
+        click.echo(f"LLM configuration error: {e}", err=True)
+        sys.exit(1)
+
+    ok, err = client.check_available()
+    if not ok:
+        click.echo(f"LLM not available: {err}", err=True)
+        sys.exit(1)
+
+    cv_profile = get_or_parse_cv_profile(raw_cv_text, client, db)
+
+    if not job.description:
+        click.echo(
+            f"Job #{job_id} has no description. Cannot tailor resume.",
+            err=True,
+        )
+        sys.exit(1)
+
+    # Check if already tailored
+    existing = db.get_tailored_resume(job_id)
+    if existing:
+        click.echo(
+            f"Resume already tailored for job #{job_id}. Use --force to regenerate.",
+        )
+        if click.confirm("Regenerate?"):
+            tailored = tailor_resume_text(
+                raw_cv_text, cv_profile, job.description, client=client
+            )
+        else:
+            tailored = existing
+    else:
+        # Tailor the resume
+        click.echo(f"Tailoring resume for: {job.title} @ {job.company}...")
+        tailored = tailor_resume_text(
+            raw_cv_text, cv_profile, job.description, client=client
+        )
+
+    # Save to database
+    db.save_tailored_resume(job_id, tailored)
+    click.echo("Resume tailored and saved.")
+
+    # Generate PDF if requested
+    if output_pdf:
+        output_path = Path(output_pdf).expanduser()
+        click.echo(f"Generating PDF: {output_path}")
+        try:
+            generate_resume_pdf(tailored, output_path=output_path)
+            click.echo(f"PDF saved to {output_path}")
+        except OSError as e:
+            click.echo(f"Failed to generate PDF: {e}", err=True)
+            sys.exit(1)
+    else:
+        click.echo(
+            "\nTailored Resume Preview:\n"
+            + "=" * 50
+            + f"\n{tailored[:500]}...\n"
+            + "(truncated; use --output to generate full PDF)"
+        )
+
+
+@profile_group.command("get-resume")
+@click.argument("job_id", type=int)
+@click.option("--user", "user_name", default=None, help="User to retrieve for")
+@click.option(
+    "--output",
+    "output_pdf",
+    default=None,
+    type=click.Path(),
+    help="Path to save PDF",
+)
+def profile_get_resume(
+    job_id: int, user_name: str | None, output_pdf: str | None
+) -> None:
+    """Display or export a previously tailored resume.
+
+    Retrieves a tailored resume that was previously generated for a job,
+    optionally exporting it as a PDF.
+    """
+    from pathlib import Path
+
+    from job_scout.config import user_db_path
+    from job_scout.database import Database
+    from job_scout.resume_tailor import generate_resume_pdf
+
+    target = _require_single_user(user_name)
+    db = Database(user_db_path(target))
+
+    # Fetch the tailored resume
+    tailored = db.get_tailored_resume(job_id)
+    if not tailored:
+        click.echo(f"No tailored resume found for job #{job_id}.", err=True)
+        sys.exit(1)
+
+    if output_pdf:
+        output_path = Path(output_pdf).expanduser()
+        click.echo(f"Generating PDF: {output_path}")
+        try:
+            generate_resume_pdf(tailored, output_path=output_path)
+            click.echo(f"PDF saved to {output_path}")
+        except OSError as e:
+            click.echo(f"Failed to generate PDF: {e}", err=True)
+            sys.exit(1)
+    else:
+        click.echo(f"\nTailored Resume for Job #{job_id}:\n" + "=" * 50)
+        click.echo(tailored)
+
+
 @cli.group("approval")
 def approval_group() -> None:
     """Manage job application approvals."""

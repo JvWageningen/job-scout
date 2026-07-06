@@ -168,6 +168,20 @@ class Database:
                     cached_at TEXT NOT NULL
                 )
             """)
+            # Create tailored resumes table
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS tailored_resumes (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    job_id INTEGER NOT NULL UNIQUE,
+                    tailored_text TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (job_id) REFERENCES jobs(id)
+                )
+            """)
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_job_id_resume ON "
+                "tailored_resumes(job_id)"
+            )
 
     def _backfill_dedup_keys(self, conn: sqlite3.Connection) -> None:
         """Populate dedup_key for rows written before the column existed.
@@ -871,6 +885,39 @@ class Database:
                 (cv_hash, cv_profile_json, datetime.now(UTC).isoformat()),
             )
 
+    def get_tailored_resume(self, job_id: int) -> str | None:
+        """Retrieve a previously tailored resume for a job.
+
+        Args:
+            job_id: ID of the job.
+
+        Returns:
+            Tailored resume text if it exists, None otherwise.
+        """
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT tailored_text FROM tailored_resumes WHERE job_id = ?",
+                (job_id,),
+            ).fetchone()
+        return row[0] if row else None
+
+    def save_tailored_resume(self, job_id: int, tailored_text: str) -> None:
+        """Save a tailored resume for a job.
+
+        Args:
+            job_id: ID of the job.
+            tailored_text: The tailored resume content.
+        """
+        with self._conn() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO tailored_resumes
+                  (job_id, tailored_text, created_at)
+                VALUES (?, ?, ?)
+                """,
+                (job_id, tailored_text, datetime.now(UTC).isoformat()),
+            )
+
     def approve_job(
         self, job_id: int, approved_by: str, notes: str | None = None
     ) -> None:
@@ -971,6 +1018,21 @@ class Database:
                 ("new", "viewed"),
             )
             return [self._row_to_job(row) for row in cursor.fetchall()]
+
+    def get_job(self, job_id: int) -> JobListing | None:
+        """Get a single job by ID.
+
+        Args:
+            job_id: ID of the job to retrieve.
+
+        Returns:
+            JobListing if found, None otherwise.
+        """
+        with self._conn() as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,))
+            row = cursor.fetchone()
+            return self._row_to_job(row) if row else None
 
     @staticmethod
     def _normalize_address(address: str) -> str:
