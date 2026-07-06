@@ -85,4 +85,9 @@ dev = [
     "mypy>=1.19.1",
     "types-pyyaml>=6.0.12.20250915",
     "types-requests>=2.33.0.20260327",
+    "ruff>=0.15.6",
+    "bandit>=1.8.0",
+    "vulture>=2.14",
+    "radon>=6.0.1",
+    "pip-audit>=2.7.3",
 ]
