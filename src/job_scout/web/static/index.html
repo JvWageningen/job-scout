@@ -38,6 +38,7 @@
             <!-- Tab Navigation -->
             <nav class="tabs">
                 <button class="tab-btn active" data-tab="dashboard">Dashboard</button>
+                <button class="tab-btn" data-tab="approvals">Approvals</button>
                 <button class="tab-btn" data-tab="profile">Profile & Filters</button>
                 <button class="tab-btn" data-tab="keywords">Keywords</button>
                 <button class="tab-btn" data-tab="sites">Custom Sites</button>
@@ -152,6 +153,16 @@
                             <pre id="log-text"></pre>
                         </div>
                     </div>
+                </div>
+            </section>
+
+            <!-- Approvals Section -->
+            <section id="approvals-section" class="section hidden tab-content" data-tab="approvals">
+                <h2>Job Application Approvals</h2>
+                <p class="subtitle">Review and approve jobs before submitting applications.</p>
+                <button id="refresh-approval-queue-btn" class="btn btn-secondary">Refresh Queue</button>
+                <div id="approval-queue-container">
+                    <p class="loading">Loading approval queue...</p>
                 </div>
             </section>
 

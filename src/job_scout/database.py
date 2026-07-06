@@ -106,6 +106,12 @@ class Database:
                 ("compensation_reasoning", "TEXT"),
                 ("distance_km", "REAL"),
                 ("dedup_key", "TEXT"),
+                ("approved_at", "TEXT"),
+                ("approved_by", "TEXT"),
+                ("approval_notes", "TEXT"),
+                ("applied_at", "TEXT"),
+                ("status_updated_at", "TEXT"),
+                ("notes", "TEXT"),
             ]:
                 with contextlib.suppress(sqlite3.OperationalError):
                     conn.execute(f"ALTER TABLE jobs ADD COLUMN {col} {typedef}")
@@ -312,7 +318,8 @@ class Database:
                       compensation_reasoning=excluded.compensation_reasoning,
                       distance_km=excluded.distance_km,
                       travel_times_json=excluded.travel_times_json,
-                      status=excluded.status,
+                      status=CASE WHEN jobs.status IN ('new', 'matched', 'rejected')
+                               THEN excluded.status ELSE jobs.status END,
                       notified=excluded.notified,
                       notification_pending=excluded.notification_pending
                     RETURNING id
@@ -411,7 +418,8 @@ class Database:
                       compensation_reasoning=excluded.compensation_reasoning,
                       distance_km=excluded.distance_km,
                       travel_times_json=excluded.travel_times_json,
-                      status=excluded.status,
+                      status=CASE WHEN jobs.status IN ('new', 'matched', 'rejected')
+                               THEN excluded.status ELSE jobs.status END,
                       notified=excluded.notified,
                       notification_pending=excluded.notification_pending
                     RETURNING id
@@ -584,6 +592,15 @@ class Database:
         date_posted: datetime | None = None
         if raw.get("date_posted"):
             date_posted = datetime.fromisoformat(str(raw["date_posted"]))
+        approved_at: datetime | None = None
+        if raw.get("approved_at"):
+            approved_at = datetime.fromisoformat(str(raw["approved_at"]))
+        applied_at: datetime | None = None
+        if raw.get("applied_at"):
+            applied_at = datetime.fromisoformat(str(raw["applied_at"]))
+        status_updated_at: datetime | None = None
+        if raw.get("status_updated_at"):
+            status_updated_at = datetime.fromisoformat(str(raw["status_updated_at"]))
         return JobListing(
             id=raw["id"],
             title=raw["title"],
@@ -609,6 +626,12 @@ class Database:
             seen_at=datetime.fromisoformat(str(raw["seen_at"])),
             status=JobStatus(raw.get("status") or "new"),
             location_unknown=bool(raw.get("location_unknown", 0)),
+            approved_at=approved_at,
+            approved_by=raw.get("approved_by"),
+            approval_notes=raw.get("approval_notes"),
+            applied_at=applied_at,
+            status_updated_at=status_updated_at,
+            notes=raw.get("notes"),
         )
 
     def log_stats(self) -> dict[str, int]:
@@ -847,6 +870,107 @@ class Database:
                 """,
                 (cv_hash, cv_profile_json, datetime.now(UTC).isoformat()),
             )
+
+    def approve_job(
+        self, job_id: int, approved_by: str, notes: str | None = None
+    ) -> None:
+        """Approve a job and transition it to APPROVED status.
+
+        Args:
+            job_id: ID of the job to approve.
+            approved_by: Name of the approver (user).
+            notes: Optional approval notes.
+        """
+        from job_scout.models import JobStatus
+
+        with self._conn() as conn:
+            conn.execute(
+                """
+                UPDATE jobs
+                SET status = ?, approved_at = ?, approved_by = ?,
+                    approval_notes = ?
+                WHERE id = ?
+                """,
+                (
+                    JobStatus.APPROVED.value,
+                    datetime.now(UTC).isoformat(),
+                    approved_by,
+                    notes,
+                    job_id,
+                ),
+            )
+
+    def update_job_status(
+        self, job_id: int, new_status: JobStatus, notes: str | None = None
+    ) -> bool:
+        """Update a job's status with validation.
+
+        Args:
+            job_id: ID of the job to update.
+            new_status: New status.
+            notes: Optional notes to attach to the status update.
+
+        Returns:
+            True if status was updated, False if transition is invalid.
+        """
+        from job_scout.models import ApplicationTracker, JobStatus
+
+        with self._conn() as conn:
+            cursor = conn.execute(
+                "SELECT status, applied_at FROM jobs WHERE id = ?", (job_id,)
+            )
+            row = cursor.fetchone()
+            if not row:
+                return False
+            current_status = JobStatus(row[0])
+            if not ApplicationTracker.can_transition(current_status, new_status):
+                return False
+            now = datetime.now(UTC).isoformat()
+            applied_at = row["applied_at"]
+            if new_status == JobStatus.SUBMITTED and applied_at is None:
+                applied_at = now
+            update_params = (new_status.value, now, applied_at, notes, job_id)
+            conn.execute(
+                """UPDATE jobs SET status = ?, status_updated_at = ?,
+                   applied_at = ?, notes = ? WHERE id = ?""",
+                update_params,
+            )
+            return True
+
+    def get_jobs_by_status(self, status: JobStatus) -> list[JobListing]:
+        """Get all jobs with a specific status.
+
+        Args:
+            status: Status to filter by.
+
+        Returns:
+            List of jobs with the given status.
+        """
+        with self._conn() as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute(
+                "SELECT * FROM jobs WHERE status = ? ORDER BY seen_at DESC",
+                (status.value,),
+            )
+            return [self._row_to_job(row) for row in cursor.fetchall()]
+
+    def get_approval_queue(self) -> list[JobListing]:
+        """Get jobs awaiting approval (NEW or VIEWED status).
+
+        Returns:
+            List of jobs needing approval, ordered by seen_at.
+        """
+        with self._conn() as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute(
+                """
+                SELECT * FROM jobs
+                WHERE status IN (?, ?)
+                ORDER BY seen_at DESC
+                """,
+                ("new", "viewed"),
+            )
+            return [self._row_to_job(row) for row in cursor.fetchall()]
 
     @staticmethod
     def _normalize_address(address: str) -> str:

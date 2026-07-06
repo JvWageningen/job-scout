@@ -29,7 +29,7 @@ from job_scout.config import (
 )
 from job_scout.database import Database
 from job_scout.llm.factory import build_raw_client_for_test, get_llm_client
-from job_scout.models import Config, JobListing
+from job_scout.models import Config, JobListing, JobStatus
 from job_scout.notify.factory import build_raw_notifier_for_test
 from job_scout.scheduler import check_schedule_status, install_schedule, remove_schedule
 
@@ -1025,6 +1025,127 @@ def create_app() -> FastAPI:
             result["end_time"] = entry["end_time"].isoformat()
 
         return result
+
+    @app.get("/api/approval/queue")
+    def get_approval_queue(user: str | None = None) -> dict[str, Any]:
+        """Get the approval queue for jobs awaiting approval.
+
+        Args:
+            user: User name (optional).
+
+        Returns:
+            Dictionary with approval queue status and job listings.
+
+        Raises:
+            HTTPException: If user does not exist.
+        """
+        if not user:
+            raise HTTPException(status_code=400, detail="User is required")
+        if user not in list_users():
+            raise HTTPException(status_code=404, detail=f"User '{user}' not found")
+
+        try:
+            db_path = user_db_path(user)
+            if not db_path.exists():
+                return {"count": 0, "jobs": []}
+            db = Database(db_path)
+            queue = db.get_approval_queue()
+            return {
+                "count": len(queue),
+                "jobs": [job.model_dump() for job in queue],
+            }
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    @app.post("/api/approval/approve")
+    def approve_job_endpoint(
+        body: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Approve a job for application.
+
+        Args:
+            body: Request body with 'job_id' (int) and optional 'notes' (str).
+
+        Returns:
+            Dictionary with success message.
+
+        Raises:
+            HTTPException: If job ID is invalid or approval fails.
+        """
+        try:
+            job_id = body.get("job_id")
+            notes = body.get("notes")
+            user = body.get("user")
+
+            if not job_id:
+                raise HTTPException(status_code=400, detail="job_id is required")
+            if not user:
+                raise HTTPException(status_code=400, detail="user is required")
+            if user not in list_users():
+                raise HTTPException(status_code=404, detail=f"User '{user}' not found")
+
+            db_path = user_db_path(user)
+            db = Database(db_path)
+            if not db.update_job_status(job_id, JobStatus.APPROVED):
+                raise HTTPException(status_code=400, detail="Invalid status transition")
+
+            db.approve_job(job_id, user, notes)
+            return {"message": f"Job {job_id} approved"}
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    @app.post("/api/jobs/{job_id}/status")
+    def update_job_status_endpoint(
+        job_id: int,
+        body: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Update a job's lifecycle status.
+
+        Args:
+            job_id: ID of the job to update.
+            body: Request body with 'status', 'user', and optional 'notes'.
+
+        Returns:
+            Dictionary with success message.
+
+        Raises:
+            HTTPException: If job ID is invalid or status update fails.
+        """
+        try:
+            status = body.get("status")
+            notes = body.get("notes")
+            user = body.get("user")
+
+            if not status:
+                raise HTTPException(status_code=400, detail="status is required")
+            if not user:
+                raise HTTPException(status_code=400, detail="user is required")
+            if user not in list_users():
+                raise HTTPException(status_code=404, detail=f"User '{user}' not found")
+
+            try:
+                new_status = JobStatus(status)
+            except ValueError:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid status: {status}",
+                ) from None
+
+            db_path = user_db_path(user)
+            db = Database(db_path)
+            if not db.update_job_status(job_id, new_status, notes=notes):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Invalid status transition or job not found",
+                )
+
+            return {"message": f"Job {job_id} status updated to {status}"}
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     @app.get("/api/keywords")
     def get_keywords(user: str | None = None) -> dict[str, Any]:

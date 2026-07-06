@@ -416,6 +416,29 @@ function renderJobCard(job, rejected) {
         meta += `<span>Salary: €${job.salary_min.toLocaleString()} - €${job.salary_max?.toLocaleString() || '?'}</span>`;
     }
 
+    const statusSection = !rejected ? `
+        <div class="job-lifecycle-controls">
+            <div class="status-control">
+                <label for="status-${job.id}">Status:</label>
+                <select id="status-${job.id}" class="status-select">
+                    <option value="new" ${job.status === 'new' ? 'selected' : ''}>New</option>
+                    <option value="viewed" ${job.status === 'viewed' ? 'selected' : ''}>Viewed</option>
+                    <option value="approved" ${job.status === 'approved' ? 'selected' : ''}>Approved</option>
+                    <option value="ready" ${job.status === 'ready' ? 'selected' : ''}>Ready</option>
+                    <option value="submitted" ${job.status === 'submitted' ? 'selected' : ''}>Submitted</option>
+                    <option value="interviewing" ${job.status === 'interviewing' ? 'selected' : ''}>Interviewing</option>
+                    <option value="offer" ${job.status === 'offer' ? 'selected' : ''}>Offer</option>
+                    <option value="rejected" ${job.status === 'rejected' ? 'selected' : ''}>Rejected</option>
+                </select>
+            </div>
+            <div class="notes-control">
+                <label for="notes-${job.id}">Notes:</label>
+                <textarea id="notes-${job.id}" class="notes-field" placeholder="Add notes..." rows="2">${job.notes ? escapeHtml(job.notes) : ''}</textarea>
+            </div>
+            <button class="btn btn-small" onclick="updateJobStatus(${job.id})">Save Status</button>
+        </div>
+    ` : '';
+
     return `
         <div class="${cardClass}">
             <h4>${escapeHtml(job.title)}</h4>
@@ -426,6 +449,7 @@ function renderJobCard(job, rejected) {
             <div class="job-meta">
                 ${meta}
             </div>
+            ${statusSection}
             <p><a href="${escapeHtml(job.url)}" target="_blank" rel="noopener noreferrer">View Job →</a></p>
         </div>
     `;
@@ -1758,3 +1782,156 @@ async function testNotificationChannel() {
         resultDiv.innerHTML = `<p style="color: #d32f2f;"><strong>✗</strong> ${escapeHtml(error.message)}</p>`;
     }
 }
+
+/**
+ * Load and display the approval queue
+ */
+async function loadApprovalQueue() {
+    const container = document.getElementById('approval-queue-container');
+    container.innerHTML = '<p class="loading">Loading approval queue...</p>';
+
+    try {
+        const response = await fetchWithAuth(`${API_BASE}/approval/queue`);
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        const data = await response.json();
+        displayApprovalQueue(data);
+    } catch (error) {
+        container.innerHTML = `<p style="color: #d32f2f;"><strong>Error:</strong> ${escapeHtml(error.message)}</p>`;
+    }
+}
+
+/**
+ * Display the approval queue in the UI
+ */
+function displayApprovalQueue(data) {
+    const container = document.getElementById('approval-queue-container');
+
+    if (!data.jobs || data.jobs.length === 0) {
+        container.innerHTML = '<p>No jobs awaiting approval.</p>';
+        return;
+    }
+
+    let html = `<p><strong>${data.count}</strong> job(s) awaiting approval</p><div class="jobs-container">`;
+
+    for (const job of data.jobs) {
+        const scoreClass = getScoreClass(job.fit_score);
+        const fitScore = job.fit_score !== null ? `${job.fit_score}%` : 'N/A';
+
+        html += `
+            <div class="job-card approval-card">
+                <div class="job-title">${escapeHtml(job.title)}</div>
+                <div class="job-company">${escapeHtml(job.company)}</div>
+                <div class="job-location">${escapeHtml(job.location || 'N/A')}</div>
+                <div class="job-meta">
+                    <span class="fit-score ${scoreClass}">Score: ${fitScore}</span>
+                    <span class="job-source">${escapeHtml(job.source || 'Unknown')}</span>
+                    <span class="job-status">${escapeHtml(job.status)}</span>
+                </div>
+                ${job.fit_reasoning ? `<div class="job-reasoning"><strong>Reasoning:</strong> ${escapeHtml(job.fit_reasoning)}</div>` : ''}
+                <div class="job-url"><a href="${job.url}" target="_blank" rel="noopener noreferrer">View Job</a></div>
+                <div class="approval-actions">
+                    <input type="text" class="approval-notes" placeholder="Approval notes (optional)" data-job-id="${job.id}">
+                    <button class="btn btn-primary" onclick="approveJob(${job.id})">Approve</button>
+                </div>
+            </div>
+        `;
+    }
+
+    html += '</div>';
+    container.innerHTML = html;
+}
+
+/**
+ * Approve a job and transition it to APPROVED status
+ */
+async function approveJob(jobId) {
+    const notesInput = document.querySelector(`input[data-job-id="${jobId}"]`);
+    const notes = notesInput ? notesInput.value : null;
+
+    try {
+        const response = await fetchWithAuth(`${API_BASE}/approval/approve`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                job_id: jobId,
+                notes: notes,
+                user: currentUser || 'web-user',
+            }),
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            alert(`Failed to approve job: ${error.detail || 'Unknown error'}`);
+            return;
+        }
+
+        alert('Job approved successfully!');
+        loadApprovalQueue();
+    } catch (error) {
+        alert(`Error approving job: ${error.message}`);
+    }
+}
+
+/**
+ * Update a job's lifecycle status
+ *
+ * @param {number} jobId - ID of the job to update
+ */
+async function updateJobStatus(jobId) {
+    const statusSelect = document.getElementById(`status-${jobId}`);
+    const notesField = document.getElementById(`notes-${jobId}`);
+
+    if (!statusSelect) {
+        alert('Could not find status control');
+        return;
+    }
+
+    const status = statusSelect.value;
+    const notes = notesField ? notesField.value : null;
+
+    try {
+        const response = await fetchWithAuth(`${API_BASE}/jobs/${jobId}/status`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                status: status,
+                notes: notes,
+                user: currentUser || 'web-user',
+            }),
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            alert(
+                `Failed to update job status: ${error.detail || 'Unknown error'}`
+            );
+            return;
+        }
+
+        alert('Job status updated successfully!');
+        // Reload the matched jobs to reflect the change
+        loadMatchedJobs();
+    } catch (error) {
+        alert(`Error updating job status: ${error.message}`);
+    }
+}
+
+// Set up event listeners for approval tab
+document.addEventListener('DOMContentLoaded', function() {
+    const refreshBtn = document.getElementById('refresh-approval-queue-btn');
+    if (refreshBtn) {
+        refreshBtn.addEventListener('click', loadApprovalQueue);
+    }
+});
+
+// Override switchTab to load approval queue when switching to approvals tab
+const originalSwitchTab = window.switchTab;
+window.switchTab = function(tab) {
+    originalSwitchTab(tab);
+    if (tab === 'approvals') {
+        loadApprovalQueue();
+    }
+};

@@ -832,3 +832,141 @@ def test_travel_time_cache_replace_updates(tmp_db: Database) -> None:
     tmp_db.save_travel_time_cache(origin, dest, mode, 50.0)
     result2 = tmp_db.get_cached_travel_time(origin, dest, mode, 14)
     assert result2 == 50.0
+
+
+def test_approve_job(tmp_db: Database, sample_job: JobListing) -> None:
+    """Approving a job sets approval fields correctly."""
+    job_id = tmp_db.save_job(sample_job)
+    assert job_id
+
+    tmp_db.approve_job(job_id, "test_user", "Looks good")
+
+    approved_jobs = [j for j in tmp_db.get_jobs_by_status(JobStatus.APPROVED)]
+    assert len(approved_jobs) == 1
+    assert approved_jobs[0].approved_by == "test_user"
+    assert approved_jobs[0].approval_notes == "Looks good"
+
+
+def test_update_job_status_valid_transition(
+    tmp_db: Database, sample_job: JobListing
+) -> None:
+    """Updating job status with valid transition succeeds."""
+    job_id = tmp_db.save_job(sample_job)
+    assert job_id
+
+    # NEW -> VIEWED is valid
+    success = tmp_db.update_job_status(job_id, JobStatus.VIEWED)
+    assert success
+
+    jobs = tmp_db.get_jobs_by_status(JobStatus.VIEWED)
+    assert len(jobs) == 1
+    assert jobs[0].status == JobStatus.VIEWED
+
+
+def test_update_job_status_invalid_transition(
+    tmp_db: Database, sample_job: JobListing
+) -> None:
+    """Updating job status with invalid transition fails."""
+    job_id = tmp_db.save_job(sample_job)
+    assert job_id
+
+    # NEW -> SUBMITTED is invalid (must go through intermediate states)
+    success = tmp_db.update_job_status(job_id, JobStatus.SUBMITTED)
+    assert not success
+
+    # Status should not have changed
+    jobs = tmp_db.get_jobs_by_status(JobStatus.NEW)
+    assert len(jobs) == 1
+
+
+def test_get_jobs_by_status(tmp_db: Database, sample_job: JobListing) -> None:
+    """Getting jobs by status returns correct results."""
+    job1_id = tmp_db.save_job(sample_job)
+
+    job2 = sample_job.model_copy(update={"url": "https://example.com/job2"})
+    job2_id = tmp_db.save_job(job2)
+
+    # Both should be NEW
+    new_jobs = tmp_db.get_jobs_by_status(JobStatus.NEW)
+    assert len(new_jobs) == 2
+
+    # Transition first job to VIEWED
+    tmp_db.update_job_status(job1_id, JobStatus.VIEWED)
+
+    new_jobs = tmp_db.get_jobs_by_status(JobStatus.NEW)
+    assert len(new_jobs) == 1
+    assert new_jobs[0].id == job2_id
+
+    viewed_jobs = tmp_db.get_jobs_by_status(JobStatus.VIEWED)
+    assert len(viewed_jobs) == 1
+    assert viewed_jobs[0].id == job1_id
+
+
+def test_get_approval_queue(tmp_db: Database, sample_job: JobListing) -> None:
+    """Approval queue returns jobs in NEW and VIEWED status."""
+    job1_id = tmp_db.save_job(sample_job)
+
+    job2 = sample_job.model_copy(update={"url": "https://example.com/job2"})
+    job2_id = tmp_db.save_job(job2)
+
+    job3 = sample_job.model_copy(update={"url": "https://example.com/job3"})
+    job3_id = tmp_db.save_job(job3)
+
+    # Transition job2 to VIEWED
+    tmp_db.update_job_status(job2_id, JobStatus.VIEWED)
+
+    # Transition job3 to APPROVED (should not appear in queue)
+    tmp_db.update_job_status(job3_id, JobStatus.VIEWED)
+    tmp_db.approve_job(job3_id, "test_user")
+
+    queue = tmp_db.get_approval_queue()
+    queue_ids = [j.id for j in queue]
+
+    # Queue should only have job1 (NEW) and job2 (VIEWED)
+    assert job1_id in queue_ids
+    assert job2_id in queue_ids
+    assert job3_id not in queue_ids
+
+
+def test_upsert_preserves_user_set_lifecycle_status(
+    tmp_db: Database, sample_job: JobListing
+) -> None:
+    """Re-scrape with update_existing=True preserves user-set lifecycle status.
+
+    This is the CRITICAL test: when a user manually advances a job's status
+    (e.g., from MATCHED to VIEWED or APPROVED), a re-scrape that would
+    normally reset it back to MATCHED must NOT do so.
+    """
+    # Save job initially as MATCHED (from evaluation)
+    job = sample_job.model_copy(update={"status": JobStatus.MATCHED})
+    job_id = tmp_db.save_job(job)
+    assert job_id > 0
+
+    # User manually advances it to APPROVED
+    tmp_db.update_job_status(job_id, JobStatus.VIEWED)
+    tmp_db.update_job_status(job_id, JobStatus.APPROVED)
+
+    # Verify it's APPROVED
+    approved = tmp_db.get_jobs_by_status(JobStatus.APPROVED)
+    assert len(approved) == 1
+    assert approved[0].id == job_id
+
+    # Re-scrape with update_existing=True and new status MATCHED
+    # This simulates what happens with --full-rerun
+    rescraped = sample_job.model_copy(
+        update={
+            "status": JobStatus.MATCHED,
+            "fit_score": 95,  # Different evaluation
+        }
+    )
+    new_id = tmp_db.save_job(rescraped, update_existing=True)
+    assert new_id == job_id  # Same row, not a duplicate
+
+    # CRITICAL: Status should still be APPROVED, not reverted to MATCHED
+    approved_after = tmp_db.get_jobs_by_status(JobStatus.APPROVED)
+    assert len(approved_after) == 1
+    assert approved_after[0].id == job_id
+    assert approved_after[0].status == JobStatus.APPROVED
+
+    # But the evaluation (fit_score) should be updated
+    assert approved_after[0].fit_score == 95

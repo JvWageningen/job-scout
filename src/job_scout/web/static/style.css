@@ -265,6 +265,52 @@ select:focus, input:focus, textarea:focus {
     color: #e74c3c;
 }
 
+/* Job Lifecycle Controls */
+.job-lifecycle-controls {
+    margin-top: 12px;
+    padding-top: 10px;
+    border-top: 1px solid #ddd;
+}
+
+.status-control,
+.notes-control {
+    margin-bottom: 8px;
+}
+
+.status-control label,
+.notes-control label {
+    display: block;
+    margin-bottom: 4px;
+    font-weight: 600;
+    font-size: 0.9em;
+    color: #2c3e50;
+}
+
+.status-select,
+.notes-field {
+    width: 100%;
+    padding: 6px 8px;
+    font-size: 0.9em;
+    border: 1px solid #bdc3c7;
+    border-radius: 3px;
+    box-sizing: border-box;
+}
+
+.status-select {
+    background-color: white;
+}
+
+.notes-field {
+    font-family: inherit;
+    resize: vertical;
+}
+
+.btn-small {
+    padding: 6px 12px;
+    font-size: 0.85em;
+    margin-top: 8px;
+}
+
 .loading {
     text-align: center;
     color: #7f8c8d;

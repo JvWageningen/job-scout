@@ -1019,6 +1019,37 @@ def jobs_rejected(limit: int, user_name: str | None) -> None:
         _print_rejected_job(job)
 
 
+@jobs.command("update-status")
+@click.argument("job_id", type=int)
+@click.argument("status", type=click.Choice([s.value for s in JobStatus]))
+@click.option("--notes", default=None, help="Optional notes for the status change")
+@click.option("--user", "user_name", default=None, help="User whose job to update")
+def jobs_update_status(
+    job_id: int, status: str, notes: str | None, user_name: str | None
+) -> None:
+    """Update a job's lifecycle status.
+
+    Args:
+        job_id: ID of the job to update.
+        status: New status for the job.
+        notes: Optional notes to attach to the status update.
+        user_name: User whose job to update (optional).
+    """
+    target = _require_single_user(user_name)
+    db = Database(user_db_path(target))
+    new_status = JobStatus(status)
+    success = db.update_job_status(job_id, new_status, notes=notes)
+    if success:
+        msg = f"Updated job {job_id} status to {status.upper()}"
+        if notes:
+            msg += f" with notes: {notes}"
+        click.echo(msg)
+    else:
+        click.echo(
+            f"Failed to update job {job_id}: invalid transition or job not found"
+        )
+
+
 def _format_salary(job: JobListing) -> str:
     """Format salary range for display.
 
@@ -1294,6 +1325,54 @@ def profile_cv_summary(user_name: str | None) -> None:
             click.echo(f"  - {role}")
 
     click.echo()
+
+
+@cli.group("approval")
+def approval_group() -> None:
+    """Manage job application approvals."""
+
+
+@approval_group.command("queue")
+@click.option("--user", "user_name", default=None, help="User whose queue to show")
+def approval_queue(user_name: str | None) -> None:
+    """Show jobs awaiting approval."""
+    user_name = _require_single_user(user_name)
+    db = _get_db()
+    queue = db.get_approval_queue()
+
+    if not queue:
+        click.echo("No jobs awaiting approval.")
+        return
+
+    click.echo(f"\n{len(queue)} job(s) awaiting approval:\n")
+    for idx, job in enumerate(queue, 1):
+        click.echo(f"{idx}. {job.title} @ {job.company}")
+        click.echo(f"   Status: {job.status}")
+        click.echo(f"   Fit score: {job.fit_score or 'N/A'}")
+        click.echo(f"   URL: {job.url}")
+        click.echo()
+
+
+@approval_group.command("approve")
+@click.argument("job_id", type=int)
+@click.option("--notes", default=None, help="Approval notes")
+@click.option("--user", "user_name", default=None, help="User approving")
+def approval_approve(job_id: int, notes: str | None, user_name: str | None) -> None:
+    """Approve a job for application."""
+    from job_scout.models import JobStatus
+
+    user_name = _require_single_user(user_name)
+    db = _get_db()
+
+    if not db.update_job_status(job_id, JobStatus.APPROVED):
+        click.echo(
+            f"Failed to approve job {job_id}. Invalid status transition.",
+            err=True,
+        )
+        return
+
+    db.approve_job(job_id, user_name, notes)
+    click.echo(f"Job {job_id} approved by {user_name}")
 
 
 @cli.group("schedule")

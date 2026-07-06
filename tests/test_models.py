@@ -366,3 +366,116 @@ def test_cv_profile_serialisation() -> None:
     assert restored.years_experience == profile.years_experience
     assert restored.education == profile.education
     assert restored.past_roles == profile.past_roles
+
+
+def test_job_status_extended() -> None:
+    """Verify new application lifecycle statuses exist."""
+    # Verify all expected statuses exist
+    expected_statuses = {
+        "new",
+        "viewed",
+        "approved",
+        "ready",
+        "submitted",
+        "interviewing",
+        "offer",
+        "rejected",
+        "matched",
+    }
+    actual_statuses = {s.value for s in JobStatus}
+    assert expected_statuses.issubset(actual_statuses)
+
+
+def test_application_tracker_valid_transitions() -> None:
+    """Verify ApplicationTracker correctly validates state transitions."""
+    from job_scout.models import ApplicationTracker
+
+    # NEW -> VIEWED should be valid
+    assert ApplicationTracker.can_transition(JobStatus.NEW, JobStatus.VIEWED)
+
+    # VIEWED -> APPROVED should be valid
+    assert ApplicationTracker.can_transition(JobStatus.VIEWED, JobStatus.APPROVED)
+
+    # APPROVED -> READY should be valid
+    assert ApplicationTracker.can_transition(JobStatus.APPROVED, JobStatus.READY)
+
+    # READY -> SUBMITTED should be valid
+    assert ApplicationTracker.can_transition(JobStatus.READY, JobStatus.SUBMITTED)
+
+    # SUBMITTED -> INTERVIEWING should be valid
+    assert ApplicationTracker.can_transition(
+        JobStatus.SUBMITTED, JobStatus.INTERVIEWING
+    )
+
+    # INTERVIEWING -> OFFER should be valid
+    assert ApplicationTracker.can_transition(JobStatus.INTERVIEWING, JobStatus.OFFER)
+
+    # Any status -> REJECTED should be valid
+    for status in [
+        JobStatus.NEW,
+        JobStatus.VIEWED,
+        JobStatus.APPROVED,
+        JobStatus.READY,
+        JobStatus.SUBMITTED,
+        JobStatus.INTERVIEWING,
+    ]:
+        assert ApplicationTracker.can_transition(status, JobStatus.REJECTED)
+
+    # REJECTED -> anything should be invalid
+    assert not ApplicationTracker.can_transition(JobStatus.REJECTED, JobStatus.VIEWED)
+
+
+def test_application_tracker_invalid_transitions() -> None:
+    """Verify ApplicationTracker rejects invalid state transitions."""
+    from job_scout.models import ApplicationTracker
+
+    # VIEWED -> NEW should be invalid (no going backwards)
+    assert not ApplicationTracker.can_transition(JobStatus.VIEWED, JobStatus.NEW)
+
+    # APPROVED -> VIEWED should be invalid (no going backwards)
+    assert not ApplicationTracker.can_transition(JobStatus.APPROVED, JobStatus.VIEWED)
+
+    # NEW -> SUBMITTED should be invalid (must go through intermediate states)
+    assert not ApplicationTracker.can_transition(JobStatus.NEW, JobStatus.SUBMITTED)
+
+
+def test_application_tracker_get_valid_transitions() -> None:
+    """Verify ApplicationTracker returns correct next states."""
+    from job_scout.models import ApplicationTracker
+
+    new_transitions = ApplicationTracker.get_valid_transitions(JobStatus.NEW)
+    assert JobStatus.VIEWED in new_transitions
+    assert JobStatus.REJECTED in new_transitions
+    assert JobStatus.APPROVED not in new_transitions
+
+    viewed_transitions = ApplicationTracker.get_valid_transitions(JobStatus.VIEWED)
+    assert JobStatus.APPROVED in viewed_transitions
+    assert JobStatus.REJECTED in viewed_transitions
+    assert JobStatus.NEW not in viewed_transitions
+
+
+def test_job_listing_approval_fields() -> None:
+    """Verify JobListing has approval tracking fields."""
+    from datetime import UTC, datetime
+
+    job = JobListing(
+        title="Test",
+        company="Test Corp",
+        url="https://example.com/job1",
+        source="test",
+    )
+
+    # Approval fields should default to None
+    assert job.approved_at is None
+    assert job.approved_by is None
+    assert job.approval_notes is None
+
+    # Can set approval fields
+    now = datetime.now(UTC)
+    job.approved_at = now
+    job.approved_by = "test_user"
+    job.approval_notes = "Looks good"
+
+    assert job.approved_at == now
+    assert job.approved_by == "test_user"
+    assert job.approval_notes == "Looks good"

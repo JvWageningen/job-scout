@@ -21,8 +21,15 @@ class JobStatus(StrEnum):
     """Processing status for a job listing."""
 
     NEW = "new"
-    MATCHED = "matched"
+    VIEWED = "viewed"
+    APPROVED = "approved"
+    READY = "ready"
+    SUBMITTED = "submitted"
+    INTERVIEWING = "interviewing"
+    OFFER = "offer"
     REJECTED = "rejected"
+    # Legacy status for backward compatibility
+    MATCHED = "matched"
 
 
 class TravelTime(BaseModel):
@@ -63,6 +70,12 @@ class JobListing(BaseModel):
     )
     status: JobStatus = JobStatus.NEW
     location_unknown: bool = False
+    approved_at: datetime | None = None
+    approved_by: str | None = None
+    approval_notes: str | None = None
+    applied_at: datetime | None = None
+    status_updated_at: datetime | None = None
+    notes: str | None = None
 
 
 class CustomSite(BaseModel):
@@ -273,3 +286,45 @@ class CvProfile(BaseModel):
     years_experience: int | None = None
     education: list[str] = Field(default_factory=list)
     past_roles: list[str] = Field(default_factory=list)
+
+
+class ApplicationTracker:
+    """State machine for managing job application lifecycle."""
+
+    # Valid transitions: from_state -> [to_states]
+    VALID_TRANSITIONS: dict[JobStatus, list[JobStatus]] = {
+        JobStatus.NEW: [JobStatus.VIEWED, JobStatus.REJECTED],
+        JobStatus.VIEWED: [JobStatus.APPROVED, JobStatus.REJECTED],
+        JobStatus.APPROVED: [JobStatus.READY, JobStatus.REJECTED],
+        JobStatus.READY: [JobStatus.SUBMITTED, JobStatus.REJECTED],
+        JobStatus.SUBMITTED: [JobStatus.INTERVIEWING, JobStatus.REJECTED],
+        JobStatus.INTERVIEWING: [JobStatus.OFFER, JobStatus.REJECTED],
+        JobStatus.OFFER: [JobStatus.REJECTED],
+        JobStatus.REJECTED: [],
+        JobStatus.MATCHED: [JobStatus.VIEWED, JobStatus.REJECTED],
+    }
+
+    @staticmethod
+    def can_transition(from_status: JobStatus, to_status: JobStatus) -> bool:
+        """Check if a transition is valid.
+
+        Args:
+            from_status: Current status.
+            to_status: Desired status.
+
+        Returns:
+            True if transition is allowed, False otherwise.
+        """
+        return to_status in ApplicationTracker.VALID_TRANSITIONS.get(from_status, [])
+
+    @staticmethod
+    def get_valid_transitions(status: JobStatus) -> list[JobStatus]:
+        """Get all valid next states for a given status.
+
+        Args:
+            status: Current status.
+
+        Returns:
+            List of valid next statuses.
+        """
+        return ApplicationTracker.VALID_TRANSITIONS.get(status, [])
