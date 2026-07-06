@@ -1688,6 +1688,153 @@ def create_app() -> FastAPI:
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc  # noqa: B904
 
+    @app.get("/api/profile/star-stories")
+    def get_star_stories(
+        user: str | None = None,
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Get all STAR stories for a user."""
+        if not user:
+            raise HTTPException(status_code=400, detail="User is required")
+        if user not in list_users():
+            raise HTTPException(status_code=404, detail=f"User '{user}' not found")
+
+        try:
+            from job_scout.database import Database  # noqa: PLC0415
+
+            db = Database(user_db_path(user))
+            stories = db.get_star_stories()
+            return {"stories": stories}
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc  # noqa: B904
+
+    @app.post("/api/profile/star-stories")
+    def create_star_story(
+        story_data: dict[str, Any],
+        user: str | None = None,
+    ) -> dict[str, int]:
+        """Create a new STAR story."""
+        if not user:
+            raise HTTPException(status_code=400, detail="User is required")
+        if user not in list_users():
+            raise HTTPException(status_code=404, detail=f"User '{user}' not found")
+
+        try:
+            from job_scout.database import Database  # noqa: PLC0415
+
+            situation = story_data.get("situation", "")
+            task = story_data.get("task", "")
+            action = story_data.get("action", "")
+            result = story_data.get("result", "")
+            keywords = story_data.get("keywords", [])
+
+            if not all([situation, task, action, result]):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Missing required fields",
+                )
+
+            if not isinstance(keywords, list):
+                keywords = []
+
+            # Type narrowing
+            assert isinstance(situation, str)
+            assert isinstance(task, str)
+            assert isinstance(action, str)
+            assert isinstance(result, str)
+
+            db = Database(user_db_path(user))
+            story_id = db.save_star_story(situation, task, action, result, keywords)
+            return {"id": story_id}
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc  # noqa: B904
+
+    @app.delete("/api/profile/star-stories/{story_id}")
+    def delete_star_story(story_id: int, user: str | None = None) -> dict[str, str]:
+        """Delete a STAR story."""
+        if not user:
+            raise HTTPException(status_code=400, detail="User is required")
+        if user not in list_users():
+            raise HTTPException(status_code=404, detail=f"User '{user}' not found")
+
+        try:
+            from job_scout.database import Database  # noqa: PLC0415
+
+            db = Database(user_db_path(user))
+            if not db.delete_star_story(story_id):
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Story {story_id} not found",
+                )
+            return {"status": "deleted"}
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc  # noqa: B904
+
+    @app.get("/api/interview-prep/{job_id}")
+    def get_interview_prep(job_id: int, user: str | None = None) -> dict[str, Any]:
+        """Generate interview preparation for a job.
+
+        Extracts behavioral questions from the job description and matches them
+        to the user's STAR stories for suggested interview answers.
+        """
+        if not user:
+            raise HTTPException(status_code=400, detail="User is required")
+        if user not in list_users():
+            raise HTTPException(status_code=404, detail=f"User '{user}' not found")
+
+        try:
+            from job_scout.database import Database  # noqa: PLC0415
+            from job_scout.interview_prep import (  # noqa: PLC0415
+                generate_interview_prep,
+            )
+            from job_scout.models import StarStory  # noqa: PLC0415
+
+            db = Database(user_db_path(user))
+
+            # Get the job
+            job = db.get_job(job_id)
+            if not job:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Job {job_id} not found",
+                )
+
+            if not job.description:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Job {job_id} has no description",
+                )
+
+            # Get all STAR stories
+            story_rows = db.get_star_stories()
+            stories = [
+                StarStory(
+                    id=story["id"],
+                    situation=story["situation"],
+                    task=story["task"],
+                    action=story["action"],
+                    result=story["result"],
+                    keywords=story["keywords"],
+                    created_at=story["created_at"],
+                    updated_at=story["updated_at"],
+                )
+                for story in story_rows
+            ]
+
+            # Generate interview prep
+            prep = generate_interview_prep(job.description, stories, job_id=job_id)
+
+            return prep.model_dump()
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc  # noqa: B904
+
     return app
 
 

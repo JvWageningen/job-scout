@@ -14,6 +14,7 @@ CallPurpose = Literal[
     "cover_letter",
     "screening_questions",
     "screening_answers",
+    "behavioral_questions",
 ]
 
 

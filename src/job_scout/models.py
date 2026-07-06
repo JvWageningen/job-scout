@@ -353,6 +353,50 @@ class CvProfile(BaseModel):
     past_roles: list[CvRole] = Field(default_factory=list)
 
 
+class StarStory(BaseModel):
+    """A STAR (Situation, Task, Action, Result) story for interview preparation."""
+
+    id: int | None = None
+    situation: str = Field(..., description="The situation or context")
+    task: str = Field(..., description="The task or challenge faced")
+    action: str = Field(..., description="The specific action taken")
+    result: str = Field(..., description="The measurable result achieved")
+    keywords: list[str] = Field(
+        default_factory=list, description="Keywords for matching to interview questions"
+    )
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(UTC)  # noqa: E731
+    )
+    updated_at: datetime = Field(
+        default_factory=lambda: datetime.now(UTC)  # noqa: E731
+    )
+
+
+class BehavioralQuestion(BaseModel):
+    """A behavioral question extracted from a job description."""
+
+    question: str
+    keywords: list[str] = Field(
+        default_factory=list, description="Key skills/concepts the question addresses"
+    )
+
+
+class InterviewPrep(BaseModel):
+    """Interview preparation data for a job listing."""
+
+    job_id: int | None = None
+    behavioral_questions: list[BehavioralQuestion] = Field(
+        default_factory=list, description="Extracted behavioral questions"
+    )
+    matched_stories: dict[str, list[StarStory]] = Field(
+        default_factory=dict,
+        description="Mapping from question to matched STAR stories",
+    )
+    generated_at: datetime = Field(
+        default_factory=lambda: datetime.now(UTC)  # noqa: E731
+    )
+
+
 class ApplicationTracker:
     """State machine for managing job application lifecycle."""
 

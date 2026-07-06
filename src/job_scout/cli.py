@@ -2054,6 +2054,190 @@ def profile_get_answers(job_id: int, user_name: str | None) -> None:
         click.echo(f"A: {answer}\n")
 
 
+@profile_group.command("star-story")
+@click.argument("action", type=click.Choice(["add", "list", "delete", "update"]))
+@click.option("--user", "user_name", default=None, help="User (default: current user)")
+@click.option("--situation", default=None, help="Situation/context for STAR story")
+@click.option("--task", default=None, help="Task/challenge for STAR story")
+@click.option("--action", "action_text", default=None, help="Action taken")
+@click.option("--result", default=None, help="Result achieved")
+@click.option(
+    "--keywords",
+    default=None,
+    help="Keywords for matching (comma-separated list)",
+)
+@click.option(
+    "--id", "story_id", type=int, default=None, help="Story ID (for delete or update)"
+)
+def profile_star_story(
+    action: str,
+    user_name: str | None,
+    situation: str | None,
+    task: str | None,
+    action_text: str | None,
+    result: str | None,
+    keywords: str | None,
+    story_id: int | None,
+) -> None:
+    """Manage STAR (Situation, Task, Action, Result) stories for interview prep.
+
+    STAR stories help you prepare for behavioral interview questions by storing
+    examples of how you've handled challenges and achieved results.
+    """
+    from job_scout.config import user_db_path
+    from job_scout.database import Database
+
+    target = _require_single_user(user_name)
+    db = Database(user_db_path(target))
+
+    if action == "add":
+        if not all([situation, task, action_text, result]):
+            click.echo(
+                "Error: --situation, --task, --action, and --result are required",
+                err=True,
+            )
+            sys.exit(1)
+        assert situation is not None
+        assert task is not None
+        assert action_text is not None
+        assert result is not None
+        parsed_keywords = [kw.strip() for kw in keywords.split(",")] if keywords else []
+        story_id = db.save_star_story(
+            situation, task, action_text, result, parsed_keywords
+        )
+        click.echo(f"STAR story #{story_id} saved successfully")
+
+    elif action == "list":
+        stories = db.get_star_stories()
+        if not stories:
+            click.echo("No STAR stories found.")
+            return
+        click.echo(f"\n{len(stories)} STAR story(ies):\n" + "=" * 50)
+        for story in stories:
+            click.echo(f"Story #{story['id']}")
+            click.echo(f"Situation: {story['situation']}")
+            click.echo(f"Task: {story['task']}")
+            click.echo(f"Action: {story['action']}")
+            click.echo(f"Result: {story['result']}")
+            if story["keywords"]:
+                click.echo(f"Keywords: {', '.join(story['keywords'])}")
+            click.echo()
+
+    elif action == "delete":
+        if story_id is None:
+            click.echo("Error: --id is required for delete action", err=True)
+            sys.exit(1)
+        if db.delete_star_story(story_id):
+            click.echo(f"STAR story #{story_id} deleted")
+        else:
+            click.echo(f"Story #{story_id} not found", err=True)
+            sys.exit(1)
+
+    elif action == "update":
+        if story_id is None:
+            click.echo("Error: --id is required for update action", err=True)
+            sys.exit(1)
+        if not all([situation, task, action_text, result]):
+            click.echo(
+                "Error: --situation, --task, --action, and --result are required",
+                err=True,
+            )
+            sys.exit(1)
+        assert situation is not None
+        assert task is not None
+        assert action_text is not None
+        assert result is not None
+        parsed_keywords = [kw.strip() for kw in keywords.split(",")] if keywords else []
+        if db.update_star_story(
+            story_id, situation, task, action_text, result, parsed_keywords
+        ):
+            click.echo(f"STAR story #{story_id} updated")
+        else:
+            click.echo(f"Story #{story_id} not found", err=True)
+            sys.exit(1)
+
+
+@profile_group.command("interview-prep")
+@click.argument("job_id", type=int)
+@click.option("--user", "user_name", default=None, help="User preparing")
+def profile_interview_prep(job_id: int, user_name: str | None) -> None:
+    """Generate interview preparation for a specific job.
+
+    Extracts likely behavioral questions from the job description and matches
+    them to your STAR stories for suggested interview answers.
+    """
+    from job_scout.config import user_db_path
+    from job_scout.database import Database
+    from job_scout.interview_prep import generate_interview_prep
+    from job_scout.models import StarStory
+
+    target = _require_single_user(user_name)
+    _require_llm()
+    db = Database(user_db_path(target))
+
+    # Get the job
+    job = db.get_job(job_id)
+    if not job:
+        click.echo(f"Job #{job_id} not found", err=True)
+        sys.exit(1)
+
+    if not job.description:
+        click.echo(f"Job #{job_id} has no description", err=True)
+        sys.exit(1)
+
+    # Get all STAR stories
+    story_rows = db.get_star_stories()
+    stories = [
+        StarStory(
+            id=story["id"],
+            situation=story["situation"],
+            task=story["task"],
+            action=story["action"],
+            result=story["result"],
+            keywords=story["keywords"],
+            created_at=story["created_at"],
+            updated_at=story["updated_at"],
+        )
+        for story in story_rows
+    ]
+
+    if not stories:
+        msg = "No STAR stories found. Add some with 'profile star-story add'"
+        click.echo(msg, err=True)
+        sys.exit(1)
+
+    # Generate interview prep
+    prep = generate_interview_prep(job.description, stories, job_id=job_id)
+
+    # Display results
+    click.echo(f"\nInterview Preparation for Job #{job_id}:")
+    click.echo(f"{job.title} @ {job.company}\n")
+    click.echo("=" * 60)
+
+    if prep.behavioral_questions:
+        click.echo(f"\n{len(prep.behavioral_questions)} Behavioral Questions:\n")
+        for i, question in enumerate(prep.behavioral_questions, 1):
+            click.echo(f"{i}. {question.question}")
+            if question.keywords:
+                click.echo(f"   Keywords: {', '.join(question.keywords)}")
+            click.echo()
+
+    click.echo("\nMatched STAR Stories:\n")
+    if prep.matched_stories:
+        for question_text, matched in prep.matched_stories.items():
+            click.echo(f"Q: {question_text}")
+            if matched:
+                for story in matched[:2]:  # Show top 2 matches
+                    click.echo(f"  Story #{story.id}:")
+                    click.echo(f"    {story.situation}")
+                    click.echo(f"    → {story.result}")
+            else:
+                click.echo("  (No matching stories)")
+            click.echo()
+    else:
+        click.echo("No matches found between questions and stories")
+
+
 @cli.group("approval")
 def approval_group() -> None:
     """Manage job application approvals."""

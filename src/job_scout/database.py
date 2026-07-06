@@ -226,6 +226,18 @@ class Database:
                 "CREATE INDEX IF NOT EXISTS idx_job_id_research ON "
                 "company_research(job_id)"
             )
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS star_stories (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    situation TEXT NOT NULL,
+                    task TEXT NOT NULL,
+                    action TEXT NOT NULL,
+                    result TEXT NOT NULL,
+                    keywords TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+            """)
 
     def _backfill_dedup_keys(self, conn: sqlite3.Connection) -> None:
         """Populate dedup_key for rows written before the column existed.
@@ -1236,3 +1248,153 @@ class Database:
             )
             row = cursor.fetchone()
             return row[0] if row else None
+
+    def save_star_story(
+        self, situation: str, task: str, action: str, result: str, keywords: list[str]
+    ) -> int:
+        """Save a STAR (Situation, Task, Action, Result) story.
+
+        Args:
+            situation: The situation or context.
+            task: The task or challenge faced.
+            action: The specific action taken.
+            result: The measurable result achieved.
+            keywords: Keywords for matching to interview questions.
+
+        Returns:
+            ID of the saved story.
+        """
+        from datetime import UTC  # noqa: F811
+
+        now_iso = datetime.now(UTC).isoformat()
+        keywords_json = json.dumps(keywords)
+
+        with self._conn() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO star_stories
+                (situation, task, action, result, keywords, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (situation, task, action, result, keywords_json, now_iso, now_iso),
+            )
+            return cursor.lastrowid or 0
+
+    def get_star_stories(self) -> list[dict[str, Any]]:
+        """Get all STAR stories.
+
+        Returns:
+            List of STAR stories as dictionaries.
+        """
+        with self._conn() as conn:
+            cursor = conn.execute(
+                """
+                SELECT id, situation, task, action, result, keywords,
+                       created_at, updated_at
+                FROM star_stories
+                ORDER BY created_at DESC
+                """
+            )
+            results = []
+            for row in cursor.fetchall():
+                results.append(
+                    {
+                        "id": row[0],
+                        "situation": row[1],
+                        "task": row[2],
+                        "action": row[3],
+                        "result": row[4],
+                        "keywords": json.loads(row[5]),
+                        "created_at": row[6],
+                        "updated_at": row[7],
+                    }
+                )
+            return results
+
+    def get_star_story(self, story_id: int) -> dict[str, Any] | None:
+        """Get a single STAR story by ID.
+
+        Args:
+            story_id: ID of the story.
+
+        Returns:
+            Story as dictionary, or None if not found.
+        """
+        with self._conn() as conn:
+            cursor = conn.execute(
+                """
+                SELECT id, situation, task, action, result, keywords,
+                       created_at, updated_at
+                FROM star_stories
+                WHERE id = ?
+                """,
+                (story_id,),
+            )
+            row = cursor.fetchone()
+            if not row:
+                return None
+            return {
+                "id": row[0],
+                "situation": row[1],
+                "task": row[2],
+                "action": row[3],
+                "result": row[4],
+                "keywords": json.loads(row[5]),
+                "created_at": row[6],
+                "updated_at": row[7],
+            }
+
+    def update_star_story(
+        self,
+        story_id: int,
+        situation: str,
+        task: str,
+        action: str,
+        result: str,
+        keywords: list[str],
+    ) -> bool:
+        """Update a STAR story.
+
+        Args:
+            story_id: ID of the story to update.
+            situation: Updated situation.
+            task: Updated task.
+            action: Updated action.
+            result: Updated result.
+            keywords: Updated keywords.
+
+        Returns:
+            True if a row was updated, False otherwise.
+        """
+        from datetime import UTC  # noqa: F811
+
+        now_iso = datetime.now(UTC).isoformat()
+        keywords_json = json.dumps(keywords)
+
+        with self._conn() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE star_stories
+                SET situation = ?, task = ?, action = ?, result = ?,
+                    keywords = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (situation, task, action, result, keywords_json, now_iso, story_id),
+            )
+            return cursor.rowcount > 0
+
+    def delete_star_story(self, story_id: int) -> bool:
+        """Delete a STAR story.
+
+        Args:
+            story_id: ID of the story to delete.
+
+        Returns:
+            True if a row was deleted, False otherwise.
+        """
+        with self._conn() as conn:
+            cursor = conn.execute(
+                "DELETE FROM star_stories WHERE id = ?",
+                (story_id,),
+            )
+            return cursor.rowcount > 0
