@@ -211,6 +211,8 @@ class Config(BaseModel):
     schedule_minute: int = 0
     schedule_days: str = "1-5"
     schedule_paused: bool = False
+    mcp_enabled: bool = False
+    mcp_port: int = 5000
 
     @field_validator("jobspy_sites", mode="before")
     @classmethod

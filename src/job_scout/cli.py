@@ -2550,6 +2550,36 @@ def web(host: str, port: int) -> None:
     run_server(host=host, port=port)
 
 
+@cli.group("mcp")
+def mcp_group() -> None:
+    """Manage the MCP server for ChatGPT/Claude/Copilot integration."""
+
+
+@mcp_group.command("start")
+@click.option("--host", default="127.0.0.1", help="Host to bind to (default 127.0.0.1)")
+@click.option("--port", default=5000, type=int, help="Port to bind to (default 5000)")
+def mcp_start(host: str, port: int) -> None:
+    """Start the MCP server for ChatGPT/Claude/Copilot integration.
+
+    The MCP server exposes job-scout functionality to AI assistants.
+    It listens on a local socket and requires direct authentication.
+    """
+    import asyncio
+
+    from job_scout.mcp_server import run_mcp_server  # noqa: PLC0415
+
+    db = _get_db()
+    try:
+        logger.info(f"Starting MCP server on {host}:{port}")
+        asyncio.run(run_mcp_server(db, host=host, port=port))
+    except KeyboardInterrupt:
+        logger.info("MCP server stopped by user")
+    except Exception as e:
+        logger.error(f"MCP server failed to start: {e}")
+        click.echo(f"Error: Failed to start MCP server: {e}", err=True)
+        sys.exit(1)
+
+
 def main() -> None:
     """Main entry point for the job-scout CLI."""
     try:

@@ -23,6 +23,7 @@ dependencies = [
     "fastapi>=0.139.0",
     "uvicorn>=0.50.0",
     "reportlab>=5.0.0",
+    "mcp>=1.28.1",
 ]
 
 [project.optional-dependencies]

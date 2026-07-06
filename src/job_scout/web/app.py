@@ -19,8 +19,10 @@ from job_scout.config import (
     apply_user_init,
     build_effective_config,
     list_users,
+    load_config,
     load_secrets,
     load_user_config,
+    save_config,
     save_user_config,
     set_config_value,
     update_secrets,
@@ -1889,6 +1891,58 @@ def create_app() -> FastAPI:
             return prep.model_dump()
         except HTTPException:
             raise
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc  # noqa: B904
+
+    @app.get("/api/mcp/status")
+    def get_mcp_status() -> dict[str, Any]:
+        """Get MCP server status and configuration.
+
+        Returns:
+            Dictionary with MCP enabled status and port configuration.
+        """
+        try:
+            config = load_config()
+            return {
+                "mcp_enabled": config.mcp_enabled,
+                "mcp_port": config.mcp_port,
+                "status": "configured" if config.mcp_enabled else "disabled",
+            }
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc  # noqa: B904
+
+    @app.post("/api/mcp/config")
+    def update_mcp_config(
+        enabled: bool | None = None, port: int | None = None
+    ) -> dict[str, Any]:
+        """Update MCP server configuration.
+
+        Args:
+            enabled: Whether to enable the MCP server.
+            port: Port number for the MCP server.
+
+        Returns:
+            Updated MCP configuration.
+        """
+        try:
+            config = load_config()
+
+            if enabled is not None:
+                config.mcp_enabled = enabled
+            if port is not None:
+                if port < 1024 or port > 65535:
+                    raise ValueError("Port must be between 1024 and 65535")
+                config.mcp_port = port
+
+            save_config(config)
+
+            return {
+                "mcp_enabled": config.mcp_enabled,
+                "mcp_port": config.mcp_port,
+                "status": "updated",
+            }
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc  # noqa: B904
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc  # noqa: B904
 
