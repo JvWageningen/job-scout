@@ -85,9 +85,10 @@ def build_raw_notifier_for_test(
         )
     elif channel == "email":
         smtp_port_val = kwargs.get("smtp_port", 587)
+        smtp_port = int(smtp_port_val) if isinstance(smtp_port_val, (int, str)) else 587
         return EmailNotifier(
             smtp_host=str(kwargs.get("smtp_host", "")),
-            smtp_port=int(smtp_port_val) if isinstance(smtp_port_val, (int, str)) else 587,
+            smtp_port=smtp_port,
             smtp_from=str(kwargs.get("smtp_from", "")),
             smtp_to=str(kwargs.get("smtp_to", "")),
             smtp_username=str(kwargs.get("smtp_username", "")) or None,
