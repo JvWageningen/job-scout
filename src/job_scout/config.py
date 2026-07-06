@@ -350,10 +350,11 @@ def set_config_value(key: str, value: str, *, user: str | None = None) -> None:
             f"or data/secrets.yaml -- never in a tracked config file."
         )
     if user is None:
-        config = load_config()
-        data = config.model_dump()
-        data[key] = _coerce_value(data.get(key), value)
-        save_config(Config(**data))
+        global_data = load_global_config()
+        default_val = Config.model_fields[key].default
+        existing_val = global_data.get(key, default_val)
+        global_data[key] = _coerce_value(existing_val, value)
+        write_global_config(global_data)
         return
     if key in GLOBAL_FIELDS:
         raise ValueError(

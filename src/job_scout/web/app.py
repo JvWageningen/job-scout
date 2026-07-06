@@ -150,7 +150,13 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail=f"User '{user}' not found")
 
         try:
-            config = build_effective_config(user) if user else Config()
+            if user:
+                config = build_effective_config(user)
+            else:
+                # Return the global config with defaults filled in
+                from job_scout.config import load_llm_config
+
+                config = load_llm_config()
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc  # noqa: B904
 
@@ -883,6 +889,54 @@ def create_app() -> FastAPI:
             return {"ok": False, "message": str(e)}
         except Exception as exc:
             return {"ok": False, "message": str(exc)}
+
+    @app.post("/api/llm/detect-models")
+    def detect_local_models(body: dict[str, Any]) -> dict[str, Any]:
+        """Detect available models from an OpenAI-compatible local LLM server.
+
+        Args:
+            body: Request body with 'base_url' (required) and optional 'api_key'.
+
+        Returns:
+            Dict with 'ok' (bool), 'models' (list of model ids), 'message' (str).
+        """
+        base_url = body.get("base_url", "").strip()
+
+        if not base_url:
+            return {"ok": False, "models": [], "message": "base_url is required"}
+
+        try:
+            import openai
+
+            api_key = body.get("api_key", "").strip() or "not-needed"
+
+            client = openai.OpenAI(api_key=api_key, base_url=base_url, max_retries=0)
+            models_response = client.models.list()
+
+            model_ids = [model.id for model in models_response.data]
+            return {
+                "ok": True,
+                "models": model_ids,
+                "message": f"Found {len(model_ids)} model(s)",
+            }
+        except openai.APIConnectionError as e:
+            return {
+                "ok": False,
+                "models": [],
+                "message": f"Connection failed: {str(e)}",
+            }
+        except openai.AuthenticationError as e:
+            return {
+                "ok": False,
+                "models": [],
+                "message": f"Authentication error: {str(e)}",
+            }
+        except Exception as exc:
+            return {
+                "ok": False,
+                "models": [],
+                "message": f"Error: {str(exc)}",
+            }
 
     @app.post("/api/notification/test-channel")
     def test_notification_channel(body: dict[str, Any]) -> dict[str, Any]:

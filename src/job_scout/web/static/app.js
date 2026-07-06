@@ -17,6 +17,7 @@ document.addEventListener('DOMContentLoaded', () => {
     setupEventListeners();
     checkGlobalSetup();
     loadUsers();
+    loadLLMSettings();
 });
 
 /**
@@ -177,6 +178,11 @@ function setupEventListeners() {
     const testConnBtn = document.getElementById('test-conn-btn');
     if (testConnBtn) {
         testConnBtn.addEventListener('click', testConnection);
+    }
+
+    const detectModelsBtn = document.getElementById('detect-models-btn');
+    if (detectModelsBtn) {
+        detectModelsBtn.addEventListener('click', detectLocalModels);
     }
 
     const createUserBtn = document.getElementById('create-user-btn');
@@ -1085,12 +1091,8 @@ async function removeSite(identifier) {
  * Load LLM settings
  */
 async function loadLLMSettings() {
-    if (!currentUser) {
-        return;
-    }
-
     try {
-        const response = await fetchWithAuth(`${API_BASE}/config?user=${encodeURIComponent(currentUser)}`);
+        const response = await fetchWithAuth(`${API_BASE}/config`);
         if (!response.ok) {
             return;
         }
@@ -1110,14 +1112,9 @@ async function loadLLMSettings() {
 }
 
 /**
- * Save LLM settings
+ * Save LLM settings (global configuration)
  */
 async function saveLLMSettings() {
-    if (!currentUser) {
-        alert('Please select a user first');
-        return;
-    }
-
     const values = {
         llm_provider: document.getElementById('llm-provider').value,
         evaluation_provider: document.getElementById('eval-provider').value || null,
@@ -1130,10 +1127,10 @@ async function saveLLMSettings() {
     };
 
     try {
-        const response = await fetchWithAuth(`${API_BASE}/config`, {
+        const response = await fetchWithAuth(`${API_BASE}/global-init`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ user: currentUser, values }),
+            body: JSON.stringify(values),
         });
 
         if (!response.ok) {
@@ -1142,15 +1139,60 @@ async function saveLLMSettings() {
             return;
         }
 
-        const result = await response.json();
-        if (result.errors) {
-            alert(`Errors: ${JSON.stringify(result.errors)}`);
-        } else {
-            alert('LLM settings saved successfully');
-        }
+        alert('LLM settings saved successfully');
     } catch (error) {
         console.error('Error saving LLM settings:', error);
         alert('Error saving LLM settings');
+    }
+}
+
+/**
+ * Detect available models from local LLM server.
+ */
+async function detectLocalModels() {
+    const baseUrl = document.getElementById('local-base-url').value.trim();
+    const messageDiv = document.getElementById('detect-models-message');
+
+    if (!baseUrl) {
+        messageDiv.style.color = 'red';
+        messageDiv.textContent = 'Please enter a base URL first';
+        return;
+    }
+
+    messageDiv.style.color = 'blue';
+    messageDiv.textContent = 'Detecting models...';
+
+    try {
+        const response = await fetchWithAuth(`${API_BASE}/llm/detect-models`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ base_url: baseUrl }),
+        });
+
+        const result = await response.json();
+
+        if (result.ok && result.models && result.models.length > 0) {
+            messageDiv.style.color = 'green';
+            messageDiv.textContent = `Found ${result.models.length} model(s)`;
+
+            const modelsList = document.getElementById('models-list');
+            modelsList.innerHTML = '';
+            result.models.forEach((model) => {
+                const option = document.createElement('option');
+                option.value = model;
+                modelsList.appendChild(option);
+            });
+        } else if (result.ok) {
+            messageDiv.style.color = 'orange';
+            messageDiv.textContent = 'No models found on server';
+        } else {
+            messageDiv.style.color = 'red';
+            messageDiv.textContent = `Detection failed: ${result.message}`;
+        }
+    } catch (error) {
+        console.error('Error detecting models:', error);
+        messageDiv.style.color = 'red';
+        messageDiv.textContent = 'Error detecting models';
     }
 }
 

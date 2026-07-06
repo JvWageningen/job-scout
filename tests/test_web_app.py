@@ -1753,3 +1753,103 @@ class TestJobStatusUpdate:
         jobs = db.get_jobs_by_status(JobStatus.VIEWED)
         assert len(jobs) == 1
         assert jobs[0].notes == "Very interesting opportunity"
+
+
+class TestDetectLocalModels:
+    """Tests for POST /api/llm/detect-models endpoint."""
+
+    def test_detect_models_missing_base_url(self, client: TestClient) -> None:
+        """detect_models fails when base_url is missing."""
+        response = client.post("/api/llm/detect-models", json={})
+        assert response.status_code == 200
+        result = response.json()
+        assert not result["ok"]
+        assert "base_url is required" in result["message"]
+
+    def test_detect_models_empty_base_url(self, client: TestClient) -> None:
+        """detect_models fails when base_url is empty."""
+        response = client.post("/api/llm/detect-models", json={"base_url": ""})
+        assert response.status_code == 200
+        result = response.json()
+        assert not result["ok"]
+        assert "base_url is required" in result["message"]
+
+    def test_detect_models_connection_error(self, client: TestClient) -> None:
+        """detect_models handles connection errors gracefully."""
+        response = client.post(
+            "/api/llm/detect-models", json={"base_url": "http://invalid.invalid"}
+        )
+        assert response.status_code == 200
+        result = response.json()
+        assert not result["ok"]
+        assert "Connection failed" in result["message"] or "Error" in result["message"]
+        assert result["models"] == []
+
+    def test_detect_models_success_mock(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """detect_models returns model list on success."""
+        from unittest.mock import MagicMock
+
+        # Mock the openai.OpenAI client
+        mock_model_1 = MagicMock()
+        mock_model_1.id = "llama3.1"
+        mock_model_2 = MagicMock()
+        mock_model_2.id = "llama2"
+
+        mock_models_list = MagicMock()
+        mock_models_list.data = [mock_model_1, mock_model_2]
+
+        mock_client = MagicMock()
+        mock_client.models.list.return_value = mock_models_list
+
+        def mock_openai_init(*args, **kwargs) -> MagicMock:
+            return mock_client
+
+        import openai
+
+        monkeypatch.setattr(openai, "OpenAI", mock_openai_init)
+
+        response = client.post(
+            "/api/llm/detect-models",
+            json={"base_url": "http://localhost:11434/v1"},
+        )
+        assert response.status_code == 200
+        result = response.json()
+        assert result["ok"]
+        assert result["models"] == ["llama3.1", "llama2"]
+        assert "Found 2" in result["message"]
+
+    def test_detect_models_with_api_key(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """detect_models passes api_key to OpenAI client."""
+        from unittest.mock import MagicMock
+
+        mock_model = MagicMock()
+        mock_model.id = "test-model"
+        mock_models_list = MagicMock()
+        mock_models_list.data = [mock_model]
+
+        mock_client = MagicMock()
+        mock_client.models.list.return_value = mock_models_list
+
+        mock_init = MagicMock(return_value=mock_client)
+
+        import openai
+
+        monkeypatch.setattr(openai, "OpenAI", mock_init)
+
+        response = client.post(
+            "/api/llm/detect-models",
+            json={"base_url": "http://localhost:11434/v1", "api_key": "test-key"},
+        )
+        assert response.status_code == 200
+        result = response.json()
+        assert result["ok"]
+
+        # Verify that the api_key was passed to the OpenAI constructor
+        mock_init.assert_called_once()
+        call_kwargs = mock_init.call_args[1]
+        assert call_kwargs["api_key"] == "test-key"
+        assert call_kwargs["base_url"] == "http://localhost:11434/v1"

@@ -160,3 +160,40 @@ def test_set_config_value_routes_user_key(
     cfg.set_config_value("ntfy_topic", "alice-topic", user="alice")
     data = yaml.safe_load((tmp_path / "users" / "alice" / "config.yaml").read_text())
     assert data["ntfy_topic"] == "alice-topic"
+
+
+def test_set_config_value_global_field_with_no_user(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """set_config_value with user=None for global fields persists the value."""
+    cfg = _reload_config(monkeypatch, tmp_path)
+    cfg.set_config_value("llm_provider", "local")
+    data = yaml.safe_load((tmp_path / "config.yaml").read_text())
+    assert data["llm_provider"] == "local"
+
+
+def test_set_config_value_does_not_pollute_globals_with_defaults(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """set_config_value only saves the specified key, not all defaults."""
+    cfg = _reload_config(monkeypatch, tmp_path)
+    cfg.set_config_value("llm_provider", "local")
+
+    # Check that the file contains only the one key, not defaults
+    data = yaml.safe_load((tmp_path / "config.yaml").read_text())
+    assert data == {"llm_provider": "local"}
+
+    # Now set another key
+    cfg.set_config_value("max_jobs_per_source", "25")
+    data = yaml.safe_load((tmp_path / "config.yaml").read_text())
+    assert set(data.keys()) == {"llm_provider", "max_jobs_per_source"}
+
+
+def test_global_fields_cannot_be_set_per_user(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """set_config_value raises ValueError for global fields with user."""
+    cfg = _reload_config(monkeypatch, tmp_path)
+    (tmp_path / "users" / "alice").mkdir(parents=True)
+    with pytest.raises(ValueError, match="is a global field"):
+        cfg.set_config_value("llm_provider", "local", user="alice")
