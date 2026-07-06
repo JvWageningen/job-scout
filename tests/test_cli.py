@@ -137,6 +137,76 @@ def test_jobs_list_shows_matched_jobs(cli_env: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# runs commands
+# ---------------------------------------------------------------------------
+
+
+def test_runs_history_empty_database(cli_env: Path) -> None:
+    """runs history reports no runs when the database is empty."""
+    (cli_env / "users" / "alice").mkdir(parents=True)
+    runner = CliRunner()
+    result = runner.invoke(cli, ["runs", "history"])
+    assert result.exit_code == 0
+    assert "No run history found" in result.output
+
+
+def test_runs_history_shows_recent_runs(cli_env: Path) -> None:
+    """runs history displays recent run history from the database."""
+    from job_scout.database import Database
+    from job_scout.models import RunStats
+
+    user_dir = cli_env / "users" / "alice"
+    user_dir.mkdir(parents=True)
+    db = Database(user_dir / "jobs.db")
+
+    # Add a run
+    stats = RunStats(
+        scraped=100,
+        deduplicated=10,
+        matched=5,
+        rejected=20,
+        notified=5,
+        errors=[],
+    )
+    now = datetime.now(UTC)
+    db.save_run_stats(stats, now, 30.0)
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["runs", "history"])
+    assert result.exit_code == 0
+    assert "100" in result.output  # scraped count
+    assert "5" in result.output  # matched count
+
+
+def test_runs_history_respects_limit(cli_env: Path) -> None:
+    """runs history respects the --limit parameter."""
+    from job_scout.database import Database
+    from job_scout.models import RunStats
+
+    user_dir = cli_env / "users" / "alice"
+    user_dir.mkdir(parents=True)
+    db = Database(user_dir / "jobs.db")
+
+    # Add 3 runs
+    for i in range(3):
+        stats = RunStats(
+            scraped=100 + i,
+            matched=5 + i,
+            rejected=20 - i,
+            notified=5,
+            errors=[],
+        )
+        t = datetime(2026, 1, 1 + i, 10, 0, 0, tzinfo=UTC)
+        db.save_run_stats(stats, t, 30.0)
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["runs", "history", "--limit", "2"])
+    assert result.exit_code == 0
+    # Should contain 2 runs
+    assert result.output.count("2026-01-") == 2
+
+
+# ---------------------------------------------------------------------------
 # schedule commands
 # ---------------------------------------------------------------------------
 

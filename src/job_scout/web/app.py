@@ -254,6 +254,53 @@ def create_app() -> FastAPI:
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
 
+    @app.get("/api/runs/history")
+    def get_runs_history(
+        user: str | None = None, limit: int = Query(30, ge=1, le=100)
+    ) -> list[dict[str, Any]]:
+        """Get run history for a user.
+
+        Args:
+            user: User name (required).
+            limit: Maximum number of runs to return (default 30, max 100).
+
+        Returns:
+            List of run history entries as dictionaries.
+
+        Raises:
+            HTTPException: If user is not provided or not found.
+        """
+        if not user:
+            raise HTTPException(status_code=400, detail="User is required")
+        if user not in list_users():
+            raise HTTPException(status_code=404, detail=f"User '{user}' not found")
+
+        try:
+            db_path = user_db_path(user)
+            if not db_path.exists():
+                return []
+            db = Database(db_path)
+            history = db.get_run_history(limit)
+            return [
+                {
+                    "started_at": e.started_at.isoformat(),
+                    "duration_seconds": e.duration_seconds,
+                    "scraped": e.scraped,
+                    "deduplicated": e.deduplicated,
+                    "title_filtered": e.title_filtered,
+                    "title_screened": e.title_screened,
+                    "quick_filtered": e.quick_filtered,
+                    "evaluated": e.evaluated,
+                    "matched": e.matched,
+                    "rejected": e.rejected,
+                    "notified": e.notified,
+                    "errors": e.errors,
+                }
+                for e in history
+            ]
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+
     @app.get("/api/schedule/status")
     def get_schedule_status() -> dict[str, str]:
         """Get the current schedule status.

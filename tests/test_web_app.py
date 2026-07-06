@@ -608,6 +608,141 @@ class TestGetRejectedJobsFiltering:
         assert len(response.json()) == 1
 
 
+class TestGetRunsHistory:
+    """Tests for GET /api/runs/history endpoint."""
+
+    def test_get_runs_history_no_user(self, client: TestClient) -> None:
+        """Test that /api/runs/history requires user parameter."""
+        response = client.get("/api/runs/history")
+        assert response.status_code == 400
+        data = response.json()
+        assert "User is required" in data["detail"]
+
+    def test_get_runs_history_nonexistent_user(self, client: TestClient) -> None:
+        """Test that /api/runs/history returns 404 for nonexistent user."""
+        response = client.get("/api/runs/history?user=nonexistent")
+        assert response.status_code == 404
+
+    def test_get_runs_history_empty(
+        self, client: TestClient, test_user: str, temp_data_dir: Path
+    ) -> None:
+        """Test that /api/runs/history returns empty list for new user."""
+        db_path = user_db_path(test_user)
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        Database(db_path)  # Create the database
+
+        response = client.get(f"/api/runs/history?user={test_user}")
+        assert response.status_code == 200
+        data = response.json()
+        assert isinstance(data, list)
+        assert len(data) == 0
+
+    def test_get_runs_history_with_data(
+        self, client: TestClient, test_user: str, temp_data_dir: Path
+    ) -> None:
+        """Test that /api/runs/history returns run history data."""
+        from datetime import datetime as dt
+
+        from job_scout.models import RunStats
+
+        db_path = user_db_path(test_user)
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        db = Database(db_path)
+
+        # Add a run
+        stats = RunStats(
+            scraped=100,
+            deduplicated=10,
+            title_filtered=20,
+            title_screened=30,
+            quick_filtered=15,
+            evaluated=25,
+            matched=5,
+            rejected=20,
+            notified=5,
+            errors=["Error 1"],
+        )
+        now = dt.now()
+        db.save_run_stats(stats, now, 45.5)
+
+        response = client.get(f"/api/runs/history?user={test_user}")
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data) == 1
+
+        entry = data[0]
+        assert entry["scraped"] == 100
+        assert entry["matched"] == 5
+        assert entry["rejected"] == 20
+        assert entry["notified"] == 5
+        assert entry["errors"] == 1
+        assert abs(entry["duration_seconds"] - 45.5) < 0.1
+
+    def test_get_runs_history_limit_parameter(
+        self, client: TestClient, test_user: str, temp_data_dir: Path
+    ) -> None:
+        """Test that /api/runs/history respects limit parameter."""
+        from datetime import datetime as dt
+
+        from job_scout.models import RunStats
+
+        db_path = user_db_path(test_user)
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        db = Database(db_path)
+
+        # Add 5 runs
+        for i in range(5):
+            stats = RunStats(
+                scraped=100 + i,
+                matched=5 + i,
+                rejected=20,
+                notified=5,
+                errors=[],
+            )
+            db.save_run_stats(stats, dt.now(), 30.0)
+
+        # Request with limit=2
+        response = client.get(f"/api/runs/history?user={test_user}&limit=2")
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data) == 2
+
+    def test_get_runs_history_ordering(
+        self, client: TestClient, test_user: str, temp_data_dir: Path
+    ) -> None:
+        """Test that /api/runs/history returns runs in reverse chronological order."""
+        from datetime import datetime as dt
+        from datetime import timedelta
+
+        from job_scout.models import RunStats
+
+        db_path = user_db_path(test_user)
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        db = Database(db_path)
+
+        # Add 3 runs with different timestamps
+        base_time = dt.now()
+        for i in range(3):
+            stats = RunStats(
+                scraped=100 + i,
+                matched=5,
+                rejected=20,
+                notified=5,
+                errors=[],
+            )
+            run_time = base_time + timedelta(hours=i)
+            db.save_run_stats(stats, run_time, 30.0)
+
+        response = client.get(f"/api/runs/history?user={test_user}&limit=10")
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data) == 3
+        # Should be newest first
+        assert data[0]["scraped"] == 102  # Last run added
+        assert data[1]["scraped"] == 101
+        assert data[2]["scraped"] == 100
+
+
 class TestGetScheduleStatus:
     """Tests for GET /api/schedule/status endpoint."""
 

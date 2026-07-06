@@ -597,3 +597,117 @@ def test_combined_filters_min_score_and_source(tmp_db: Database) -> None:
     assert results[0].title == "Indeed High"
     assert results[0].source == "indeed"
     assert results[0].fit_score >= 70
+
+
+def test_save_and_get_run_stats(tmp_db: Database) -> None:
+    """save_run_stats persists run statistics and get_run_history retrieves them."""
+    from job_scout.models import RunStats
+
+    now = datetime.now(UTC)
+    stats = RunStats(
+        scraped=100,
+        deduplicated=10,
+        title_filtered=20,
+        title_screened=30,
+        quick_filtered=15,
+        evaluated=25,
+        matched=5,
+        rejected=20,
+        notified=5,
+        errors=["Error 1", "Error 2"],
+    )
+
+    # Save the run
+    tmp_db.save_run_stats(stats, now, 45.5)
+
+    # Retrieve the history
+    history = tmp_db.get_run_history(limit=10)
+    assert len(history) == 1
+
+    entry = history[0]
+    assert entry.scraped == 100
+    assert entry.deduplicated == 10
+    assert entry.title_filtered == 20
+    assert entry.title_screened == 30
+    assert entry.quick_filtered == 15
+    assert entry.evaluated == 25
+    assert entry.matched == 5
+    assert entry.rejected == 20
+    assert entry.notified == 5
+    assert entry.errors == 2
+    assert entry.duration_seconds == 45.5
+
+
+def test_get_run_history_ordering(tmp_db: Database) -> None:
+    """get_run_history returns runs in reverse chronological order (newest first)."""
+    from job_scout.models import RunStats
+
+    # Add multiple runs with different timestamps
+    times = [
+        datetime(2026, 1, 1, 10, 0, 0, tzinfo=UTC),
+        datetime(2026, 1, 2, 10, 0, 0, tzinfo=UTC),
+        datetime(2026, 1, 3, 10, 0, 0, tzinfo=UTC),
+    ]
+
+    for i, t in enumerate(times):
+        stats = RunStats(
+            scraped=100 + i,
+            matched=5 + i,
+            rejected=20 - i,
+            notified=5,
+            errors=[],
+        )
+        tmp_db.save_run_stats(stats, t, 30.0)
+
+    # Retrieve history
+    history = tmp_db.get_run_history(limit=10)
+    assert len(history) == 3
+    # Should be in reverse order (newest first)
+    assert history[0].started_at == times[2]
+    assert history[1].started_at == times[1]
+    assert history[2].started_at == times[0]
+
+
+def test_get_run_history_limit(tmp_db: Database) -> None:
+    """get_run_history respects the limit parameter."""
+    from job_scout.models import RunStats
+
+    # Add 5 runs
+    for i in range(5):
+        stats = RunStats(
+            scraped=100 + i,
+            matched=5 + i,
+            rejected=20 - i,
+            notified=5,
+            errors=[],
+        )
+        t = datetime(2026, 1, 1 + i, 10, 0, 0, tzinfo=UTC)
+        tmp_db.save_run_stats(stats, t, 30.0)
+
+    # Request only 2 most recent
+    history = tmp_db.get_run_history(limit=2)
+    assert len(history) == 2
+
+    # Request 10 (more than available)
+    history = tmp_db.get_run_history(limit=10)
+    assert len(history) == 5
+
+
+def test_run_stats_with_zero_errors(tmp_db: Database) -> None:
+    """save_run_stats correctly stores zero error count when errors list is empty."""
+    from job_scout.models import RunStats
+
+    now = datetime.now(UTC)
+    stats = RunStats(
+        scraped=50,
+        matched=10,
+        rejected=15,
+        notified=10,
+        errors=[],
+    )
+
+    tmp_db.save_run_stats(stats, now, 20.0)
+
+    history = tmp_db.get_run_history(limit=1)
+    assert len(history) == 1
+    assert history[0].errors == 0

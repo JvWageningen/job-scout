@@ -426,3 +426,119 @@ footer {
 .filter-group select {
     width: 100%;
 }
+
+/* Analytics */
+.analytics-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 20px;
+    background-color: #fff;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.analytics-table thead {
+    background-color: #f5f5f5;
+    border-bottom: 2px solid #ddd;
+}
+
+.analytics-table th,
+.analytics-table td {
+    padding: 12px 15px;
+    text-align: left;
+    border-bottom: 1px solid #eee;
+}
+
+.analytics-table th {
+    font-weight: 600;
+    color: #2c3e50;
+}
+
+.analytics-table tbody tr:hover {
+    background-color: #f9f9f9;
+}
+
+.analytics-table tbody tr:last-child td {
+    border-bottom: none;
+}
+
+.analytics-chart {
+    margin-top: 40px;
+    padding: 20px;
+    background-color: #f9f9f9;
+    border-radius: 4px;
+}
+
+.analytics-chart h3 {
+    margin-top: 0;
+    margin-bottom: 20px;
+    color: #2c3e50;
+}
+
+.chart-bars {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+}
+
+.chart-row-headers {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 10px;
+    font-weight: 600;
+    color: #666;
+    font-size: 0.9em;
+}
+
+.chart-row-headers span:first-child {
+    width: 80px;
+    flex-shrink: 0;
+}
+
+.chart-row-headers span:last-child {
+    flex: 1;
+}
+
+.chart-row {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+
+.chart-label {
+    width: 80px;
+    flex-shrink: 0;
+    font-size: 0.9em;
+    color: #666;
+    text-align: right;
+}
+
+.chart-bar-container {
+    flex: 1;
+    height: 25px;
+    background-color: #e8e8e8;
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.chart-bar {
+    height: 100%;
+    background: linear-gradient(90deg, #1976d2, #0d47a1);
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    padding-right: 8px;
+    min-width: 30px;
+    transition: background-color 0.2s ease;
+}
+
+.chart-bar:hover {
+    background: linear-gradient(90deg, #1565c0, #0c3aa3);
+}
+
+.chart-value {
+    color: white;
+    font-size: 0.85em;
+    font-weight: 600;
+}

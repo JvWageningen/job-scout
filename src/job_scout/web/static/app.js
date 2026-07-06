@@ -682,6 +682,11 @@ function switchTab(tab) {
     if (btnEl) {
         btnEl.classList.add('active');
     }
+
+    // Reload analytics when switching to that tab
+    if (tab === 'analytics' && currentUser) {
+        loadAnalytics();
+    }
 }
 
 /**
@@ -698,6 +703,7 @@ async function loadAllUserData() {
         loadLLMSettings(),
         loadScheduleStatus(),
         loadKeywords(),
+        loadAnalytics(),
     ]);
 }
 
@@ -1354,4 +1360,131 @@ function escapeHtml(text) {
         "'": '&#039;',
     };
     return String(text).replace(/[&<>"']/g, (char) => map[char]);
+}
+
+/**
+ * Load and display run history analytics
+ */
+async function loadAnalytics() {
+    if (!currentUser) {
+        return;
+    }
+
+    try {
+        const response = await fetchWithAuth(
+            `${API_BASE}/runs/history?user=${encodeURIComponent(currentUser)}&limit=30`
+        );
+        if (!response.ok) {
+            console.error('Failed to load analytics');
+            return;
+        }
+
+        const history = await response.json();
+        displayAnalyticsTable(history);
+        displayAnalyticsChart(history);
+    } catch (error) {
+        console.error('Error loading analytics:', error);
+    }
+}
+
+/**
+ * Display analytics data in a table
+ *
+ * @param {Array} history - Array of run history entries
+ */
+function displayAnalyticsTable(history) {
+    const container = document.getElementById('analytics-container');
+    if (!history || history.length === 0) {
+        container.innerHTML = '<p>No run history available.</p>';
+        return;
+    }
+
+    let tableHtml = `
+        <table class="analytics-table">
+            <thead>
+                <tr>
+                    <th>Date</th>
+                    <th>Scraped</th>
+                    <th>Matched</th>
+                    <th>Rejected</th>
+                    <th>Notified</th>
+                    <th>Errors</th>
+                    <th>Duration</th>
+                </tr>
+            </thead>
+            <tbody>
+    `;
+
+    history.forEach((entry) => {
+        const date = new Date(entry.started_at);
+        const dateStr = date.toLocaleString();
+        const durationStr = `${entry.duration_seconds.toFixed(1)}s`;
+
+        tableHtml += `
+            <tr>
+                <td>${escapeHtml(dateStr)}</td>
+                <td>${entry.scraped}</td>
+                <td>${entry.matched}</td>
+                <td>${entry.rejected}</td>
+                <td>${entry.notified}</td>
+                <td>${entry.errors}</td>
+                <td>${durationStr}</td>
+            </tr>
+        `;
+    });
+
+    tableHtml += `
+            </tbody>
+        </table>
+    `;
+
+    container.innerHTML = tableHtml;
+}
+
+/**
+ * Display a lightweight trend chart using CSS bars
+ *
+ * @param {Array} history - Array of run history entries
+ */
+function displayAnalyticsChart(history) {
+    if (!history || history.length < 2) {
+        const chartDiv = document.getElementById('analytics-chart');
+        if (chartDiv) {
+            chartDiv.classList.add('hidden');
+        }
+        return;
+    }
+
+    const chartDiv = document.getElementById('analytics-chart');
+    chartDiv.classList.remove('hidden');
+
+    // Get last 7 days of data (or fewer if less history available)
+    const recentRuns = history.slice(0, Math.min(7, history.length)).reverse();
+
+    // Find max matched count for scaling
+    const maxMatched = Math.max(...recentRuns.map((r) => r.matched), 1);
+
+    let barsHtml = '<div class="chart-row-headers"><span></span><span>Matched</span></div>';
+
+    recentRuns.forEach((entry) => {
+        const date = new Date(entry.started_at);
+        const dateStr = date.toLocaleDateString('en-US', {
+            month: 'short',
+            day: 'numeric',
+        });
+        const percentage = (entry.matched / maxMatched) * 100;
+
+        barsHtml += `
+            <div class="chart-row">
+                <span class="chart-label">${escapeHtml(dateStr)}</span>
+                <div class="chart-bar-container">
+                    <div class="chart-bar" style="width: ${percentage}%;" title="${entry.matched} matched">
+                        <span class="chart-value">${entry.matched}</span>
+                    </div>
+                </div>
+            </div>
+        `;
+    });
+
+    document.getElementById('chart-bars').innerHTML = barsHtml;
 }

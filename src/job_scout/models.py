@@ -234,3 +234,20 @@ class RunStats(BaseModel):
     rejected: int = 0
     notified: int = 0
     errors: list[str] = Field(default_factory=list)
+
+
+class RunHistoryEntry(BaseModel):
+    """A single run history entry with timing and stats."""
+
+    started_at: datetime
+    duration_seconds: float
+    scraped: int
+    deduplicated: int
+    title_filtered: int
+    title_screened: int
+    quick_filtered: int
+    evaluated: int
+    matched: int
+    rejected: int
+    notified: int
+    errors: int

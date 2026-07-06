@@ -44,6 +44,7 @@
                 <button class="tab-btn" data-tab="llm">LLM Settings</button>
                 <button class="tab-btn" data-tab="secrets">Secrets</button>
                 <button class="tab-btn" data-tab="schedule">Schedule</button>
+                <button class="tab-btn" data-tab="analytics">Analytics</button>
             </nav>
 
             <!-- User Picker Section -->
@@ -412,6 +413,18 @@
                     <button type="submit" class="btn btn-primary">Install Schedule</button>
                     <button type="button" id="remove-schedule-btn" class="btn btn-secondary">Remove Schedule</button>
                 </form>
+            </section>
+
+            <!-- Analytics Section -->
+            <section id="analytics-section" class="section hidden tab-content" data-tab="analytics">
+                <h2>Run Analytics</h2>
+                <div id="analytics-container">
+                    <p class="loading">Loading analytics...</p>
+                </div>
+                <div id="analytics-chart" class="analytics-chart hidden">
+                    <h3>Run Trends (Last 7 Days)</h3>
+                    <div id="chart-bars" class="chart-bars"></div>
+                </div>
             </section>
         </main>
 

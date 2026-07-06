@@ -259,6 +259,19 @@ uv run job-scout jobs list --limit 50 --user alex
 uv run job-scout jobs rejected --user alex     # rejected jobs with reasons
 ```
 
+### Run History & Analytics
+
+Each run (except dry runs) is automatically recorded in the user's database with statistics including scraped count, matched, rejected, notified, errors, and duration. View the history via CLI or the web dashboard:
+
+```bash
+uv run job-scout runs history --user alex      # show last 30 runs
+uv run job-scout runs history --user alex --limit 50
+```
+
+The web dashboard includes an **Analytics** tab displaying recent runs in a table and a lightweight trend chart showing matched jobs over time.
+
+**Note:** Dry-run executions (`--dry-run`) are not recorded in run history, as they are not actual searches and do not persist data.
+
 ### Scheduling
 
 ```bash

@@ -11,7 +11,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from job_scout.models import JobListing, JobStatus, TravelTime
+from job_scout.models import (
+    JobListing,
+    JobStatus,
+    RunHistoryEntry,
+    RunStats,
+    TravelTime,
+)
 
 
 def _dedup_key(title: str, company: str) -> str:
@@ -61,7 +67,7 @@ class Database:
             conn.close()
 
     def _init_db(self) -> None:
-        """Create the jobs table and indexes if they do not exist."""
+        """Create the jobs and runs tables and indexes if they do not exist."""
         with self._conn() as conn:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS jobs (
@@ -107,6 +113,27 @@ class Database:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_status ON jobs(status)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_dedup_key ON jobs(dedup_key)")
             self._backfill_dedup_keys(conn)
+            # Create runs table for run history
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS runs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    started_at TEXT NOT NULL,
+                    duration_seconds REAL NOT NULL,
+                    scraped INTEGER DEFAULT 0,
+                    deduplicated INTEGER DEFAULT 0,
+                    title_filtered INTEGER DEFAULT 0,
+                    title_screened INTEGER DEFAULT 0,
+                    quick_filtered INTEGER DEFAULT 0,
+                    evaluated INTEGER DEFAULT 0,
+                    matched INTEGER DEFAULT 0,
+                    rejected INTEGER DEFAULT 0,
+                    notified INTEGER DEFAULT 0,
+                    errors INTEGER DEFAULT 0
+                )
+            """)
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_started_at ON runs(started_at DESC)"
+            )
 
     def _backfill_dedup_keys(self, conn: sqlite3.Connection) -> None:
         """Populate dedup_key for rows written before the column existed.
@@ -567,3 +594,80 @@ class Database:
                 "SELECT status, COUNT(*) as cnt FROM jobs GROUP BY status"
             ).fetchall()
         return {str(r["status"]): int(r["cnt"]) for r in rows}
+
+    def save_run_stats(
+        self, stats: RunStats, started_at: datetime, duration_seconds: float
+    ) -> None:
+        """Persist run statistics to the runs table.
+
+        Args:
+            stats: RunStats object containing pipeline statistics.
+            started_at: When the run started.
+            duration_seconds: How long the run took.
+        """
+        errors_count = len(stats.errors) if stats.errors else 0
+        with self._conn() as conn:
+            conn.execute(
+                """
+                INSERT INTO runs
+                  (started_at, duration_seconds, scraped, deduplicated,
+                   title_filtered, title_screened, quick_filtered, evaluated,
+                   matched, rejected, notified, errors)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    started_at.isoformat(),
+                    duration_seconds,
+                    stats.scraped,
+                    stats.deduplicated,
+                    stats.title_filtered,
+                    stats.title_screened,
+                    stats.quick_filtered,
+                    stats.evaluated,
+                    stats.matched,
+                    stats.rejected,
+                    stats.notified,
+                    errors_count,
+                ),
+            )
+
+    def get_run_history(self, limit: int = 30) -> list[RunHistoryEntry]:
+        """Retrieve recent run history, most recent first.
+
+        Args:
+            limit: Maximum number of runs to return (default 30).
+
+        Returns:
+            List of RunHistoryEntry objects, most recent first.
+        """
+        with self._conn() as conn:
+            rows = conn.execute(
+                """
+                SELECT started_at, duration_seconds, scraped, deduplicated,
+                       title_filtered, title_screened, quick_filtered, evaluated,
+                       matched, rejected, notified, errors
+                FROM runs
+                ORDER BY started_at DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        entries = []
+        for row in rows:
+            entries.append(
+                RunHistoryEntry(
+                    started_at=datetime.fromisoformat(row[0]),
+                    duration_seconds=row[1],
+                    scraped=row[2],
+                    deduplicated=row[3],
+                    title_filtered=row[4],
+                    title_screened=row[5],
+                    quick_filtered=row[6],
+                    evaluated=row[7],
+                    matched=row[8],
+                    rejected=row[9],
+                    notified=row[10],
+                    errors=row[11],
+                )
+            )
+        return entries

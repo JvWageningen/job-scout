@@ -593,7 +593,7 @@ def _run_pipeline(
     dry_run: bool = False,
     full: bool = False,
     llm_client: LLMClient,
-) -> None:
+) -> tuple[RunStats, datetime, float]:
     """Core job search pipeline: scrape → filter → evaluate → notify.
 
     Args:
@@ -603,7 +603,11 @@ def _run_pipeline(
         dry_run: Skip persistence and notification.
         full: Bypass dedup, upsert results, re-notify matches.
         llm_client: Shared LLM client for scraping and evaluation.
+
+    Returns:
+        Tuple of (stats, started_at, duration_seconds).
     """
+    started_at = datetime.now()
     if full:
         logger.info("Full rerun: dedup bypassed, upsert enabled")
     click.echo("Scraping job listings…")
@@ -615,16 +619,20 @@ def _run_pipeline(
     if not new_jobs:
         click.echo("No new jobs found.")
         _print_run_summary(stats)
-        return
+        duration = (datetime.now() - started_at).total_seconds()
+        return stats, started_at, duration
     screened = _filter_and_screen(new_jobs, config, stats)
     if screened is None:
-        return
+        duration = (datetime.now() - started_at).total_seconds()
+        return stats, started_at, duration
     matched, run_stats = _process_jobs(
         screened, config, cv_text, db, dry_run, full=full, client=llm_client
     )
     _merge_stats(stats, run_stats)
     stats.notified = _send_notifications(matched, db, config, dry_run)
     _print_run_summary(stats)
+    duration = (datetime.now() - started_at).total_seconds()
+    return stats, started_at, duration
 
 
 def _execute_run(name: str, *, dry_run: bool = False, full: bool = False) -> None:
@@ -651,9 +659,12 @@ def _execute_run(name: str, *, dry_run: bool = False, full: bool = False) -> Non
     db = Database(user_db_path(name))
     cv_text = _load_cv_text(config)
     llm_client = get_llm_client(config)
-    _run_pipeline(
+    stats, started_at, duration = _run_pipeline(
         config, db, cv_text, dry_run=dry_run, full=full, llm_client=llm_client
     )
+    # Save run history only for non-dry-run executions
+    if not dry_run:
+        db.save_run_stats(stats, started_at, duration)
 
 
 def _execute_run_global(*, dry_run: bool = False, full: bool = False) -> None:
@@ -676,9 +687,12 @@ def _execute_run_global(*, dry_run: bool = False, full: bool = False) -> None:
     db = Database(get_data_dir() / "jobs.db")
     cv_text = _load_cv_text(config)
     llm_client = get_llm_client(config)
-    _run_pipeline(
+    stats, started_at, duration = _run_pipeline(
         config, db, cv_text, dry_run=dry_run, full=full, llm_client=llm_client
     )
+    # Save run history only for non-dry-run executions
+    if not dry_run:
+        db.save_run_stats(stats, started_at, duration)
 
 
 @click.group()
@@ -1030,6 +1044,39 @@ def _print_rejected_job(job: JobListing) -> None:
         else:
             click.echo("Reason:  Travel, salary, or vacation filter")
     click.echo(f"URL:     {job.url}")
+
+
+@cli.group()
+def runs() -> None:
+    """View run history and analytics."""
+
+
+@runs.command("history")
+@click.option("--limit", default=30, show_default=True, help="Max runs to show")
+@click.option("--user", "user_name", default=None, help="User whose runs to show")
+def runs_history(limit: int, user_name: str | None) -> None:
+    """Show recent run history."""
+    target = _require_single_user(user_name)
+    db = Database(user_db_path(target))
+    history = db.get_run_history(limit)
+    if not history:
+        click.echo("No run history found.")
+        return
+    click.echo(f"\n{'=' * 95}")
+    click.echo(
+        f"{'Date':<20} {'Scraped':<10} {'Matched':<10} {'Rejected':<10} "
+        f"{'Notified':<10} {'Errors':<8} {'Duration':<12}"
+    )
+    click.echo(f"{'=' * 95}")
+    for entry in history:
+        date_str = entry.started_at.strftime("%Y-%m-%d %H:%M:%S")
+        duration_str = f"{entry.duration_seconds:.1f}s"
+        click.echo(
+            f"{date_str:<20} {entry.scraped:<10} {entry.matched:<10} "
+            f"{entry.rejected:<10} {entry.notified:<10} {entry.errors:<8} "
+            f"{duration_str:<12}"
+        )
+    click.echo(f"{'=' * 95}")
 
 
 @cli.group("config")
