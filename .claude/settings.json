@@ -1,0 +1,60 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(*)",
+      "Bash(uv run python -c :*)",
+      "WebSearch"
+    ],
+    "deny": [
+      "Bash(rm -rf /)",
+      "Bash(rm -rf /*)",
+      "Bash(sudo *)",
+      "Bash(shutdown *)",
+      "Bash(reboot *)",
+      "Bash(poweroff *)",
+      "Bash(dd *)",
+      "Bash(mkfs *)"
+    ],
+    "ask": [
+      "Bash(rm *)",
+      "Bash(rmdir *)",
+      "Bash(mv *)",
+      "Bash(cp -r *)",
+      "Bash(git reset *)",
+      "Bash(git clean *)",
+      "Bash(git checkout *)",
+      "Bash(git branch -D *)",
+      "Bash(pip install *)",
+      "Bash(uv pip install *)",
+      "Bash(npm install *)",
+      "Bash(docker *)"
+    ]
+  },
+  "env": {
+    "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "50"
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Read",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 .claude/hooks/read_once.py"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "output=$(cat /dev/stdin); lines=$(echo \"$output\" | wc -l); if [ \"$lines\" -gt 200 ]; then echo \"$output\" | head -100; echo ''; echo \"... ($lines lines, middle truncated) ...\"; echo ''; echo \"$output\" | tail -50; else echo \"$output\"; fi"
+          }
+        ]
+      }
+    ]
+  }
+}

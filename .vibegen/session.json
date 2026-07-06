@@ -1,0 +1,11 @@
+{
+  "spec_hash": "45593e7c8825313320a51920fd6518f05ddeb8697c74b92400bbc56892562dc3",
+  "project_name": "job-scout",
+  "package_name": "job_scout",
+  "model_provider": "claude",
+  "model": "claude-sonnet-4-6",
+  "attempts": 0,
+  "last_status": "complete",
+  "generated_files": [],
+  "timestamp": "2026-03-30T08:04:32.536425+00:00"
+}

@@ -1,0 +1,88 @@
+[project]
+name = "job-scout"
+version = "0.1.0"
+description = "Automated daily job search tool for the Dutch job market"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+authors = [{ name = "JvWageningen" }]
+dependencies = [
+    "python-jobspy>=0.1.0",
+    "openrouteservice>=2.3.3",
+    "requests>=2.31.0",
+    "pyyaml>=6.0",
+    "click>=8.1.0",
+    "loguru>=0.7.0",
+    "pydantic>=2.0.0",
+    "pypdf2>=3.0.0",
+    "beautifulsoup4>=4.12.0",
+    "pandas>=2.0.0",
+    "jobspy>=0.31.0",
+    "pytest>=9.0.2",
+    "openai>=2.34.0",
+    "fastapi>=0.139.0",
+    "uvicorn>=0.50.0",
+]
+
+[project.scripts]
+job-scout = "job_scout.cli:main"
+
+[project.urls]
+Repository = "https://github.com/JvWageningen/job-scout"
+Issues = "https://github.com/JvWageningen/job-scout/issues"
+Changelog = "https://github.com/JvWageningen/job-scout/blob/main/CHANGELOG.md"
+
+[build-system]
+requires = ["uv_build>=0.10.10,<0.11.0"]
+build-backend = "uv_build"
+
+[tool.semantic_release]
+version_toml = ["pyproject.toml:project.version"]
+build_command = "uv build"
+branch = "main"
+commit_message = "chore(release): {version}\n\n[skip ci]"
+
+[tool.semantic_release.changelog]
+changelog_file = "CHANGELOG.md"
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "N"]
+
+[tool.ruff.format]
+docstring-code-format = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra -q --strict-markers --tb=short"
+
+[tool.mypy]
+strict = true
+warn_return_any = true
+disallow_untyped_defs = true
+ignore_missing_imports = true
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = ["job_scout.cli"]
+# Click decorators are untyped in strict mode; this is expected
+disable_error_code = ["untyped-decorator", "misc"]
+
+[tool.bandit]
+exclude_dirs = ["tests", ".venv"]
+skips = ["B101"]
+
+[tool.vulture]
+min_confidence = 80
+paths = ["src/"]
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+    "mypy>=1.19.1",
+    "types-pyyaml>=6.0.12.20250915",
+    "types-requests>=2.33.0.20260327",
+]

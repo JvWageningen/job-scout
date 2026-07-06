@@ -1,0 +1,15 @@
+{
+  "tree-sitter-mcp": {
+    "command": "npx",
+    "args": [
+      "@nendo/tree-sitter-mcp",
+      "--mcp"
+    ]
+  },
+  "ast-grep": {
+    "command": "npx",
+    "args": [
+      "@notprolands/ast-grep-mcp"
+    ]
+  }
+}

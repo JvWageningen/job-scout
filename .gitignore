@@ -1,0 +1,31 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Added by vibegen
+*.py[cod]
+*$py.class
+.venv/
+*.egg-info/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+*.log
+.env
+.env.*
+.DS_Store
+
+# job-scout data (this is a live deployment's own runtime state, not
+# template/example content -- nothing under data/ is tracked; `job-scout init`
+# creates data/config.yaml on first run)
+data/
+
+# Added by vibegen
+.claude/.fuse_hidden*

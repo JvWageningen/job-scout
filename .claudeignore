@@ -1,0 +1,23 @@
+# Cache directories
+__pycache__/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# Virtual environment
+.venv/
+
+# Lock file (machine-generated)
+uv.lock
+
+# Compiled Python
+*.pyc
+*.pyo
+
+# FUSE artifacts
+.fuse_hidden*

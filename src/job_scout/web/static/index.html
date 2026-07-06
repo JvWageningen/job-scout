@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>job-scout Dashboard</title>
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>job-scout</h1>
+            <p class="subtitle">Automated daily job search</p>
+        </header>
+
+        <main>
+            <!-- Tab Navigation -->
+            <nav class="tabs">
+                <button class="tab-btn active" data-tab="dashboard">Dashboard</button>
+                <button class="tab-btn" data-tab="profile">Profile & Filters</button>
+                <button class="tab-btn" data-tab="keywords">Keywords</button>
+                <button class="tab-btn" data-tab="sites">Custom Sites</button>
+                <button class="tab-btn" data-tab="llm">LLM Settings</button>
+                <button class="tab-btn" data-tab="secrets">Secrets</button>
+                <button class="tab-btn" data-tab="schedule">Schedule</button>
+            </nav>
+
+            <!-- User Picker Section -->
+            <section id="user-section" class="section">
+                <h2>User Selection</h2>
+                <div class="form-group">
+                    <label for="user-select">Select User:</label>
+                    <select id="user-select">
+                        <option value="">-- Choose a user --</option>
+                    </select>
+                    <button id="create-user-btn" class="btn btn-secondary">Create New User</button>
+                </div>
+            </section>
+
+            <!-- Dashboard Section -->
+            <section id="dashboard-section" class="section hidden tab-content" data-tab="dashboard">
+                <h2>Dashboard</h2>
+
+                <!-- Run Controls -->
+                <div class="run-controls">
+                    <button id="run-btn" class="btn btn-primary">Run Pipeline</button>
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="dry-run-check" checked>
+                        Dry run (no saving/notifying)
+                    </label>
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="full-check">
+                        Full re-scrape and re-notify
+                    </label>
+                </div>
+
+                <!-- Run Status -->
+                <div id="run-status"></div>
+
+                <!-- Matched Jobs -->
+                <div class="jobs-section">
+                    <h3>Recently Matched Jobs</h3>
+                    <div id="matched-jobs-container" class="jobs-container">
+                        <p class="loading">Loading...</p>
+                    </div>
+                </div>
+
+                <!-- Rejected Jobs -->
+                <div class="jobs-section">
+                    <h3>Recently Rejected Jobs</h3>
+                    <div id="rejected-jobs-container" class="jobs-container">
+                        <p class="loading">Loading...</p>
+                    </div>
+                </div>
+
+                <!-- Logs Section -->
+                <div class="logs-section">
+                    <h3>Logs</h3>
+                    <div id="logs-container">
+                        <div class="form-group">
+                            <label for="log-select">Select Log File:</label>
+                            <select id="log-select">
+                                <option value="">-- Choose a log file --</option>
+                            </select>
+                        </div>
+                        <div id="log-content" class="log-content hidden">
+                            <pre id="log-text"></pre>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Profile & Filters Section -->
+            <section id="profile-section" class="section hidden tab-content" data-tab="profile">
+                <h2>Profile & Filters</h2>
+                <form id="profile-form">
+                    <div class="form-group">
+                        <label for="profile-desc">Profile Description:</label>
+                        <textarea id="profile-desc" rows="3"></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label for="negative-desc">Negative Description:</label>
+                        <textarea id="negative-desc" rows="3"></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label for="cv-path">CV Path:</label>
+                        <input type="text" id="cv-path">
+                    </div>
+                    <div class="form-group">
+                        <label for="cv-notes">CV Notes:</label>
+                        <textarea id="cv-notes" rows="2"></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label for="salary-min">Minimum Salary (€/month):</label>
+                        <input type="number" id="salary-min">
+                    </div>
+                    <div class="form-group">
+                        <label for="salary-max">Maximum Salary (€/month):</label>
+                        <input type="number" id="salary-max">
+                    </div>
+                    <div class="form-group">
+                        <label for="max-distance-km">Max Distance (km, optional):</label>
+                        <input type="number" id="max-distance-km">
+                    </div>
+                    <div class="form-group">
+                        <label for="travel-car">Max Car Travel Time (minutes):</label>
+                        <input type="number" id="travel-car">
+                    </div>
+                    <div class="form-group">
+                        <label for="travel-pt">Max Public Transport Travel Time (minutes):</label>
+                        <input type="number" id="travel-pt">
+                    </div>
+                    <div class="form-group">
+                        <label for="travel-bike">Max Bike Travel Time (minutes):</label>
+                        <input type="number" id="travel-bike">
+                    </div>
+                    <div class="form-group">
+                        <label for="vacation-days">Minimum Vacation Days:</label>
+                        <input type="number" id="vacation-days">
+                    </div>
+                    <button type="submit" class="btn btn-primary">Save Profile</button>
+                </form>
+            </section>
+
+            <!-- Keywords Section -->
+            <section id="keywords-section" class="section hidden tab-content" data-tab="keywords">
+                <h2>Keywords</h2>
+                <div class="keywords-controls">
+                    <button id="refresh-keywords-btn" class="btn btn-primary">Refresh Keywords</button>
+                </div>
+                <div id="keywords-content">
+                    <p class="loading">Loading keywords...</p>
+                </div>
+            </section>
+
+            <!-- Custom Sites Section -->
+            <section id="sites-section" class="section hidden tab-content" data-tab="sites">
+                <h2>Custom Sites</h2>
+                <div id="sites-list"></div>
+                <form id="add-site-form">
+                    <h3>Add New Site</h3>
+                    <div class="form-group">
+                        <label for="site-url">URL:</label>
+                        <input type="url" id="site-url" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="site-name">Name (optional):</label>
+                        <input type="text" id="site-name">
+                    </div>
+                    <button type="submit" class="btn btn-primary">Add Site</button>
+                </form>
+            </section>
+
+            <!-- LLM Settings Section -->
+            <section id="llm-section" class="section hidden tab-content" data-tab="llm">
+                <h2>LLM Settings</h2>
+                <form id="llm-form">
+                    <div class="form-group">
+                        <label for="llm-provider">Default Provider:</label>
+                        <select id="llm-provider">
+                            <option value="claude_cli">Claude CLI</option>
+                            <option value="zai">Z.AI</option>
+                            <option value="kilo_cli">Kilo CLI</option>
+                            <option value="local">Local (Ollama/LM Studio)</option>
+                        </select>
+                    </div>
+
+                    <h3>Per-Purpose Overrides</h3>
+                    <div class="form-group">
+                        <label for="eval-provider">Evaluation Provider Override:</label>
+                        <select id="eval-provider">
+                            <option value="">(use default)</option>
+                            <option value="claude_cli">Claude CLI</option>
+                            <option value="zai">Z.AI</option>
+                            <option value="kilo_cli">Kilo CLI</option>
+                            <option value="local">Local</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="screen-provider">Screening Provider Override:</label>
+                        <select id="screen-provider">
+                            <option value="">(use default)</option>
+                            <option value="claude_cli">Claude CLI</option>
+                            <option value="zai">Z.AI</option>
+                            <option value="kilo_cli">Kilo CLI</option>
+                            <option value="local">Local</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="quick-eval-provider">Quick Eval Provider Override:</label>
+                        <select id="quick-eval-provider">
+                            <option value="">(use default)</option>
+                            <option value="claude_cli">Claude CLI</option>
+                            <option value="zai">Z.AI</option>
+                            <option value="kilo_cli">Kilo CLI</option>
+                            <option value="local">Local</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="keywords-provider">Keywords Provider Override:</label>
+                        <select id="keywords-provider">
+                            <option value="">(use default)</option>
+                            <option value="claude_cli">Claude CLI</option>
+                            <option value="zai">Z.AI</option>
+                            <option value="kilo_cli">Kilo CLI</option>
+                            <option value="local">Local</option>
+                        </select>
+                    </div>
+
+                    <h3>Local Provider Settings</h3>
+                    <div class="form-group">
+                        <label for="local-base-url">Local Base URL:</label>
+                        <input type="text" id="local-base-url" value="http://localhost:11434/v1">
+                    </div>
+                    <div class="form-group">
+                        <label for="local-model">Local Model:</label>
+                        <input type="text" id="local-model" value="llama3.1">
+                    </div>
+                    <div class="form-group">
+                        <label for="local-screen-model">Screening Model (optional):</label>
+                        <input type="text" id="local-screen-model">
+                    </div>
+
+                    <button type="submit" class="btn btn-primary">Save LLM Settings</button>
+                </form>
+
+                <h3>Test Connection</h3>
+                <div id="test-connection-form">
+                    <div class="form-group">
+                        <label for="test-provider">Test Provider:</label>
+                        <select id="test-provider">
+                            <option value="claude_cli">Claude CLI</option>
+                            <option value="zai">Z.AI</option>
+                            <option value="kilo_cli">Kilo CLI</option>
+                            <option value="local">Local</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="test-model">Model:</label>
+                        <input type="text" id="test-model">
+                    </div>
+                    <div class="form-group">
+                        <label for="test-base-url">Base URL (for Z.AI / Local):</label>
+                        <input type="text" id="test-base-url" placeholder="e.g. http://192.168.1.50:11434/v1">
+                    </div>
+                    <div class="form-group">
+                        <label for="test-api-key">API Key (optional, for Z.AI / Local):</label>
+                        <input type="password" id="test-api-key" placeholder="Leave blank if not required">
+                    </div>
+                    <button type="button" id="test-conn-btn" class="btn btn-secondary">Test</button>
+                    <div id="test-result"></div>
+                </div>
+            </section>
+
+            <!-- Secrets Section -->
+            <section id="secrets-section" class="section hidden tab-content" data-tab="secrets">
+                <h2>API Secrets</h2>
+                <form id="secrets-form">
+                    <div class="form-group">
+                        <label for="zai-key">Z.AI API Key:</label>
+                        <input type="password" id="zai-key" placeholder="Leave blank to keep existing">
+                    </div>
+                    <div class="form-group">
+                        <label for="local-key">Local API Key:</label>
+                        <input type="password" id="local-key" placeholder="Leave blank to keep existing">
+                    </div>
+                    <div class="form-group">
+                        <label for="ors-key">ORS API Key:</label>
+                        <input type="password" id="ors-key" placeholder="Leave blank to keep existing">
+                    </div>
+                    <div class="form-group">
+                        <label for="ns-key">NS API Key:</label>
+                        <input type="password" id="ns-key" placeholder="Leave blank to keep existing">
+                    </div>
+                    <button type="submit" class="btn btn-primary">Update Secrets</button>
+                </form>
+            </section>
+
+            <!-- Schedule Section -->
+            <section id="schedule-section" class="section hidden tab-content" data-tab="schedule">
+                <h2>Schedule</h2>
+                <div id="schedule-status"></div>
+                <form id="schedule-form">
+                    <div class="form-group">
+                        <label for="schedule-hour">Hour (0-23):</label>
+                        <input type="number" id="schedule-hour" min="0" max="23" value="8">
+                    </div>
+                    <div class="form-group">
+                        <label for="schedule-minute">Minute (0-59):</label>
+                        <input type="number" id="schedule-minute" min="0" max="59" value="0">
+                    </div>
+                    <button type="submit" class="btn btn-primary">Install Schedule</button>
+                    <button type="button" id="remove-schedule-btn" class="btn btn-secondary">Remove Schedule</button>
+                </form>
+            </section>
+        </main>
+
+        <footer>
+            <p>job-scout Dashboard</p>
+        </footer>
+    </div>
+
+    <script src="/app.js"></script>
+</body>
+</html>
