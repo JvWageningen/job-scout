@@ -325,7 +325,22 @@ uv run job-scout sites list --user alex
 uv run job-scout sites remove "Example Corp" --user alex
 ```
 
-Custom sites are scraped on every `job-scout run` alongside the standard sources. Extraction failures (unreachable pages, unparseable HTML) log a warning and contribute zero jobs — they never abort a run. JS-rendered pages (no server-side HTML) may yield no results.
+Custom sites are scraped on every `job-scout run` alongside the standard sources. Extraction failures (unreachable pages, unparseable HTML) log a warning and contribute zero jobs — they never abort a run.
+
+#### JavaScript rendering (optional)
+
+By default, custom sites are fetched as static HTML. If a career page loads jobs via JavaScript (SPA, dynamic content), enable `render_js: true` to render the page fully before extracting jobs. This requires the **optional** `playwright` dependency:
+
+```bash
+# Install playwright (one-time setup)
+uv sync --extra browser
+uv run playwright install --with-deps chromium
+
+# Add a site with JS rendering enabled
+uv run job-scout sites add https://careers.example.com/jobs --name "Example Corp" --user alex --render-js
+```
+
+To enable via the web dashboard, check the **Render JavaScript** checkbox when adding a site. Playwright will be auto-detected; if not installed, a fallback to static HTML is used (with a logged warning).
 
 ### Full rerun
 

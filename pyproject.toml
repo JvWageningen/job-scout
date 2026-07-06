@@ -22,7 +22,11 @@ dependencies = [
     "openai>=2.34.0",
     "fastapi>=0.139.0",
     "uvicorn>=0.50.0",
+    "reportlab>=5.0.0",
 ]
+
+[project.optional-dependencies]
+browser = ["playwright>=1.40"]
 
 [project.scripts]
 job-scout = "job_scout.cli:main"

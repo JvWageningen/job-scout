@@ -1197,7 +1197,15 @@ def sites() -> None:
 @click.argument("url")
 @click.option("--name", "site_name", default=None, help="Label for the site")
 @click.option("--user", "user_name", default=None, help="User to configure")
-def sites_add(url: str, site_name: str | None, user_name: str | None) -> None:
+@click.option(
+    "--render-js", is_flag=True, help="Enable JavaScript rendering for this site"
+)
+def sites_add(
+    url: str,
+    site_name: str | None,
+    user_name: str | None,
+    render_js: bool,
+) -> None:
     """Add a custom site URL to monitor."""
     from urllib.parse import urlparse  # noqa: PLC0415
 
@@ -1208,10 +1216,15 @@ def sites_add(url: str, site_name: str | None, user_name: str | None) -> None:
     if any(s.get("url") == url for s in sites_list):
         click.echo(f"Already tracked: {url}")
         return
-    sites_list.append({"name": resolved_name, "url": url, "enabled": True})
+    sites_list.append(
+        {"name": resolved_name, "url": url, "enabled": True, "render_js": render_js}
+    )
     cfg["custom_sites"] = sites_list
     save_user_config(target, cfg)
-    click.echo(f"Added '{resolved_name}' ({url}) for user '{target}'")
+    msg = f"Added '{resolved_name}' ({url}) for user '{target}'"
+    if render_js:
+        msg += " [JS rendering enabled]"
+    click.echo(msg)
 
 
 @sites.command("list")
@@ -1227,7 +1240,8 @@ def sites_list_cmd(user_name: str | None) -> None:
     click.echo(f"Custom sites for '{target}':")
     for s in sites_data:
         status = "enabled" if s.get("enabled", True) else "disabled"
-        click.echo(f"  [{status}] {s['name']}: {s['url']}")
+        js_flag = " [JS]" if s.get("render_js") else ""
+        click.echo(f"  [{status}] {s['name']}: {s['url']}{js_flag}")
 
 
 @sites.command("remove")

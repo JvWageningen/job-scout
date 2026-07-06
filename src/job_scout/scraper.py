@@ -212,6 +212,75 @@ def _html_to_text_and_links(html: str) -> tuple[str, list[str]]:
     return " ".join(parser.text_parts), parser.links
 
 
+def _fetch_html_for_site(site: Any) -> str:
+    """Fetch HTML from a custom site URL, optionally using JavaScript rendering.
+
+    Args:
+        site: CustomSite instance with name, url, and render_js flag.
+
+    Returns:
+        Raw HTML string from the site (rendered if render_js=True, static otherwise).
+
+    Raises:
+        requests.RequestException: If static fetch fails.
+    """
+    logger.info(f"[custom:{site.name}] Fetching {site.url}")
+
+    # If render_js is False, use standard static HTML fetch
+    if not getattr(site, "render_js", False):
+        resp = requests.get(
+            site.url,
+            headers={"User-Agent": "job-scout/0.1 (job search tool)"},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        return resp.text
+
+    # Attempt JavaScript rendering with Playwright
+    logger.debug(f"[custom:{site.name}] Rendering JavaScript for {site.url}")
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        logger.warning(
+            f"[custom:{site.name}] Playwright not installed (render_js=True but "
+            "'playwright' not found). Install with: uv sync --extra browser. "
+            "Falling back to static HTML fetch."
+        )
+        resp = requests.get(
+            site.url,
+            headers={"User-Agent": "job-scout/0.1 (job search tool)"},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        return resp.text
+
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page()
+            page.goto(site.url, wait_until="networkidle", timeout=30000)
+            html: str = page.content()
+            browser.close()
+        logger.debug(f"[custom:{site.name}] JavaScript rendering completed")
+        return html
+    except Exception as e:
+        logger.warning(
+            f"[custom:{site.name}] JavaScript rendering failed: {e}. "
+            "Falling back to static HTML fetch."
+        )
+        try:
+            resp = requests.get(
+                site.url,
+                headers={"User-Agent": "job-scout/0.1 (job search tool)"},
+                timeout=15,
+            )
+            resp.raise_for_status()
+            return resp.text
+        except requests.RequestException as exc:
+            logger.warning(f"[custom:{site.name}] Static fetch also failed: {exc}")
+            raise
+
+
 def _scrape_custom_site(
     site: Any,
     config: Config,
@@ -220,26 +289,20 @@ def _scrape_custom_site(
     """Fetch a custom site URL and extract job listings via LLM.
 
     Args:
-        site: CustomSite instance with name and url.
+        site: CustomSite instance with name, url, and optional render_js flag.
         config: Application configuration (unused, reserved for future options).
         client: LLM client to use for extraction.
 
     Returns:
         List of JobListing instances, or empty list on any error.
     """
-    logger.info(f"[custom:{site.name}] Fetching {site.url}")
     try:
-        resp = requests.get(
-            site.url,
-            headers={"User-Agent": "job-scout/0.1 (job search tool)"},
-            timeout=15,
-        )
-        resp.raise_for_status()
+        html = _fetch_html_for_site(site)
     except requests.RequestException as exc:
         logger.warning(f"[custom:{site.name}] Fetch failed: {exc}")
         return []
 
-    text, links = _html_to_text_and_links(resp.text)
+    text, links = _html_to_text_and_links(html)
     text_budget = text[:4000]
     links_sample = links[:100]
 

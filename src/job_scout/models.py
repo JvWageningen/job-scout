@@ -84,6 +84,7 @@ class CustomSite(BaseModel):
     name: str
     url: str
     enabled: bool = True
+    render_js: bool = False
 
 
 class ExtractedJob(BaseModel):

@@ -988,9 +988,10 @@ async function loadSitesData() {
         const list = document.createElement('ul');
         sites.forEach((site) => {
             const li = document.createElement('li');
-            li.style.marginBottom = '10px';
+            li.style.marginBottom = '15px';
+            const jsLabel = site.render_js ? ' <span style="background-color: #e8f4f8; padding: 2px 6px; border-radius: 3px; font-size: 0.85em;">[JS Rendered]</span>' : '';
             li.innerHTML = `
-                <strong>${escapeHtml(site.name)}</strong>: ${escapeHtml(site.url)}
+                <strong>${escapeHtml(site.name)}</strong>: ${escapeHtml(site.url)}${jsLabel}
                 <button class="btn btn-danger" style="margin-left: 10px; padding: 5px 10px; font-size: 0.9em;"
                     onclick="removeSite('${escapeHtml(site.url)}')">Remove</button>
             `;
@@ -1014,6 +1015,7 @@ async function addSite() {
 
     const url = document.getElementById('site-url').value.trim();
     const name = document.getElementById('site-name').value.trim();
+    const renderJs = document.getElementById('site-render-js').checked;
 
     if (!url) {
         alert('URL is required');
@@ -1024,7 +1026,7 @@ async function addSite() {
         const response = await fetchWithAuth(`${API_BASE}/sites`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ user: currentUser, url, name }),
+            body: JSON.stringify({ user: currentUser, url, name, render_js: renderJs }),
         });
 
         if (!response.ok) {
@@ -1035,6 +1037,7 @@ async function addSite() {
 
         document.getElementById('site-url').value = '';
         document.getElementById('site-name').value = '';
+        document.getElementById('site-render-js').checked = false;
         alert('Site added successfully');
         await loadSitesData();
     } catch (error) {

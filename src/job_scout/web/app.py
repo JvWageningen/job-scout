@@ -634,7 +634,7 @@ def create_app() -> FastAPI:
         """Add a custom site for a user.
 
         Args:
-            body: Request body with 'user', 'url', and optional 'name'.
+            body: Request body with 'user', 'url', optional 'name', and 'render_js'.
 
         Returns:
             Dictionary with status message.
@@ -647,6 +647,7 @@ def create_app() -> FastAPI:
         user = body.get("user")
         url = body.get("url", "").strip()
         name = body.get("name", "").strip()
+        render_js = body.get("render_js", False)
 
         if not user:
             raise HTTPException(status_code=400, detail="User is required")
@@ -665,7 +666,14 @@ def create_app() -> FastAPI:
                     status_code=409, detail=f"URL already tracked: {url}"
                 )
 
-            sites_list.append({"name": resolved_name, "url": url, "enabled": True})
+            sites_list.append(
+                {
+                    "name": resolved_name,
+                    "url": url,
+                    "enabled": True,
+                    "render_js": render_js,
+                }
+            )
             cfg["custom_sites"] = sites_list
             save_user_config(user, cfg)
             return {"status": f"Added site '{resolved_name}'"}

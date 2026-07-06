@@ -481,3 +481,32 @@ def test_job_listing_approval_fields() -> None:
     assert job.approved_at == now
     assert job.approved_by == "test_user"
     assert job.approval_notes == "Looks good"
+
+
+def test_custom_site_render_js_defaults_false() -> None:
+    """Verify CustomSite.render_js defaults to False."""
+    from job_scout.models import CustomSite
+
+    site = CustomSite(name="test", url="https://example.com")
+    assert site.render_js is False
+
+
+def test_custom_site_render_js_can_be_set() -> None:
+    """Verify CustomSite.render_js can be set to True."""
+    from job_scout.models import CustomSite
+
+    site = CustomSite(name="test", url="https://example.com", render_js=True)
+    assert site.render_js is True
+
+
+def test_custom_site_serialisation_with_render_js() -> None:
+    """Verify CustomSite serialises render_js field."""
+    from job_scout.models import CustomSite
+
+    site = CustomSite(name="test", url="https://example.com", render_js=True)
+    data = site.model_dump()
+    assert data["render_js"] is True
+
+    # Can deserialise from dict with render_js
+    site2 = CustomSite(**data)
+    assert site2.render_js is True

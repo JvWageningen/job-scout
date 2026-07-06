@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import importlib
 import json
+import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+import requests
 import yaml
 from click.testing import CliRunner
 
@@ -98,7 +100,7 @@ def test_scrape_custom_site_returns_jobs() -> None:
     )
     client = _make_llm(llm_response)
     config = Config()
-    with patch("requests.get", return_value=_mock_response(html)):
+    with patch("job_scout.scraper._fetch_html_for_site", return_value=html):
         jobs = _scrape_custom_site(site, config, client)
 
     assert len(jobs) == 1
@@ -113,7 +115,10 @@ def test_scrape_custom_site_returns_empty_on_fetch_error() -> None:
 
     site = CustomSite(name="broken", url="https://broken.example.com/jobs")
     client = _make_llm("{}")
-    with patch("requests.get", return_value=_mock_response(status_code=503)):
+    with patch(
+        "job_scout.scraper._fetch_html_for_site",
+        side_effect=requests.RequestException("Network error"),
+    ):
         jobs = _scrape_custom_site(site, Config(), client)
     assert jobs == []
 
@@ -125,7 +130,7 @@ def test_scrape_custom_site_returns_empty_on_llm_failure() -> None:
     site = CustomSite(name="bad-llm", url="https://example.com/jobs")
     client = _make_llm("NOT JSON AT ALL")
     html = "<html><body>jobs</body></html>"
-    with patch("requests.get", return_value=_mock_response(html)):
+    with patch("job_scout.scraper._fetch_html_for_site", return_value=html):
         jobs = _scrape_custom_site(site, Config(), client)
     assert jobs == []
 
@@ -146,6 +151,68 @@ def test_scrape_custom_site_skips_disabled() -> None:
 
     assert client.complete.call_count == 0
     assert jobs == []
+
+
+# ---------------------------------------------------------------------------
+# JavaScript Rendering
+# ---------------------------------------------------------------------------
+
+
+def test_fetch_html_for_site_static_request() -> None:
+    """_fetch_html_for_site fetches static HTML when render_js=False."""
+    from job_scout.scraper import _fetch_html_for_site
+
+    site = CustomSite(name="test", url="https://example.com", render_js=False)
+    html = "<html><body>Test</body></html>"
+    with patch("requests.get", return_value=_mock_response(html)):
+        result = _fetch_html_for_site(site)
+    assert result == html
+
+
+def test_fetch_html_for_site_playwright_missing_falls_back() -> None:
+    """_fetch_html_for_site falls back to static fetch when playwright not installed."""
+    from job_scout.scraper import _fetch_html_for_site
+
+    site = CustomSite(name="test", url="https://example.com", render_js=True)
+    html = "<html><body>Test</body></html>"
+
+    def import_error(*args: object, **kwargs: object) -> None:
+        raise ImportError("No module named 'playwright'")
+
+    with (
+        patch("builtins.__import__", side_effect=import_error),
+        patch("requests.get", return_value=_mock_response(html)),
+    ):
+        result = _fetch_html_for_site(site)
+    assert result == html
+
+
+def test_fetch_html_for_site_playwright_rendering_error_falls_back() -> None:
+    """_fetch_html_for_site falls back to static fetch if rendering fails."""
+    from job_scout.scraper import _fetch_html_for_site
+
+    site = CustomSite(name="test", url="https://example.com", render_js=True)
+    html = "<html><body>Static Fallback</body></html>"
+
+    # Mock the playwright module so it can be imported
+    mock_sync_api = MagicMock()
+    mock_context = MagicMock()
+    mock_context.__enter__.side_effect = RuntimeError("Browser launch failed")
+    mock_sync_api.sync_playwright.return_value = mock_context
+
+    mock_playwright = MagicMock()
+    mock_playwright.sync_api = mock_sync_api
+    sys.modules["playwright"] = mock_playwright
+    sys.modules["playwright.sync_api"] = mock_sync_api
+
+    try:
+        with patch("requests.get", return_value=_mock_response(html)):
+            result = _fetch_html_for_site(site)
+        assert result == html
+    finally:
+        # Clean up mocked modules
+        sys.modules.pop("playwright", None)
+        sys.modules.pop("playwright.sync_api", None)
 
 
 # ---------------------------------------------------------------------------
