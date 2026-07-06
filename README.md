@@ -153,6 +153,8 @@ uv run job-scout config set min_salary 3000 --user alex
 | `keywords_english` | `[]` | English job search keywords (auto-generated) |
 | `title_include_keywords` | `[]` | Title must contain at least one (auto-generated) |
 | `title_exclude_keywords` | `[]` | Title containing any is skipped (auto-generated) |
+| `jobspy_keyword_limit` | `5` | Max keywords to use per scrape for jobspy (Indeed, LinkedIn) |
+| `nvb_keyword_limit` | `3` | Max keywords to use per scrape for Nationalevacaturebank |
 | `custom_sites` | `[]` | Custom site URLs to scrape (see [Custom sites](#custom-sites)) |
 
 #### Secrets (`data/secrets.yaml` or environment variables)

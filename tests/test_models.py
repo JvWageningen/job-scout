@@ -211,3 +211,63 @@ def test_config_max_jobs_per_source_default() -> None:
     """Config.max_jobs_per_source defaults to 50."""
     config = Config()
     assert config.max_jobs_per_source == 50
+
+
+def test_config_jobspy_keyword_limit_default() -> None:
+    """Config.jobspy_keyword_limit defaults to 5."""
+    config = Config()
+    assert config.jobspy_keyword_limit == 5
+
+
+def test_config_nvb_keyword_limit_default() -> None:
+    """Config.nvb_keyword_limit defaults to 3."""
+    config = Config()
+    assert config.nvb_keyword_limit == 3
+
+
+def test_config_jobspy_keyword_limit_valid_range() -> None:
+    """Config.jobspy_keyword_limit accepts values 1-20."""
+    config = Config(jobspy_keyword_limit=10)
+    assert config.jobspy_keyword_limit == 10
+
+    config = Config(jobspy_keyword_limit=1)
+    assert config.jobspy_keyword_limit == 1
+
+    config = Config(jobspy_keyword_limit=20)
+    assert config.jobspy_keyword_limit == 20
+
+
+def test_config_jobspy_keyword_limit_below_minimum() -> None:
+    """Config.jobspy_keyword_limit rejects values below 1."""
+    with pytest.raises(ValidationError):
+        Config(jobspy_keyword_limit=0)
+
+
+def test_config_jobspy_keyword_limit_above_maximum() -> None:
+    """Config.jobspy_keyword_limit rejects values above 20."""
+    with pytest.raises(ValidationError):
+        Config(jobspy_keyword_limit=21)
+
+
+def test_config_nvb_keyword_limit_valid_range() -> None:
+    """Config.nvb_keyword_limit accepts values 1-20."""
+    config = Config(nvb_keyword_limit=10)
+    assert config.nvb_keyword_limit == 10
+
+    config = Config(nvb_keyword_limit=1)
+    assert config.nvb_keyword_limit == 1
+
+    config = Config(nvb_keyword_limit=20)
+    assert config.nvb_keyword_limit == 20
+
+
+def test_config_nvb_keyword_limit_below_minimum() -> None:
+    """Config.nvb_keyword_limit rejects values below 1."""
+    with pytest.raises(ValidationError):
+        Config(nvb_keyword_limit=0)
+
+
+def test_config_nvb_keyword_limit_above_maximum() -> None:
+    """Config.nvb_keyword_limit rejects values above 20."""
+    with pytest.raises(ValidationError):
+        Config(nvb_keyword_limit=21)

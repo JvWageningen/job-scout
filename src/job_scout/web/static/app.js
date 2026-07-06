@@ -558,6 +558,8 @@ async function loadProfileData() {
         document.getElementById('travel-pt').value = config.max_travel_pt ?? '';
         document.getElementById('travel-bike').value = config.max_travel_bike ?? '';
         document.getElementById('vacation-days').value = config.min_vacation_days ?? '';
+        document.getElementById('jobspy-keyword-limit').value = config.jobspy_keyword_limit ?? 5;
+        document.getElementById('nvb-keyword-limit').value = config.nvb_keyword_limit ?? 3;
     } catch (error) {
         console.error('Error loading profile data:', error);
     }
@@ -584,6 +586,8 @@ async function saveProfile() {
         max_travel_pt: document.getElementById('travel-pt').value,
         max_travel_bike: document.getElementById('travel-bike').value,
         min_vacation_days: document.getElementById('vacation-days').value,
+        jobspy_keyword_limit: document.getElementById('jobspy-keyword-limit').value,
+        nvb_keyword_limit: document.getElementById('nvb-keyword-limit').value,
     };
     for (const key of Object.keys(values)) {
         if (values[key] === '') {

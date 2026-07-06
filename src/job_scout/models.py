@@ -143,6 +143,8 @@ class Config(BaseModel):
     llm_max_attempts: int = 3
     llm_retry_base_delay: float = 1.0
     max_parallel_evaluations: int = 5
+    jobspy_keyword_limit: int = Field(default=5, ge=1, le=20)
+    nvb_keyword_limit: int = Field(default=3, ge=1, le=20)
     custom_sites: list[CustomSite] = Field(default_factory=list)
 
 

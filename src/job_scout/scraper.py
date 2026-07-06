@@ -42,12 +42,12 @@ def scrape_all_jobs(
     # Prepare scraping tasks: (scraper_func, args_tuple)
     tasks: list[tuple[Any, Any]] = []
 
-    # Add jobspy scraping tasks (limit to first 5 keywords)
-    for kw in keywords[:5]:
+    # Add jobspy scraping tasks (limit based on jobspy_keyword_limit)
+    for kw in keywords[: config.jobspy_keyword_limit]:
         tasks.append((_scrape_jobspy_with_rate_limit, (kw, config)))
 
-    # Add nvb scraping tasks (limit to first 3 keywords)
-    for kw in config.keywords_dutch[:3]:
+    # Add nvb scraping tasks (limit based on nvb_keyword_limit)
+    for kw in config.keywords_dutch[: config.nvb_keyword_limit]:
         tasks.append((_scrape_nvb_with_rate_limit, (kw, config.max_jobs_per_source)))
 
     # Add custom sites scraping tasks

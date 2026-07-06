@@ -251,3 +251,102 @@ def test_scrape_nvb_http_error_returns_empty(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setattr("requests.get", lambda *a, **kw: mock_resp)
     result = _scrape_nvb("developer", 10)
     assert result == []
+
+
+# ---------------------------------------------------------------------------
+# Keyword limit configuration
+# ---------------------------------------------------------------------------
+
+
+def test_scrape_all_jobs_respects_jobspy_keyword_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """scrape_all_jobs uses jobspy_keyword_limit to limit jobspy keywords."""
+    from job_scout.models import Config
+    from job_scout.scraper import scrape_all_jobs
+
+    config = Config(
+        keywords_dutch=["dev_nl_1", "dev_nl_2", "dev_nl_3"],
+        keywords_english=["dev_en_1", "dev_en_2", "dev_en_3"],
+        jobspy_keyword_limit=2,
+        nvb_keyword_limit=1,
+    )
+
+    # Mock the scraping functions to track which keywords are used
+    scraped_jobspy_keywords = []
+    scraped_nvb_keywords = []
+
+    def mock_jobspy(keyword: str, config: Config) -> list[JobListing]:  # noqa: E501
+        scraped_jobspy_keywords.append(keyword)
+        return []
+
+    def mock_nvb(keyword: str, max_results: int) -> list[JobListing]:  # noqa: E501
+        scraped_nvb_keywords.append(keyword)
+        return []
+
+    def mock_rate_limit_jobspy(keyword: str, config: Config) -> list[JobListing]:  # noqa: E501
+        return mock_jobspy(keyword, config)
+
+    def mock_rate_limit_nvb(keyword: str, max_results: int) -> list[JobListing]:  # noqa: E501
+        return mock_nvb(keyword, max_results)
+
+    monkeypatch.setattr(
+        "job_scout.scraper._scrape_jobspy_with_rate_limit", mock_rate_limit_jobspy
+    )
+    monkeypatch.setattr(
+        "job_scout.scraper._scrape_nvb_with_rate_limit", mock_rate_limit_nvb
+    )
+
+    scrape_all_jobs(config, None)
+
+    # Verify that only jobspy_keyword_limit keywords were used for jobspy
+    assert len(scraped_jobspy_keywords) == 2
+    # Verify that only nvb_keyword_limit keywords were used for nvb
+    assert len(scraped_nvb_keywords) == 1
+
+
+def test_scrape_all_jobs_respects_nvb_keyword_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """scrape_all_jobs uses nvb_keyword_limit to limit nvb keywords."""
+    from job_scout.models import Config
+    from job_scout.scraper import scrape_all_jobs
+
+    config = Config(
+        keywords_dutch=["dev_nl_1", "dev_nl_2", "dev_nl_3"],
+        keywords_english=["dev_en_1", "dev_en_2"],
+        jobspy_keyword_limit=1,
+        nvb_keyword_limit=2,
+    )
+
+    # Mock the scraping functions to track which keywords are used
+    scraped_jobspy_keywords = []
+    scraped_nvb_keywords = []
+
+    def mock_jobspy(keyword: str, config: Config) -> list[JobListing]:  # noqa: E501
+        scraped_jobspy_keywords.append(keyword)
+        return []
+
+    def mock_nvb(keyword: str, max_results: int) -> list[JobListing]:  # noqa: E501
+        scraped_nvb_keywords.append(keyword)
+        return []
+
+    def mock_rate_limit_jobspy(keyword: str, config: Config) -> list[JobListing]:  # noqa: E501
+        return mock_jobspy(keyword, config)
+
+    def mock_rate_limit_nvb(keyword: str, max_results: int) -> list[JobListing]:  # noqa: E501
+        return mock_nvb(keyword, max_results)
+
+    monkeypatch.setattr(
+        "job_scout.scraper._scrape_jobspy_with_rate_limit", mock_rate_limit_jobspy
+    )
+    monkeypatch.setattr(
+        "job_scout.scraper._scrape_nvb_with_rate_limit", mock_rate_limit_nvb
+    )
+
+    scrape_all_jobs(config, None)
+
+    # Verify that only jobspy_keyword_limit keywords were used for jobspy
+    assert len(scraped_jobspy_keywords) == 1
+    # Verify that only nvb_keyword_limit keywords were used for nvb
+    assert len(scraped_nvb_keywords) == 2
