@@ -846,3 +846,193 @@ class TestKeywords:
         assert data["english"] == ["test_en"]
         assert data["title_include"] == ["title1"]
         assert data["title_exclude"] == ["exclude1"]
+
+
+class TestTokenAuthentication:
+    """Tests for dashboard token authentication."""
+
+    def test_no_token_configured_api_requests_allowed(
+        self, temp_data_dir: Path, monkeypatch
+    ) -> None:
+        """Test that API requests succeed when no token is configured."""
+        from job_scout.config import write_global_config
+        from job_scout.web.app import create_app
+
+        # Ensure no token is configured
+        write_global_config({})
+
+        # Create a fresh app and client
+        app = create_app()
+        client = TestClient(app)
+
+        # API request without token should succeed
+        response = client.get("/api/users")
+        assert response.status_code == 200
+
+    def test_static_files_accessible_without_token(
+        self, temp_data_dir: Path, monkeypatch
+    ) -> None:
+        """Test that static files are accessible without token."""
+        from job_scout.config import write_global_config
+        from job_scout.web.app import create_app
+
+        # Ensure no token is configured
+        write_global_config({})
+
+        # Create a fresh app and client
+        app = create_app()
+        client = TestClient(app)
+
+        # Static files should be accessible without token
+        response = client.get("/")
+        assert response.status_code == 200
+
+        response = client.get("/app.js")
+        assert response.status_code == 200
+
+        response = client.get("/style.css")
+        assert response.status_code == 200
+
+    def test_token_configured_api_requests_without_token_rejected(
+        self, temp_data_dir: Path, monkeypatch
+    ) -> None:
+        """Test that API requests are rejected without token when configured."""
+        from job_scout.config import update_secrets, write_global_config
+        from job_scout.web.app import create_app
+
+        # Configure a token
+        write_global_config({})
+        update_secrets({"dashboard_token": "test-token-123"})
+
+        # Reload the secrets module to pick up the new token
+        import importlib
+
+        import job_scout.config as config_module
+
+        importlib.reload(config_module)
+
+        # Create a fresh app and client
+        app = create_app()
+        client = TestClient(app)
+
+        # API request without token should fail with 401
+        response = client.get("/api/users")
+        assert response.status_code == 401
+        assert "detail" in response.json()
+
+    def test_token_configured_api_requests_with_correct_token_succeed(
+        self, temp_data_dir: Path, monkeypatch
+    ) -> None:
+        """Test that API requests succeed with correct token."""
+        from job_scout.config import update_secrets, write_global_config
+        from job_scout.web.app import create_app
+
+        # Configure a token
+        write_global_config({})
+        update_secrets({"dashboard_token": "test-token-123"})
+
+        # Reload the secrets module to pick up the new token
+        import importlib
+
+        import job_scout.config as config_module
+
+        importlib.reload(config_module)
+
+        # Create a fresh app and client
+        app = create_app()
+        client = TestClient(app)
+
+        # API request with correct token should succeed
+        response = client.get(
+            "/api/users", headers={"Authorization": "Bearer test-token-123"}
+        )
+        assert response.status_code == 200
+
+    def test_token_configured_api_requests_with_wrong_token_rejected(
+        self, temp_data_dir: Path, monkeypatch
+    ) -> None:
+        """Test that API requests are rejected with wrong token."""
+        from job_scout.config import update_secrets, write_global_config
+        from job_scout.web.app import create_app
+
+        # Configure a token
+        write_global_config({})
+        update_secrets({"dashboard_token": "test-token-123"})
+
+        # Reload the secrets module to pick up the new token
+        import importlib
+
+        import job_scout.config as config_module
+
+        importlib.reload(config_module)
+
+        # Create a fresh app and client
+        app = create_app()
+        client = TestClient(app)
+
+        # API request with wrong token should fail with 401
+        response = client.get(
+            "/api/users", headers={"Authorization": "Bearer wrong-token"}
+        )
+        assert response.status_code == 401
+
+    def test_token_configured_invalid_auth_header_format(
+        self, temp_data_dir: Path, monkeypatch
+    ) -> None:
+        """Test that requests with invalid auth header format are rejected."""
+        from job_scout.config import update_secrets, write_global_config
+        from job_scout.web.app import create_app
+
+        # Configure a token
+        write_global_config({})
+        update_secrets({"dashboard_token": "test-token-123"})
+
+        # Reload the secrets module to pick up the new token
+        import importlib
+
+        import job_scout.config as config_module
+
+        importlib.reload(config_module)
+
+        # Create a fresh app and client
+        app = create_app()
+        client = TestClient(app)
+
+        # API request with invalid header format should fail with 401
+        response = client.get("/api/users", headers={"Authorization": "Invalid"})
+        assert response.status_code == 401
+
+        response = client.get("/api/users", headers={"Authorization": "Basic token"})
+        assert response.status_code == 401
+
+    def test_token_configured_static_files_still_accessible(
+        self, temp_data_dir: Path, monkeypatch
+    ) -> None:
+        """Test that static files remain accessible when token is configured."""
+        from job_scout.config import update_secrets, write_global_config
+        from job_scout.web.app import create_app
+
+        # Configure a token
+        write_global_config({})
+        update_secrets({"dashboard_token": "test-token-123"})
+
+        # Reload the secrets module to pick up the new token
+        import importlib
+
+        import job_scout.config as config_module
+
+        importlib.reload(config_module)
+
+        # Create a fresh app and client
+        app = create_app()
+        client = TestClient(app)
+
+        # Static files should still be accessible without token
+        response = client.get("/")
+        assert response.status_code == 200
+
+        response = client.get("/app.js")
+        assert response.status_code == 200
+
+        response = client.get("/style.css")
+        assert response.status_code == 200

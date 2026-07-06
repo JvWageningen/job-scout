@@ -205,7 +205,23 @@ uv run job-scout web --host 127.0.0.1 --port 8080
 
 A single-page dashboard (plain HTML/JS, no build step) covering every CLI function: user management, profile & filters, keywords, custom sites, LLM provider settings (including local/LAN testing), secrets, schedule management, run triggering with live status, and a log viewer.
 
-> **No authentication.** The dashboard binds to `0.0.0.0` by default and has no login — anyone who can reach the host and port can view your data and trigger runs. It prints a warning banner on startup as a reminder. Restrict access with firewall rules or a VPN if you run it somewhere reachable by more than just you.
+### Optional Token Authentication
+
+By default, the dashboard has no authentication — anyone who can reach the host and port can view your data and trigger runs. To enable optional shared-token authentication, set the `JOB_SCOUT_DASHBOARD_TOKEN` environment variable or add `dashboard_token` to `data/secrets.yaml`:
+
+```bash
+# Via environment variable
+JOB_SCOUT_DASHBOARD_TOKEN="my-secret-token" uv run job-scout web
+
+# Or in data/secrets.yaml
+dashboard_token: my-secret-token
+```
+
+When a token is configured, the frontend will prompt for it on first use, store it in sessionStorage, and attach it to all subsequent API requests via the `Authorization: Bearer <token>` header. Static files (HTML/CSS/JS) remain unauthenticated so the page can load.
+
+> **Important:** This is a simple shared-secret gate, not a multi-user login/authorization system. The token is sent in plaintext over HTTP unless you use HTTPS (reverse proxy/firewall). Never run the dashboard on an untrusted network without additional security (firewall rules, VPN, HTTPS/TLS) — treat it like an internal tool only.
+
+The dashboard prints a startup banner showing whether authentication is enabled. If you don't use a token, restrict access with firewall rules or a VPN.
 
 ### Custom sites
 

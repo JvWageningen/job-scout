@@ -1166,8 +1166,10 @@ def schedule_remove() -> None:
 def web(host: str, port: int) -> None:
     """Start the job-scout web dashboard.
 
-    The dashboard runs with NO authentication and is reachable from anyone
-    on the network. Use firewall rules or a VPN to restrict access.
+    By default, the dashboard runs with NO authentication and is reachable
+    from anyone on the network. Set JOB_SCOUT_DASHBOARD_TOKEN environment
+    variable or data/secrets.yaml to enable optional token authentication.
+    Use firewall rules or a VPN to restrict access.
     """
     from job_scout.web.app import run_server  # noqa: PLC0415
 

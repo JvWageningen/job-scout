@@ -151,6 +151,7 @@ class Config(BaseModel):
         description="Job sources to scrape via jobspy",
     )
     custom_sites: list[CustomSite] = Field(default_factory=list)
+    dashboard_token: str | None = None
 
     @field_validator("jobspy_sites", mode="before")
     @classmethod

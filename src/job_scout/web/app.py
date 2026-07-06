@@ -2,20 +2,23 @@
 
 from __future__ import annotations
 
+import secrets
 import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from loguru import logger
-from starlette.responses import FileResponse
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import FileResponse, JSONResponse
 
 from job_scout.config import (
     apply_user_init,
     build_effective_config,
     list_users,
+    load_secrets,
     load_user_config,
     save_user_config,
     set_config_value,
@@ -34,6 +37,53 @@ _run_registry: dict[str | None, dict[str, Any]] = {}
 _registry_lock = threading.Lock()
 
 
+class TokenAuthMiddleware(BaseHTTPMiddleware):
+    """Middleware to check dashboard token on /api/* requests."""
+
+    def __init__(self, app: Any, dashboard_token: str | None) -> None:
+        """Initialize the middleware with the dashboard token.
+
+        Args:
+            app: FastAPI application.
+            dashboard_token: Optional shared token for authentication.
+        """
+        super().__init__(app)
+        self.dashboard_token = dashboard_token
+
+    async def dispatch(self, request: Request, call_next: Any) -> Any:
+        """Check token on /api/* requests.
+
+        Args:
+            request: Incoming request.
+            call_next: Next middleware/handler.
+
+        Returns:
+            Response from next handler, or 401 if auth fails.
+        """
+        # Only check auth for /api/* routes
+        if request.url.path.startswith("/api/"):
+            # If no token is configured, allow all requests
+            if not self.dashboard_token:
+                return await call_next(request)
+
+            # Extract token from Authorization header
+            auth_header = request.headers.get("Authorization", "")
+            if not auth_header.startswith("Bearer "):
+                return JSONResponse(
+                    status_code=401,
+                    content={"detail": "Missing or invalid Authorization header"},
+                )
+
+            token = auth_header[7:]  # Remove "Bearer " prefix
+            # Use constant-time comparison to prevent timing attacks
+            if not secrets.compare_digest(token, self.dashboard_token):
+                return JSONResponse(
+                    status_code=401, content={"detail": "Invalid token"}
+                )
+
+        return await call_next(request)
+
+
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application.
 
@@ -41,6 +91,13 @@ def create_app() -> FastAPI:
         Configured FastAPI application with all routes mounted.
     """
     app = FastAPI(title="job-scout", description="Automated job search dashboard")
+
+    # Load dashboard token from secrets
+    token_config = load_secrets()
+    dashboard_token: str | None = token_config.get("dashboard_token")
+
+    # Add token authentication middleware
+    app.add_middleware(TokenAuthMiddleware, dashboard_token=dashboard_token)
 
     # --- Static file serving ---
     @app.get("/", include_in_schema=False)
@@ -784,10 +841,16 @@ def run_server(host: str = "0.0.0.0", port: int = 8000) -> None:
         port: Port number to bind to (default 8000).
     """
     # Print security warning
+    dashboard_token = load_secrets().get("dashboard_token")
+    auth_status = (
+        "token authentication ENABLED"
+        if dashboard_token
+        else "NO authentication (token not configured)"
+    )
     click_warning = (
         f"\n{'=' * 70}\n"
-        f"WARNING: Dashboard is running with NO authentication and is\n"
-        f"reachable from anyone on the network at http://{host}:{port}\n"
+        f"Dashboard is running at http://{host}:{port}\n"
+        f"Authentication: {auth_status}\n"
         f"Use firewall rules or VPN to restrict access.\n"
         f"{'=' * 70}\n"
     )

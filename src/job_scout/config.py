@@ -52,6 +52,7 @@ SECRET_FIELDS: frozenset[str] = frozenset(
         "ors_api_key",
         "ns_api_key",
         "local_api_key",
+        "dashboard_token",
     }
 )
 
@@ -205,7 +206,7 @@ def load_secrets() -> dict[str, Any]:
     """Load API secrets from env vars (priority) or data/secrets.yaml.
 
     Env var names: JOB_SCOUT_ZAI_API_KEY, JOB_SCOUT_ORS_API_KEY,
-    JOB_SCOUT_NS_API_KEY, JOB_SCOUT_LOCAL_API_KEY.
+    JOB_SCOUT_NS_API_KEY, JOB_SCOUT_LOCAL_API_KEY, JOB_SCOUT_DASHBOARD_TOKEN.
 
     Returns:
         Dict containing only SECRET_FIELDS keys that have values.
@@ -220,6 +221,7 @@ def load_secrets() -> dict[str, Any]:
         "JOB_SCOUT_ORS_API_KEY": "ors_api_key",
         "JOB_SCOUT_NS_API_KEY": "ns_api_key",
         "JOB_SCOUT_LOCAL_API_KEY": "local_api_key",
+        "JOB_SCOUT_DASHBOARD_TOKEN": "dashboard_token",
     }
     for env_key, field in env_map.items():
         val = os.environ.get(env_key)

@@ -9,11 +9,47 @@ const API_BASE = '/api';
 // Current user state
 let currentUser = null;
 
+// Dashboard token stored in sessionStorage
+let dashboardToken = sessionStorage.getItem('dashboardToken');
+
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', () => {
     setupEventListeners();
     loadUsers();
 });
+
+/**
+ * Fetch wrapper that handles dashboard token authentication.
+ * Prompts for token on 401 and retries with the provided token.
+ *
+ * @param {string} url - Request URL
+ * @param {object} options - Fetch options (method, headers, body, etc.)
+ * @returns {Promise<Response>} - Fetch response
+ */
+async function fetchWithAuth(url, options = {}) {
+    // Add token to headers if available
+    const headers = options.headers || {};
+    if (dashboardToken && url.startsWith('/api/')) {
+        headers.Authorization = `Bearer ${dashboardToken}`;
+    }
+    const modifiedOptions = { ...options, headers };
+
+    let response = await fetch(url, modifiedOptions);
+
+    // If we got 401 and it's an API request, prompt for token
+    if (response.status === 401 && url.startsWith('/api/')) {
+        const token = prompt('This dashboard requires authentication.\n\nEnter the dashboard token:');
+        if (token) {
+            dashboardToken = token;
+            sessionStorage.setItem('dashboardToken', token);
+            // Retry with the new token
+            const retryHeaders = { ...headers, Authorization: `Bearer ${token}` };
+            response = await fetch(url, { ...options, headers: retryHeaders });
+        }
+    }
+
+    return response;
+}
 
 /**
  * Set up event listeners for UI interactions
@@ -132,7 +168,7 @@ function setupEventListeners() {
  */
 async function loadUsers() {
     try {
-        const response = await fetch(`${API_BASE}/users`);
+        const response = await fetchWithAuth(`${API_BASE}/users`);
         if (!response.ok) {
             console.error('Failed to load users:', response.status);
             return;
@@ -201,7 +237,7 @@ async function loadMatchedJobs() {
     container.innerHTML = '<p class="loading">Loading matched jobs...</p>';
 
     try {
-        const response = await fetch(`${API_BASE}/jobs/matched?user=${encodeURIComponent(currentUser)}&limit=20`);
+        const response = await fetchWithAuth(`${API_BASE}/jobs/matched?user=${encodeURIComponent(currentUser)}&limit=20`);
         if (!response.ok) {
             container.innerHTML = '<p class="empty">Failed to load matched jobs</p>';
             return;
@@ -233,7 +269,7 @@ async function loadRejectedJobs() {
     container.innerHTML = '<p class="loading">Loading rejected jobs...</p>';
 
     try {
-        const response = await fetch(`${API_BASE}/jobs/rejected?user=${encodeURIComponent(currentUser)}&limit=20`);
+        const response = await fetchWithAuth(`${API_BASE}/jobs/rejected?user=${encodeURIComponent(currentUser)}&limit=20`);
         if (!response.ok) {
             container.innerHTML = '<p class="empty">Failed to load rejected jobs</p>';
             return;
@@ -321,7 +357,7 @@ async function loadLogs() {
     logSelect.innerHTML = '<option value="">-- Choose a log file --</option>';
 
     try {
-        const response = await fetch(`${API_BASE}/logs?user=${encodeURIComponent(currentUser)}`);
+        const response = await fetchWithAuth(`${API_BASE}/logs?user=${encodeURIComponent(currentUser)}`);
         if (!response.ok) {
             console.error('Failed to load logs:', response.status);
             return;
@@ -363,7 +399,7 @@ async function loadLogFile(filename) {
     logContent.classList.remove('hidden');
 
     try {
-        const response = await fetch(
+        const response = await fetchWithAuth(
             `${API_BASE}/logs/${encodeURIComponent(filename)}?user=${encodeURIComponent(currentUser)}&lines=500`
         );
         if (!response.ok) {
@@ -394,7 +430,7 @@ let statusPollInterval = null;
 
 async function pollRunStatus() {
     try {
-        const response = await fetch(`${API_BASE}/run/status?user=${currentUser}`);
+        const response = await fetchWithAuth(`${API_BASE}/run/status?user=${currentUser}`);
         if (!response.ok) {
             return;
         }
@@ -449,7 +485,7 @@ async function runPipeline() {
     runBtn.textContent = 'Running...';
 
     try {
-        const response = await fetch(`${API_BASE}/run`, {
+        const response = await fetchWithAuth(`${API_BASE}/run`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -541,7 +577,7 @@ async function loadProfileData() {
     }
 
     try {
-        const response = await fetch(`${API_BASE}/config?user=${encodeURIComponent(currentUser)}`);
+        const response = await fetchWithAuth(`${API_BASE}/config?user=${encodeURIComponent(currentUser)}`);
         if (!response.ok) {
             console.error('Failed to load config');
             return;
@@ -609,7 +645,7 @@ async function saveProfile() {
     }
 
     try {
-        const response = await fetch(`${API_BASE}/config`, {
+        const response = await fetchWithAuth(`${API_BASE}/config`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ user: currentUser, values }),
@@ -645,7 +681,7 @@ async function loadSitesData() {
     container.innerHTML = '<h3>Current Sites</h3>';
 
     try {
-        const response = await fetch(`${API_BASE}/sites?user=${encodeURIComponent(currentUser)}`);
+        const response = await fetchWithAuth(`${API_BASE}/sites?user=${encodeURIComponent(currentUser)}`);
         if (!response.ok) {
             container.innerHTML += '<p class="empty">No sites found</p>';
             return;
@@ -693,7 +729,7 @@ async function addSite() {
     }
 
     try {
-        const response = await fetch(`${API_BASE}/sites`, {
+        const response = await fetchWithAuth(`${API_BASE}/sites`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ user: currentUser, url, name }),
@@ -731,7 +767,7 @@ async function removeSite(identifier) {
     }
 
     try {
-        const response = await fetch(
+        const response = await fetchWithAuth(
             `${API_BASE}/sites?user=${encodeURIComponent(currentUser)}&identifier=${encodeURIComponent(identifier)}`,
             { method: 'DELETE' }
         );
@@ -759,7 +795,7 @@ async function loadLLMSettings() {
     }
 
     try {
-        const response = await fetch(`${API_BASE}/config?user=${encodeURIComponent(currentUser)}`);
+        const response = await fetchWithAuth(`${API_BASE}/config?user=${encodeURIComponent(currentUser)}`);
         if (!response.ok) {
             return;
         }
@@ -799,7 +835,7 @@ async function saveLLMSettings() {
     };
 
     try {
-        const response = await fetch(`${API_BASE}/config`, {
+        const response = await fetchWithAuth(`${API_BASE}/config`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ user: currentUser, values }),
@@ -844,7 +880,7 @@ async function testConnection() {
         const body = { provider, model };
         if (baseUrl) body.base_url = baseUrl;
         if (apiKey) body.api_key = apiKey;
-        const response = await fetch(`${API_BASE}/llm/test-connection`, {
+        const response = await fetchWithAuth(`${API_BASE}/llm/test-connection`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(body),
@@ -888,7 +924,7 @@ async function updateSecrets() {
     }
 
     try {
-        const response = await fetch(`${API_BASE}/secrets`, {
+        const response = await fetchWithAuth(`${API_BASE}/secrets`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(body),
@@ -927,7 +963,7 @@ async function loadKeywords() {
     container.innerHTML = '<p class="loading">Loading keywords...</p>';
 
     try {
-        const response = await fetch(`${API_BASE}/keywords?user=${encodeURIComponent(currentUser)}`);
+        const response = await fetchWithAuth(`${API_BASE}/keywords?user=${encodeURIComponent(currentUser)}`);
         if (!response.ok) {
             container.innerHTML = '<p class="empty">Failed to load keywords</p>';
             return;
@@ -976,7 +1012,7 @@ async function refreshKeywords() {
     btn.textContent = 'Refreshing...';
 
     try {
-        const response = await fetch(`${API_BASE}/keywords/refresh`, {
+        const response = await fetchWithAuth(`${API_BASE}/keywords/refresh`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ user: currentUser }),
@@ -1005,7 +1041,7 @@ async function refreshKeywords() {
  */
 async function loadScheduleStatus() {
     try {
-        const response = await fetch(`${API_BASE}/schedule/status`);
+        const response = await fetchWithAuth(`${API_BASE}/schedule/status`);
         if (!response.ok) {
             return;
         }
@@ -1031,7 +1067,7 @@ async function installSchedule() {
     }
 
     try {
-        const response = await fetch(`${API_BASE}/schedule`, {
+        const response = await fetchWithAuth(`${API_BASE}/schedule`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ hour, minute }),
@@ -1060,7 +1096,7 @@ async function removeSchedule() {
     }
 
     try {
-        const response = await fetch(`${API_BASE}/schedule`, {
+        const response = await fetchWithAuth(`${API_BASE}/schedule`, {
             method: 'DELETE',
         });
 
@@ -1085,7 +1121,7 @@ async function removeSchedule() {
  */
 async function createUser(name) {
     try {
-        const response = await fetch(`${API_BASE}/users`, {
+        const response = await fetchWithAuth(`${API_BASE}/users`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ name }),
