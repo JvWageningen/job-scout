@@ -107,7 +107,7 @@ def test_parse_cv_structured_extracts_profile(tmp_path: Path) -> None:
     from unittest.mock import MagicMock
 
     from job_scout.cv_parser import parse_cv_structured
-    from job_scout.models import CvProfile
+    from job_scout.models import CvProfile, CvRole
 
     cv_text = "10 years of Python programming..."
     client = MagicMock()
@@ -117,7 +117,15 @@ def test_parse_cv_structured_extracts_profile(tmp_path: Path) -> None:
         "skills": ["Python", "SQL", "Docker"],
         "years_experience": 10,
         "education": ["BSc Computer Science"],
-        "past_roles": ["Senior Engineer at TechCorp"]
+        "past_roles": [
+            {
+                "title": "Senior Engineer",
+                "company": "TechCorp",
+                "start_date": "2015-01",
+                "end_date": null,
+                "description": null
+            }
+        ]
     }
     ```
     """
@@ -128,7 +136,9 @@ def test_parse_cv_structured_extracts_profile(tmp_path: Path) -> None:
     assert profile.skills == ["Python", "SQL", "Docker"]
     assert profile.years_experience == 10
     assert profile.education == ["BSc Computer Science"]
-    assert profile.past_roles == ["Senior Engineer at TechCorp"]
+    assert len(profile.past_roles) == 1
+    assert profile.past_roles[0].title == "Senior Engineer"
+    assert profile.past_roles[0].company == "TechCorp"
     client.complete.assert_called_once()
     assert client.complete.call_args[1]["purpose"] == "cv_parsing"
 

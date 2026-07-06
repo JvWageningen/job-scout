@@ -8,6 +8,8 @@ from pydantic import ValidationError
 from job_scout.models import (
     CompensationEvaluation,
     Config,
+    CvProfile,
+    CvRole,
     FitEvaluation,
     JobListing,
     JobStatus,
@@ -336,13 +338,14 @@ def test_cv_profile_defaults() -> None:
 
 def test_cv_profile_with_data() -> None:
     """CvProfile stores skills, experience, education, and roles."""
-    from job_scout.models import CvProfile
-
     profile = CvProfile(
         skills=["Python", "Kubernetes"],
         years_experience=7,
         education=["BSc CS", "MSc AI"],
-        past_roles=["SWE at Google", "TL at Meta"],
+        past_roles=[
+            CvRole(title="SWE", company="Google"),
+            CvRole(title="TL", company="Meta"),
+        ],
     )
     assert len(profile.skills) == 2
     assert profile.years_experience == 7
@@ -352,22 +355,19 @@ def test_cv_profile_with_data() -> None:
 
 def test_cv_profile_serialisation() -> None:
     """CvProfile round-trips through model_dump/model_validate."""
-    from job_scout.models import CvProfile
-
     profile = CvProfile(
         skills=["Go", "Rust"],
         years_experience=5,
         education=["PhD Computer Science"],
-        past_roles=["Principal Engineer"],
+        past_roles=[CvRole(title="Principal Engineer", company="TechCorp")],
     )
     data = profile.model_dump()
     restored = CvProfile(**data)
     assert restored.skills == profile.skills
     assert restored.years_experience == profile.years_experience
     assert restored.education == profile.education
-    assert restored.past_roles == profile.past_roles
-
-
+    assert len(restored.past_roles) == len(profile.past_roles)
+    assert restored.past_roles[0].title == profile.past_roles[0].title
 def test_job_status_extended() -> None:
     """Verify new application lifecycle statuses exist."""
     # Verify all expected statuses exist
