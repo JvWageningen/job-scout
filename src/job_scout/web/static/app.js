@@ -625,16 +625,31 @@ async function pollRunStatus() {
 
         statusDiv.innerHTML = `<div class="status-info">${statusText}<p>${messageText}</p>${timeText}${errorText}</div>`;
 
-        if (data.status === 'done' || data.status === 'error') {
+        if (data.status === 'running' && !statusPollInterval) {
+            // A run is already in progress (e.g. started from another tab/session) — start
+            // tracking it so this tab's UI updates when it finishes.
+            const runBtn = document.getElementById('run-btn');
+            if (runBtn) {
+                runBtn.disabled = true;
+                runBtn.textContent = 'Running...';
+            }
+            statusPollInterval = setInterval(pollRunStatus, 2000);
+            return;
+        }
+
+        // The backend keeps a user's last run status as 'done'/'error' indefinitely (it never
+        // resets to 'idle'), so every dashboard load or user switch would otherwise see a
+        // "terminal" status and re-trigger the reload below on a loop. Only react here if we
+        // were actively polling this run ourselves (statusPollInterval set), so a stale status
+        // from a past run doesn't cause an infinite loadDashboard -> pollRunStatus -> loadDashboard cycle.
+        if ((data.status === 'done' || data.status === 'error') && statusPollInterval) {
             const runBtn = document.getElementById('run-btn');
             if (runBtn) {
                 runBtn.disabled = false;
                 runBtn.textContent = 'Run Pipeline';
             }
-            if (statusPollInterval) {
-                clearInterval(statusPollInterval);
-                statusPollInterval = null;
-            }
+            clearInterval(statusPollInterval);
+            statusPollInterval = null;
             // Reload dashboard data
             setTimeout(() => {
                 loadDashboard();
