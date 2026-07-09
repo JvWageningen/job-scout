@@ -4,6 +4,14 @@ Format: [Keep a Changelog](https://keepachangelog.com)
 
 <!-- version list -->
 
+## v1.1.1 (2026-07-09)
+
+### Bug Fixes
+
+- **web**: Stop infinite dashboard refresh loop on stale run status
+  ([`92e8903`](https://github.com/JvWageningen/job-scout/commit/92e89039123ab50e0bdb999304a05c0ef580b1bf))
+
+
 ## v1.1.0 (2026-07-06)
 
 ### Bug Fixes
