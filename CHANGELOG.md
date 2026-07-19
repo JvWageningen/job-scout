@@ -4,6 +4,14 @@ Format: [Keep a Changelog](https://keepachangelog.com)
 
 <!-- version list -->
 
+## v1.2.0 (2026-07-19)
+
+### Features
+
+- **prune**: Auto-detect and prune filled/closed vacancies
+  ([`35cb8a7`](https://github.com/JvWageningen/job-scout/commit/35cb8a78d87902de67627c60b1ea80b3e41e0f34))
+
+
 ## v1.1.3 (2026-07-19)
 
 ### Bug Fixes
