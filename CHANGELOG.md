@@ -4,6 +4,14 @@ Format: [Keep a Changelog](https://keepachangelog.com)
 
 <!-- version list -->
 
+## v1.1.2 (2026-07-19)
+
+### Bug Fixes
+
+- **pipeline**: Fail-open quick-eval on transient errors; dedupe cross-source notifications
+  ([`f0f5b11`](https://github.com/JvWageningen/job-scout/commit/f0f5b115d85db57a2dcd76dd5be4f86f71247d2a))
+
+
 ## v1.1.1 (2026-07-09)
 
 ### Bug Fixes
