@@ -616,3 +616,75 @@ def test_send_notifications_zero_matches(cli_env: Path) -> None:
         assert sent == 0
         assert mock_notifier.send_digest.call_count == 0
         assert mock_notifier.send.call_count == 0
+
+
+def test_dedupe_matched_for_notification_collapses_cross_source() -> None:
+    """Same title+company from different sources collapses to the top score."""
+    from job_scout.cli import _dedupe_matched_for_notification
+
+    linkedin = JobListing(
+        title="CRO Specialist",
+        company="Foxelli Group",
+        url="https://linkedin.com/jobs/1",
+        source="linkedin",
+        fit_score=83,
+    )
+    indeed = JobListing(
+        title="CRO Specialist",
+        company="Foxelli Group",
+        url="https://indeed.com/jobs/2",
+        source="indeed",
+        fit_score=85,
+    )
+    other = JobListing(
+        title="CRO Manager",
+        company="Sunny Cars",
+        url="https://indeed.com/jobs/3",
+        source="indeed",
+        fit_score=88,
+    )
+
+    result = _dedupe_matched_for_notification([linkedin, indeed, other])
+
+    assert len(result) == 2
+    # The higher-scoring Foxelli row (Indeed, 85) is kept over the LinkedIn (83).
+    foxelli = [j for j in result if j.company == "Foxelli Group"]
+    assert len(foxelli) == 1
+    assert foxelli[0].fit_score == 85
+
+
+def test_send_notifications_dedupes_cross_source(cli_env: Path) -> None:
+    """_send_notifications sends one notification per unique job, not per source."""
+    from unittest.mock import Mock
+
+    from job_scout.cli import _send_notifications
+    from job_scout.config import load_config
+    from job_scout.database import Database
+
+    _save_test_config(cli_env)
+    config = load_config()
+    db = Database(cli_env / "test.db")
+
+    dup_a = JobListing(
+        title="CRO Specialist",
+        company="Foxelli Group",
+        url="https://linkedin.com/jobs/1",
+        source="linkedin",
+        fit_score=83,
+    )
+    dup_b = JobListing(
+        title="CRO Specialist",
+        company="Foxelli Group",
+        url="https://indeed.com/jobs/2",
+        source="indeed",
+        fit_score=85,
+    )
+
+    with patch("job_scout.cli.get_notifier") as mock_get_notifier:
+        mock_notifier = Mock()
+        mock_get_notifier.return_value = mock_notifier
+
+        _send_notifications([dup_a, dup_b], db, config, dry_run=False)
+
+        # Two rows for the same job (different sources) → notified exactly once.
+        assert mock_notifier.send.call_count == 1

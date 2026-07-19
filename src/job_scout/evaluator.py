@@ -178,7 +178,7 @@ def quick_evaluate_fit(
     cv_text: str,
     *,
     client: LLMClient | None = None,
-) -> int:
+) -> int | None:
     """Run a cheap first-pass fit score for a job.
 
     Uses the quick_eval model (glm-4.7-flash by default) and a short prompt
@@ -191,7 +191,11 @@ def quick_evaluate_fit(
         client: LLM client to use; if None, one is built from config.
 
     Returns:
-        Fit score 0-100; 0 on parse or LLM failure.
+        Fit score 0-100, or ``None`` when the job could not be scored because
+        of a transient LLM error (e.g. a rate-limit 429) or an unparseable
+        response. Returning ``None`` lets the caller fail *open* — pass the
+        job through to full evaluation rather than silently dropping it as a
+        zero-score — mirroring the title-screener's fail-open behaviour.
     """
     from job_scout.config import load_llm_config  # noqa: PLC0415
 
@@ -204,8 +208,11 @@ def quick_evaluate_fit(
         data = _extract_json(output)
         return int(data.get("fit_score", 0))
     except (json.JSONDecodeError, LLMError, ValueError) as exc:
-        logger.warning(f"Quick eval failed for {job.title!r}: {exc}")
-        return 0
+        logger.warning(
+            f"Quick eval failed for {job.title!r}: {exc} — "
+            "passing through to full evaluation"
+        )
+        return None
 
 
 def evaluate_fit(

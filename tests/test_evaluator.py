@@ -163,3 +163,40 @@ def test_generate_keywords_records_purpose() -> None:
     generate_keywords("profile", "cv", client=client)
 
     assert client.calls[0][1] == "keywords"
+
+
+def test_quick_evaluate_fit_returns_score_on_success(sample_job: JobListing) -> None:
+    """quick_evaluate_fit returns the parsed integer score on a valid response."""
+    from job_scout.evaluator import quick_evaluate_fit
+
+    client = FakeLLMClient([json.dumps({"fit_score": 55})])
+    score = quick_evaluate_fit(sample_job, "profile", "cv", client=client)
+
+    assert score == 55
+    assert client.calls[0][1] == "quick_eval"
+
+
+def test_quick_evaluate_fit_fails_open_on_llm_error(sample_job: JobListing) -> None:
+    """quick_evaluate_fit returns None (fail-open) when the LLM raises LLMError.
+
+    A transient error (e.g. a rate-limit 429) must not be scored as 0 — that
+    would silently drop the job. None signals the caller to pass it through.
+    """
+    from job_scout.evaluator import quick_evaluate_fit
+
+    client = FakeLLMClient([], repeat_last=False)  # raises LLMError on call
+    score = quick_evaluate_fit(sample_job, "profile", "cv", client=client)
+
+    assert score is None
+
+
+def test_quick_evaluate_fit_fails_open_on_unparseable_response(
+    sample_job: JobListing,
+) -> None:
+    """quick_evaluate_fit returns None when the response is not valid JSON."""
+    from job_scout.evaluator import quick_evaluate_fit
+
+    client = FakeLLMClient(["this is not json"])
+    score = quick_evaluate_fit(sample_job, "profile", "cv", client=client)
+
+    assert score is None

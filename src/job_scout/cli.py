@@ -29,7 +29,7 @@ from job_scout.config import (
     user_dir,
     user_logs_dir,
 )
-from job_scout.database import Database
+from job_scout.database import Database, _dedup_key
 from job_scout.evaluator import (
     check_llm_available,
     evaluate_fit,
@@ -381,7 +381,7 @@ def _process_jobs(
 
 def _eval_job_quick_parallel(
     args: tuple[JobListing, str, str, LLMClient, Database],
-) -> tuple[JobListing, int]:
+) -> tuple[JobListing, int | None]:
     """Evaluate a single job's fit score for parallel execution.
 
     Checks database cache first before calling LLM.
@@ -390,7 +390,9 @@ def _eval_job_quick_parallel(
         args: Tuple of (job, profile_desc, cv_text, llm_client, db).
 
     Returns:
-        Tuple of (job, fit_score).
+        Tuple of (job, fit_score). The score is ``None`` when quick-eval could
+        not score the job (transient LLM error), signalling the caller to fail
+        open and pass it through to full evaluation.
     """
     job, profile_desc, cv_text, llm_client, db = args
     # Check cache first
@@ -491,7 +493,16 @@ def _run_quick_eval(
             idx, total = future_to_idx[future]
             job, score = future.result()
             logger.info(f"Quick eval [{idx}/{total}]: {job.title} @ {job.company}")
-            if score < config.quick_eval_threshold:
+            if score is None:
+                # Quick-eval could not score this job (transient LLM/parse
+                # error). Fail open: keep it and let full evaluation decide,
+                # rather than silently dropping a possibly-good match.
+                logger.warning(
+                    f"Quick-eval indeterminate, passing through: "
+                    f"{job.title} @ {job.company}"
+                )
+                survivors.append(job)
+            elif score < config.quick_eval_threshold:
                 logger.info(
                     f"Quick-filtered (score={score}): {job.title} @ {job.company}"
                 )
@@ -511,6 +522,35 @@ def _run_quick_eval(
     return survivors
 
 
+def _dedupe_matched_for_notification(
+    matched: list[JobListing],
+) -> list[JobListing]:
+    """Collapse cross-source duplicate postings before notifying.
+
+    The same job can appear on multiple boards (e.g. LinkedIn and Indeed) as
+    separate rows with distinct URLs but an identical title+company. Without
+    this, a full run notifies the candidate once per source. Keep only the
+    highest-scoring row per normalised title+company so each unique job is
+    notified exactly once.
+
+    Args:
+        matched: Matched jobs queued for notification.
+
+    Returns:
+        Deduplicated list, one entry per unique title+company.
+    """
+    unique: list[JobListing] = []
+    seen_keys: set[str] = set()
+    for job in sorted(matched, key=lambda j: j.fit_score or 0, reverse=True):
+        key = _dedup_key(job.title, job.company)
+        if key in seen_keys:
+            logger.info(f"Skipping duplicate notification: {job.title} @ {job.company}")
+            continue
+        seen_keys.add(key)
+        unique.append(job)
+    return unique
+
+
 def _send_notifications(
     matched: list[JobListing], db: Database, config: Config, dry_run: bool
 ) -> int:
@@ -527,6 +567,8 @@ def _send_notifications(
     """
     if not matched:
         return 0
+
+    matched = _dedupe_matched_for_notification(matched)
 
     sent = 0
     try:
