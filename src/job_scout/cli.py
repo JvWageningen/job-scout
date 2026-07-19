@@ -695,6 +695,8 @@ def _run_pipeline(
     started_at = datetime.now()
     if full:
         logger.info("Full rerun: dedup bypassed, upsert enabled")
+    if getattr(config, "prune_enabled", False):
+        _auto_prune(db, config, dry_run=dry_run, llm_client=llm_client)
     click.echo("Scraping job listings…")
     all_jobs = scrape_all_jobs(config, llm_client)
     new_jobs = all_jobs if full else [j for j in all_jobs if not db.is_duplicate(j)]
@@ -967,6 +969,27 @@ def _collect_active_jobs(db: Database) -> list[JobListing]:
                 seen.add(job.id)
                 jobs.append(job)
     return jobs
+
+
+def _auto_prune(
+    db: Database, config: Config, *, dry_run: bool, llm_client: LLMClient
+) -> None:
+    """Prune filled/closed active vacancies as part of a pipeline run.
+
+    Args:
+        db: Database to update.
+        config: Effective configuration (must have prune_enabled set).
+        dry_run: When True, report without persisting.
+        llm_client: Client reused for ambiguous-page judgement when enabled.
+    """
+    from job_scout.pruner import prune_jobs  # noqa: PLC0415
+
+    jobs = _collect_active_jobs(db)
+    if not jobs:
+        return
+    client = llm_client if config.prune_use_llm else None
+    logger.info(f"Auto-prune: checking {len(jobs)} active vacancies")
+    prune_jobs(jobs, db, config, dry_run=dry_run, client=client)
 
 
 @cli.command()
