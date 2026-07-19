@@ -19,6 +19,12 @@ OSRM_BASE = "https://router.project-osrm.org/route/v1"
 ORS_BASE = "https://api.openrouteservice.org/v2"
 NS_BASE = "https://gateway.apiportal.ns.nl/reisinformatie-api/api/v3"
 
+# The free public OSRM server only has the 'driving' graph loaded, so its
+# 'bike' profile returns *car* times (a 39 km trip comes back as ~50 min).
+# When no real cycling router (ORS) is configured, estimate cycling time from
+# the straight-line distance at a typical cycling speed instead.
+BIKE_SPEED_KMH = 20.0
+
 # Exact-match keywords: if the full location (lowercased/stripped) equals one of these,
 # it is considered vague (no specific city).
 _EXACT_VAGUE = frozenset(["remote", "netherlands", "nederland", "everywhere", "overal"])
@@ -356,6 +362,7 @@ def calculate_travel_times(
             home_coords,
             job_coords,
             config,
+            distance,
             db,
         )
         future_ns = executor.submit(
@@ -368,71 +375,68 @@ def calculate_travel_times(
     return travel_times, False, distance
 
 
+def _estimate_bike_minutes(distance_km: float | None) -> float | None:
+    """Estimate cycling time from straight-line distance.
+
+    Used when no real cycling router is available (the free OSRM server's
+    'bike' profile returns car times). Approximates cycling minutes from the
+    straight-line distance at :data:`BIKE_SPEED_KMH` — accurate enough for the
+    travel filter and consistent with a realistic bike commute.
+
+    Args:
+        distance_km: Straight-line (haversine) distance in km, or None.
+
+    Returns:
+        Estimated cycling minutes, or None when distance is unknown.
+    """
+    if distance_km is None:
+        return None
+    return round(distance_km / BIKE_SPEED_KMH * 60, 1)
+
+
 def _car_bike_travel_times(
     home: tuple[float, float],
     job: tuple[float, float],
     config: Config,
+    distance_km: float | None = None,
     db: Database | None = None,
 ) -> list[TravelTime]:
     """Build car and bike TravelTime objects via OSRM (free) or ORS.
 
-    Uses the free OSRM public server by default. Falls back to ORS
-    if an API key is configured and OSRM fails. Parallelizes OSRM requests.
+    Car uses the free OSRM public server (falling back to ORS when a key is
+    configured and OSRM fails). Bike prefers real ORS cycling routing when a
+    key is configured, otherwise estimates from the straight-line distance —
+    the free OSRM 'bike' profile is unusable because it returns car times.
 
     Args:
         home: Home coordinates (lon, lat).
         job: Job coordinates (lon, lat).
         config: Application configuration.
+        distance_km: Straight-line distance in km, for the bike estimate.
         db: Optional database for caching travel time results.
 
     Returns:
         List of TravelTime for CAR and BIKE modes.
     """
-    # Parallelize OSRM requests for car and bike (independent HTTP calls)
-    car_min = None
-    bike_min = None
-
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        future_car = executor.submit(
-            _get_osrm_time,
-            home,
-            job,
-            "driving",
-            db,
-            config.travel_cache_days,
-        )
-        future_bike = executor.submit(
-            _get_osrm_time,
-            home,
-            job,
-            "bike",
-            db,
-            config.travel_cache_days,
+    car_min = _get_osrm_time(home, job, "driving", db, config.travel_cache_days)
+    if car_min is None and config.ors_api_key:
+        car_min = _get_ors_time(
+            home, job, "driving-car", config.ors_api_key, db, config.travel_cache_days
         )
 
-        car_min = future_car.result()
-        bike_min = future_bike.result()
-
-    # Fallback to ORS if configured and OSRM failed
+    bike_min: float | None = None
     if config.ors_api_key:
-        if car_min is None:
-            car_min = _get_ors_time(
-                home,
-                job,
-                "driving-car",
-                config.ors_api_key,
-                db,
-                config.travel_cache_days,
-            )
-        if bike_min is None:
-            bike_min = _get_ors_time(
-                home,
-                job,
-                "cycling-regular",
-                config.ors_api_key,
-                db,
-                config.travel_cache_days,
-            )
+        bike_min = _get_ors_time(
+            home,
+            job,
+            "cycling-regular",
+            config.ors_api_key,
+            db,
+            config.travel_cache_days,
+        )
+    if bike_min is None:
+        bike_min = _estimate_bike_minutes(distance_km)
+
     return [
         TravelTime(
             mode=TravelMode.CAR,

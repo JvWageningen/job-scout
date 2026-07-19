@@ -168,18 +168,38 @@ def test_parse_ns_duration_missing_datetimes_returns_none() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_car_bike_uses_osrm_by_default(
+def test_car_bike_uses_osrm_for_car_and_estimates_bike(
     base_config: Config, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """_car_bike_travel_times calls OSRM when no ORS key is set."""
+    """Car comes from OSRM; bike is estimated from distance, not OSRM car time.
+
+    Regression: the free OSRM 'bike' profile returns car times, so bike must be
+    derived from distance instead of mirroring the car figure.
+    """
+    from job_scout.models import TravelMode
     from job_scout.travel import _car_bike_travel_times
 
     base_config.ors_api_key = None
     monkeypatch.setattr("job_scout.travel._get_osrm_time", lambda *_a: 25.0)
-    result = _car_bike_travel_times((4.9, 52.4), (4.8, 52.3), base_config)
+    result = _car_bike_travel_times((4.9, 52.4), (4.8, 52.3), base_config, 40.0)
+
     assert len(result) == 2
     assert all(tt.available for tt in result)
-    assert result[0].minutes == 25.0
+    car = next(tt for tt in result if tt.mode == TravelMode.CAR)
+    bike = next(tt for tt in result if tt.mode == TravelMode.BIKE)
+    assert car.minutes == 25.0
+    # 40 km at 20 km/h = 120 min — must not equal the 25 min car time.
+    assert bike.minutes == 120.0
+    assert bike.minutes != car.minutes
+
+
+def test_estimate_bike_minutes() -> None:
+    """_estimate_bike_minutes converts distance to cycling time; None passes through."""
+    from job_scout.travel import _estimate_bike_minutes
+
+    assert _estimate_bike_minutes(20.0) == 60.0
+    assert _estimate_bike_minutes(40.0) == 120.0
+    assert _estimate_bike_minutes(None) is None
 
 
 def test_car_bike_falls_back_to_ors(
