@@ -939,6 +939,73 @@ def run(dry_run: bool, user_name: str | None, all_users: bool, full: bool) -> No
             logger.remove(sink_id)
 
 
+def _collect_active_jobs(db: Database) -> list[JobListing]:
+    """Return active jobs worth checking for expiry (deduplicated by id).
+
+    Active = still under consideration and not yet applied to: MATCHED, NEW,
+    VIEWED, APPROVED, READY. Applied, rejected and already-expired jobs are
+    skipped.
+
+    Args:
+        db: Database to query.
+
+    Returns:
+        List of active JobListing objects.
+    """
+    active = [
+        JobStatus.MATCHED,
+        JobStatus.NEW,
+        JobStatus.VIEWED,
+        JobStatus.APPROVED,
+        JobStatus.READY,
+    ]
+    jobs: list[JobListing] = []
+    seen: set[int] = set()
+    for status in active:
+        for job in db.get_jobs_by_status(status):
+            if job.id is not None and job.id not in seen:
+                seen.add(job.id)
+                jobs.append(job)
+    return jobs
+
+
+@cli.command()
+@click.option("--user", "user_name", default=None, help="User whose jobs to prune")
+@click.option("--dry-run", is_flag=True, help="Report without marking anything EXPIRED")
+@click.option(
+    "--browser", is_flag=True, help="Render blocked pages (e.g. Indeed) with Playwright"
+)
+@click.option(
+    "--llm", "use_llm", is_flag=True, help="Use the LLM to judge ambiguous pages"
+)
+def prune(user_name: str | None, dry_run: bool, browser: bool, use_llm: bool) -> None:
+    """Detect filled/closed vacancies and mark them EXPIRED."""
+    from job_scout.pruner import prune_jobs  # noqa: PLC0415
+
+    target = _require_single_user(user_name)
+    config = build_effective_config(target)
+    if browser:
+        config.prune_use_browser = True
+    db = Database(user_db_path(target))
+    jobs = _collect_active_jobs(db)
+    if not jobs:
+        click.echo("No active jobs to check.")
+        return
+
+    client = None
+    if use_llm or config.prune_use_llm:
+        from job_scout.llm.factory import get_llm_client  # noqa: PLC0415
+
+        client = get_llm_client(config)
+    click.echo(f"Checking {len(jobs)} active vacancies for {target!r}…")
+    stats = prune_jobs(jobs, db, config, dry_run=dry_run, client=client)
+    prefix = "[DRY RUN] Would prune" if dry_run else "Pruned"
+    click.echo(
+        f"Checked {stats.checked}. {prefix} {stats.pruned} "
+        f"(still open: {stats.still_open}, unknown: {stats.unknown})."
+    )
+
+
 def _print_run_summary(stats: RunStats) -> None:
     """Print a tabular run summary to stdout.
 

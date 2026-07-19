@@ -28,6 +28,8 @@ class JobStatus(StrEnum):
     INTERVIEWING = "interviewing"
     OFFER = "offer"
     REJECTED = "rejected"
+    # Vacancy detected as filled or no longer available (auto-prune).
+    EXPIRED = "expired"
     # Legacy status for backward compatibility
     MATCHED = "matched"
 
@@ -205,6 +207,9 @@ class Config(BaseModel):
     dashboard_token: str | None = None
     geocode_cache_days: int = 90
     travel_cache_days: int = 14
+    prune_enabled: bool = False
+    prune_use_browser: bool = False
+    prune_use_llm: bool = False
     linkedin_import_allow_url_fetch: bool = False
     linkedin_profile_url: str | None = None
     schedule_hour: int = 8
@@ -404,15 +409,16 @@ class ApplicationTracker:
 
     # Valid transitions: from_state -> [to_states]
     VALID_TRANSITIONS: dict[JobStatus, list[JobStatus]] = {
-        JobStatus.NEW: [JobStatus.VIEWED, JobStatus.REJECTED],
-        JobStatus.VIEWED: [JobStatus.APPROVED, JobStatus.REJECTED],
-        JobStatus.APPROVED: [JobStatus.READY, JobStatus.REJECTED],
-        JobStatus.READY: [JobStatus.SUBMITTED, JobStatus.REJECTED],
+        JobStatus.NEW: [JobStatus.VIEWED, JobStatus.REJECTED, JobStatus.EXPIRED],
+        JobStatus.VIEWED: [JobStatus.APPROVED, JobStatus.REJECTED, JobStatus.EXPIRED],
+        JobStatus.APPROVED: [JobStatus.READY, JobStatus.REJECTED, JobStatus.EXPIRED],
+        JobStatus.READY: [JobStatus.SUBMITTED, JobStatus.REJECTED, JobStatus.EXPIRED],
         JobStatus.SUBMITTED: [JobStatus.INTERVIEWING, JobStatus.REJECTED],
         JobStatus.INTERVIEWING: [JobStatus.OFFER, JobStatus.REJECTED],
         JobStatus.OFFER: [JobStatus.REJECTED],
         JobStatus.REJECTED: [],
-        JobStatus.MATCHED: [JobStatus.VIEWED, JobStatus.REJECTED],
+        JobStatus.EXPIRED: [],
+        JobStatus.MATCHED: [JobStatus.VIEWED, JobStatus.REJECTED, JobStatus.EXPIRED],
     }
 
     @staticmethod

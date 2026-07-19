@@ -1134,6 +1134,24 @@ class Database:
             )
             return True
 
+    def mark_expired(self, job_id: int, reason: str | None = None) -> None:
+        """Mark a job as EXPIRED (vacancy filled or no longer available).
+
+        This is a system action (auto-prune), so unlike ``update_job_status``
+        it does not go through the user-facing transition validation.
+
+        Args:
+            job_id: ID of the job to expire.
+            reason: Optional human-readable reason, stored in ``notes``.
+        """
+        now = datetime.now(UTC).isoformat()
+        with self._conn() as conn:
+            conn.execute(
+                """UPDATE jobs SET status = ?, status_updated_at = ?, notes = ?
+                   WHERE id = ?""",
+                (JobStatus.EXPIRED.value, now, reason, job_id),
+            )
+
     def get_jobs_by_status(self, status: JobStatus) -> list[JobListing]:
         """Get all jobs with a specific status.
 
