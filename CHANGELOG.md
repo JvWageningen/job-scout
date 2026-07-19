@@ -4,6 +4,14 @@ Format: [Keep a Changelog](https://keepachangelog.com)
 
 <!-- version list -->
 
+## v1.1.3 (2026-07-19)
+
+### Bug Fixes
+
+- **travel**: Estimate bike time from distance instead of OSRM's car-time bike profile
+  ([`daa63da`](https://github.com/JvWageningen/job-scout/commit/daa63da33db80808debb5cfee8fb6dffa7667076))
+
+
 ## v1.1.2 (2026-07-19)
 
 ### Bug Fixes
