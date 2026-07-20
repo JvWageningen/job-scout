@@ -4,6 +4,19 @@ Format: [Keep a Changelog](https://keepachangelog.com)
 
 <!-- version list -->
 
+## v1.3.0 (2026-07-20)
+
+### Bug Fixes
+
+- **eval**: Catch below-min salaries, over-senior/management roles, and agency listings
+  ([`4dbd6d1`](https://github.com/JvWageningen/job-scout/commit/4dbd6d1d2e67b53abb437aec82e6a491b0651b94))
+
+### Features
+
+- **prune**: Run auto-prune during pipeline runs when prune_enabled
+  ([`59083d3`](https://github.com/JvWageningen/job-scout/commit/59083d3c6596f3e05aefb8ae33060c1511a7269c))
+
+
 ## v1.2.0 (2026-07-19)
 
 ### Features
