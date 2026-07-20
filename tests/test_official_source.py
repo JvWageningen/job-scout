@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from job_scout.official_source import (
     OfficialSource,
@@ -47,6 +47,30 @@ def test_web_search_retries_then_returns_empty_when_blocked() -> None:
     ):
         assert web_search("anything") == []
     assert fetch.call_count == 3  # retried up to _MAX_ATTEMPTS
+
+
+def test_web_search_uses_brave_when_api_key_present() -> None:
+    """With an API key, web_search queries Brave and parses its JSON."""
+    resp = MagicMock()
+    resp.json.return_value = {
+        "web": {"results": [{"url": "https://x.nl", "title": "X", "description": "s"}]}
+    }
+    with patch("job_scout.websearch.requests.get", return_value=resp) as get:
+        results = web_search("q", api_key="brave-key")
+    assert [r.url for r in results] == ["https://x.nl"]
+    assert get.call_args.kwargs["headers"]["X-Subscription-Token"] == "brave-key"
+
+
+def test_web_search_falls_back_to_ddg_when_brave_empty() -> None:
+    """A Brave miss falls through to the keyless DuckDuckGo path."""
+    results = [SearchResult(url="https://ddg.nl", title="d")]
+    with (
+        patch("job_scout.websearch._brave_search", return_value=[]),
+        patch("job_scout.websearch._fetch", return_value="<html></html>"),
+        patch("job_scout.websearch._parse_results", return_value=results),
+    ):
+        out = web_search("q", api_key="brave-key")
+    assert out == results
 
 
 def test_is_job_board() -> None:

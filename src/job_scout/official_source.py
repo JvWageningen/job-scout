@@ -158,6 +158,7 @@ def find_official_source(
     *,
     use_browser: bool = False,
     timeout: int = 15,
+    api_key: str | None = None,
 ) -> OfficialSource:
     """Search for a vacancy on the employer's own site and check availability.
 
@@ -166,13 +167,19 @@ def find_official_source(
         company: Company name.
         use_browser: Retry blocked pages with Playwright during the check.
         timeout: Per-request timeout in seconds.
+        api_key: Optional Brave Search API key for reliable search.
 
     Returns:
         An OfficialSource with the URL and availability, or empty when none found.
     """
     if not company:
         return OfficialSource(reason="no company name")
-    results = web_search(f"{title} {company} vacature", max_results=8, timeout=timeout)
+    results = web_search(
+        f"{title} {company} vacature",
+        max_results=8,
+        timeout=timeout,
+        api_key=api_key,
+    )
     best = _select_official(results, company)
     if best is None:
         return OfficialSource(reason="no official employer page found in results")

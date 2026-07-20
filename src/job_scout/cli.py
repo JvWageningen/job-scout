@@ -632,7 +632,10 @@ def _enrich_official_sources(
     def _lookup(job: JobListing) -> None:
         try:
             source = find_official_source(
-                job.title, job.company, use_browser=use_browser
+                job.title,
+                job.company,
+                use_browser=use_browser,
+                api_key=config.brave_api_key,
             )
         except Exception as exc:  # noqa: BLE001 - never block notification
             logger.warning(f"Official-source lookup failed for {job.title!r}: {exc}")
@@ -678,12 +681,19 @@ def _enrich_company_reviews(
             continue
         key = company.lower()
         if key not in seen:
-            seen[key] = _get_or_build_review(company, db, llm_client, dry_run=dry_run)
+            seen[key] = _get_or_build_review(
+                company, db, llm_client, api_key=config.brave_api_key, dry_run=dry_run
+            )
         job.company_review = seen[key]
 
 
 def _get_or_build_review(
-    company: str, db: Database, llm_client: LLMClient, *, dry_run: bool
+    company: str,
+    db: Database,
+    llm_client: LLMClient,
+    *,
+    api_key: str | None,
+    dry_run: bool,
 ) -> CompanyReview | None:
     """Return a cached review for *company* or build and cache a fresh one."""
     from job_scout.company_review import review_company  # noqa: PLC0415
@@ -692,7 +702,7 @@ def _get_or_build_review(
     if cached:
         return CompanyReview.model_validate_json(cached)
     try:
-        review = review_company(company, client=llm_client)
+        review = review_company(company, client=llm_client, api_key=api_key)
     except Exception as exc:  # noqa: BLE001 - never block notification
         logger.warning(f"Company review failed for {company!r}: {exc}")
         return None
@@ -1234,7 +1244,9 @@ def company_review_cmd(company: str, user_name: str | None, refresh: bool) -> No
         review = CompanyReview.model_validate_json(cached)
         click.echo("(cached)")
     else:
-        review = review_company(company, client=get_llm_client(config))
+        review = review_company(
+            company, client=get_llm_client(config), api_key=config.brave_api_key
+        )
         db.save_company_review(company, review.model_dump_json())
 
     score = "n/a" if review.work_score is None else f"{review.work_score}/100"

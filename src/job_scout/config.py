@@ -59,6 +59,7 @@ SECRET_FIELDS: frozenset[str] = frozenset(
         "dashboard_token",
         "smtp_username",
         "smtp_password",
+        "brave_api_key",
     }
 )
 

@@ -184,6 +184,7 @@ class Config(BaseModel):
     language_preferences: list[str] = Field(default_factory=lambda: ["nl", "en"])
     ors_api_key: str | None = None
     ns_api_key: str | None = None
+    brave_api_key: str | None = None
     fit_score_threshold: int = 60
     max_jobs_per_source: int = 50
     title_include_keywords: list[str] = Field(default_factory=list)

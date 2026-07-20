@@ -18,6 +18,7 @@ from loguru import logger
 from pydantic import BaseModel
 
 _DDG_HTML = "https://html.duckduckgo.com/html/"
+_BRAVE_API = "https://api.search.brave.com/res/v1/web/search"
 _HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
@@ -66,18 +67,32 @@ def _resolve_url(href: str) -> str | None:
 
 
 def web_search(
-    query: str, *, max_results: int = 8, timeout: int = 15
+    query: str,
+    *,
+    max_results: int = 8,
+    timeout: int = 15,
+    api_key: str | None = None,
 ) -> list[SearchResult]:
-    """Run a keyless DuckDuckGo search and return organic results.
+    """Run a web search and return organic results.
+
+    Uses the Brave Search API when *api_key* is provided (reliable), otherwise
+    the keyless DuckDuckGo HTML endpoint. Brave failures fall back to DDG.
 
     Args:
         query: The search query.
         max_results: Maximum number of results to return.
         timeout: Request timeout in seconds.
+        api_key: Optional Brave Search API subscription token.
 
     Returns:
         A list of SearchResult (possibly empty on error or block).
     """
+    if api_key:
+        brave = _brave_search(query, api_key, max_results, timeout)
+        if brave:
+            return brave
+        logger.debug(f"Brave search empty for {query!r}; falling back to DuckDuckGo")
+
     for attempt in range(_MAX_ATTEMPTS):
         html = _fetch(query, timeout)
         results = _parse_results(html, max_results) if html else []
@@ -88,6 +103,36 @@ def web_search(
             _sleep(_BASE_DELAY * (attempt + 1))
     logger.debug(f"web_search returned no results for {query!r}")
     return []
+
+
+def _brave_search(
+    query: str, api_key: str, max_results: int, timeout: int
+) -> list[SearchResult]:
+    """Query the Brave Search API, returning results (empty on any error)."""
+    try:
+        resp = requests.get(
+            _BRAVE_API,
+            params={"q": query, "count": str(max_results)},
+            headers={"X-Subscription-Token": api_key, "Accept": "application/json"},
+            timeout=timeout,
+        )
+        resp.raise_for_status()
+        items = resp.json().get("web", {}).get("results", [])
+    except (requests.RequestException, ValueError) as exc:
+        logger.debug(f"Brave search failed for {query!r}: {exc}")
+        return []
+    results: list[SearchResult] = []
+    for item in items[:max_results]:
+        url = item.get("url", "")
+        if url:
+            results.append(
+                SearchResult(
+                    url=url,
+                    title=_clean(item.get("title", "")),
+                    snippet=_clean(item.get("description", "")),
+                )
+            )
+    return results
 
 
 def _fetch(query: str, timeout: int) -> str | None:
