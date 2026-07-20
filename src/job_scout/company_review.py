@@ -37,13 +37,18 @@ def _evidence_queries(company: str) -> list[str]:
 
 
 def gather_company_evidence(
-    company: str, *, timeout: int = 15, api_key: str | None = None
+    company: str,
+    *,
+    timeout: int = 15,
+    searxng_url: str | None = None,
+    api_key: str | None = None,
 ) -> tuple[list[str], list[str]]:
     """Collect review/financial snippets and their source URLs for a company.
 
     Args:
         company: Company name.
         timeout: Per-search timeout in seconds.
+        searxng_url: Optional SearXNG instance URL for reliable search.
         api_key: Optional Brave Search API key for reliable search.
 
     Returns:
@@ -53,7 +58,11 @@ def gather_company_evidence(
     sources: list[str] = []
     for query in _evidence_queries(company):
         for result in web_search(
-            query, max_results=5, timeout=timeout, api_key=api_key
+            query,
+            max_results=5,
+            timeout=timeout,
+            searxng_url=searxng_url,
+            api_key=api_key,
         ):
             line = f"{result.title} — {result.snippet}".strip(" —")
             if line and line not in snippets:
@@ -102,6 +111,7 @@ def review_company(
     *,
     client: LLMClient,
     timeout: int = 15,
+    searxng_url: str | None = None,
     api_key: str | None = None,
 ) -> CompanyReview:
     """Produce a work-quality review for a company from public web info.
@@ -110,6 +120,7 @@ def review_company(
         company: Company name.
         client: LLM client used to synthesise the review.
         timeout: Per-search timeout in seconds.
+        searxng_url: Optional SearXNG instance URL for reliable search.
         api_key: Optional Brave Search API key for reliable search.
 
     Returns:
@@ -121,7 +132,7 @@ def review_company(
         return CompanyReview(company=company, summary="No company name.")
 
     snippets, sources = gather_company_evidence(
-        company, timeout=timeout, api_key=api_key
+        company, timeout=timeout, searxng_url=searxng_url, api_key=api_key
     )
     evidence = "\n".join(f"- {s}" for s in snippets)[:_MAX_EVIDENCE_CHARS]
     prompt = _build_review_prompt(company, evidence)

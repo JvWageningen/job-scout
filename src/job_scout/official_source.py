@@ -158,6 +158,7 @@ def find_official_source(
     *,
     use_browser: bool = False,
     timeout: int = 15,
+    searxng_url: str | None = None,
     api_key: str | None = None,
 ) -> OfficialSource:
     """Search for a vacancy on the employer's own site and check availability.
@@ -167,6 +168,7 @@ def find_official_source(
         company: Company name.
         use_browser: Retry blocked pages with Playwright during the check.
         timeout: Per-request timeout in seconds.
+        searxng_url: Optional SearXNG instance URL for reliable search.
         api_key: Optional Brave Search API key for reliable search.
 
     Returns:
@@ -178,6 +180,7 @@ def find_official_source(
         f"{title} {company} vacature",
         max_results=8,
         timeout=timeout,
+        searxng_url=searxng_url,
         api_key=api_key,
     )
     best = _select_official(results, company)

@@ -71,22 +71,31 @@ def web_search(
     *,
     max_results: int = 8,
     timeout: int = 15,
+    searxng_url: str | None = None,
     api_key: str | None = None,
 ) -> list[SearchResult]:
     """Run a web search and return organic results.
 
-    Uses the Brave Search API when *api_key* is provided (reliable), otherwise
-    the keyless DuckDuckGo HTML endpoint. Brave failures fall back to DDG.
+    Backend precedence: a self-hosted/private SearXNG instance (*searxng_url*,
+    the recommended default — keyless and reliable), then the Brave Search API
+    (*api_key*), then the keyless DuckDuckGo HTML endpoint. Each falls back to
+    the next when it returns nothing.
 
     Args:
         query: The search query.
         max_results: Maximum number of results to return.
         timeout: Request timeout in seconds.
+        searxng_url: Optional base URL of a SearXNG instance (JSON API).
         api_key: Optional Brave Search API subscription token.
 
     Returns:
         A list of SearchResult (possibly empty on error or block).
     """
+    if searxng_url:
+        searx = _searxng_search(query, searxng_url, max_results, timeout)
+        if searx:
+            return searx
+        logger.debug(f"SearXNG empty for {query!r}; trying next backend")
     if api_key:
         brave = _brave_search(query, api_key, max_results, timeout)
         if brave:
@@ -103,6 +112,36 @@ def web_search(
             _sleep(_BASE_DELAY * (attempt + 1))
     logger.debug(f"web_search returned no results for {query!r}")
     return []
+
+
+def _searxng_search(
+    query: str, base_url: str, max_results: int, timeout: int
+) -> list[SearchResult]:
+    """Query a SearXNG instance's JSON API (empty list on any error)."""
+    try:
+        resp = requests.get(
+            base_url.rstrip("/") + "/search",
+            params={"q": query, "format": "json"},
+            headers=_HEADERS,
+            timeout=timeout,
+        )
+        resp.raise_for_status()
+        items = resp.json().get("results", [])
+    except (requests.RequestException, ValueError) as exc:
+        logger.debug(f"SearXNG search failed for {query!r}: {exc}")
+        return []
+    results: list[SearchResult] = []
+    for item in items[:max_results]:
+        url = item.get("url", "")
+        if url:
+            results.append(
+                SearchResult(
+                    url=url,
+                    title=_clean(item.get("title", "")),
+                    snippet=_clean(item.get("content", "")),
+                )
+            )
+    return results
 
 
 def _brave_search(

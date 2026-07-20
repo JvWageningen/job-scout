@@ -49,6 +49,33 @@ def test_web_search_retries_then_returns_empty_when_blocked() -> None:
     assert fetch.call_count == 3  # retried up to _MAX_ATTEMPTS
 
 
+def test_web_search_uses_searxng_when_url_set() -> None:
+    """With a SearXNG URL, web_search queries its JSON API and parses results."""
+    resp = MagicMock()
+    resp.json.return_value = {
+        "results": [{"url": "https://x.nl", "title": "X", "content": "snip"}]
+    }
+    with patch("job_scout.websearch.requests.get", return_value=resp) as get:
+        results = web_search("q", searxng_url="http://localhost:8888")
+    assert [r.url for r in results] == ["https://x.nl"]
+    assert get.call_args.kwargs["params"]["format"] == "json"
+    assert get.call_args.args[0].endswith("/search")
+
+
+def test_searxng_takes_precedence_over_brave_and_ddg() -> None:
+    """SearXNG results short-circuit before Brave and DuckDuckGo are tried."""
+    searx = [SearchResult(url="https://s.nl", title="s")]
+    with (
+        patch("job_scout.websearch._searxng_search", return_value=searx),
+        patch("job_scout.websearch._brave_search") as brave,
+        patch("job_scout.websearch._fetch") as fetch,
+    ):
+        out = web_search("q", searxng_url="http://sx", api_key="k")
+    assert out == searx
+    brave.assert_not_called()
+    fetch.assert_not_called()
+
+
 def test_web_search_uses_brave_when_api_key_present() -> None:
     """With an API key, web_search queries Brave and parses its JSON."""
     resp = MagicMock()

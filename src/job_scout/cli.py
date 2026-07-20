@@ -635,6 +635,7 @@ def _enrich_official_sources(
                 job.title,
                 job.company,
                 use_browser=use_browser,
+                searxng_url=config.searxng_url,
                 api_key=config.brave_api_key,
             )
         except Exception as exc:  # noqa: BLE001 - never block notification
@@ -682,7 +683,12 @@ def _enrich_company_reviews(
         key = company.lower()
         if key not in seen:
             seen[key] = _get_or_build_review(
-                company, db, llm_client, api_key=config.brave_api_key, dry_run=dry_run
+                company,
+                db,
+                llm_client,
+                searxng_url=config.searxng_url,
+                api_key=config.brave_api_key,
+                dry_run=dry_run,
             )
         job.company_review = seen[key]
 
@@ -692,6 +698,7 @@ def _get_or_build_review(
     db: Database,
     llm_client: LLMClient,
     *,
+    searxng_url: str | None,
     api_key: str | None,
     dry_run: bool,
 ) -> CompanyReview | None:
@@ -702,7 +709,9 @@ def _get_or_build_review(
     if cached:
         return CompanyReview.model_validate_json(cached)
     try:
-        review = review_company(company, client=llm_client, api_key=api_key)
+        review = review_company(
+            company, client=llm_client, searxng_url=searxng_url, api_key=api_key
+        )
     except Exception as exc:  # noqa: BLE001 - never block notification
         logger.warning(f"Company review failed for {company!r}: {exc}")
         return None
@@ -1245,7 +1254,10 @@ def company_review_cmd(company: str, user_name: str | None, refresh: bool) -> No
         click.echo("(cached)")
     else:
         review = review_company(
-            company, client=get_llm_client(config), api_key=config.brave_api_key
+            company,
+            client=get_llm_client(config),
+            searxng_url=config.searxng_url,
+            api_key=config.brave_api_key,
         )
         db.save_company_review(company, review.model_dump_json())
 

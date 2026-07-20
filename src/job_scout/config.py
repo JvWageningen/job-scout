@@ -47,6 +47,7 @@ GLOBAL_FIELDS: frozenset[str] = frozenset(
         "max_jobs_per_source",
         "llm_max_attempts",
         "llm_retry_base_delay",
+        "searxng_url",
     }
 )
 
