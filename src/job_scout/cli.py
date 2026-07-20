@@ -40,6 +40,7 @@ from job_scout.llm.base import LLMClient, LLMError
 from job_scout.llm.factory import get_llm_client
 from job_scout.models import Config, JobListing, JobStatus, RunStats
 from job_scout.notify import NotificationError, get_notifier
+from job_scout.salary import extract_salary_range
 from job_scout.scheduler import (
     check_schedule_status,
     install_schedule,
@@ -189,7 +190,10 @@ def _evaluate_job(
 def _passes_compensation_filter(job: JobListing, config: Config) -> bool:
     """Check if a job's salary and vacation meet configured minimums.
 
-    Jobs with unknown compensation always pass (fail-open).
+    Jobs with genuinely unknown compensation pass (fail-open). When the LLM did
+    not extract a salary, a deterministic regex backstop scans the full
+    description first — the LLM only sees a truncated slice and often misses the
+    salary line, which in Dutch listings appears late in the text.
 
     Args:
         job: Job with compensation fields populated.
@@ -198,23 +202,28 @@ def _passes_compensation_filter(job: JobListing, config: Config) -> bool:
     Returns:
         True if the job passes compensation filters.
     """
+    if job.salary_min is None and job.salary_max is None:
+        extracted_min, extracted_max = extract_salary_range(job.description)
+        if extracted_min is not None or extracted_max is not None:
+            job.salary_min, job.salary_max = extracted_min, extracted_max
+            job.salary_period = "monthly"
+
+    # Highest figure the job could pay; reject only if even that is below floor.
+    upper = job.salary_max if job.salary_max is not None else job.salary_min
     if (
         config.min_salary is not None
-        and job.salary_max is not None
-        and job.salary_max < config.min_salary
+        and upper is not None
+        and upper < config.min_salary
     ):
-        logger.info(
-            f"Salary too low ({job.salary_max} < {config.min_salary}): {job.title}"
-        )
+        logger.info(f"Salary too low ({upper} < {config.min_salary}): {job.title}")
         return False
+    lower = job.salary_min if job.salary_min is not None else job.salary_max
     if (
         config.max_salary is not None
-        and job.salary_min is not None
-        and job.salary_min > config.max_salary
+        and lower is not None
+        and lower > config.max_salary
     ):
-        logger.info(
-            f"Salary too high ({job.salary_min} > {config.max_salary}): {job.title}"
-        )
+        logger.info(f"Salary too high ({lower} > {config.max_salary}): {job.title}")
         return False
     if (
         config.min_vacation_days is not None

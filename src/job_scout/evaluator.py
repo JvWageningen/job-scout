@@ -88,7 +88,7 @@ def _build_fit_prompt(
         f"Title: {job.title}\n"
         f"Company: {job.company}\n"
         f"Location: {job.location or 'Not specified'}\n"
-        f"Description:\n{(job.description or '')[:2000]}"
+        f"Description:\n{(job.description or '')[:4000]}"
     )
     return f"""Evaluate this job listing for a candidate. Respond ONLY with valid JSON.
 
@@ -119,14 +119,26 @@ Evaluate this job. Respond with this exact JSON structure:
 
 fit_score guidelines:
 - 0 = completely irrelevant role (different field entirely)
-- 40-59 = partial match (related field but different focus)
-- 60-79 = good fit (right role, minor gaps are OK)
+- 40-59 = partial match (related field/different focus, OR a \
+seniority/role-type mismatch — see below)
+- 60-79 = good fit (right role AND right level, minor gaps are OK)
 - 80-100 = strong/perfect match
-Be LENIENT on experience gaps: if the role fits but asks for \
-1-3 more years of experience than the candidate has, deduct only \
-5-15 points — do NOT reject for experience alone. \
-Focus on role relevance and transferable skills over exact \
-experience requirements.
+Experience & seniority: small gaps are fine — if the role fits and \
+asks for 1-3 more years than the candidate has, deduct only 5-15 \
+points. BUT a real level mismatch must lower the score sharply: if \
+the role requires roughly double the candidate's years of \
+experience, or is clearly senior / lead / principal / head / \
+director / manager while the candidate's profile is a hands-on \
+individual-contributor role, cap fit_score at 55 unless the profile \
+explicitly seeks that level. A people-management or team-lead role \
+for a candidate who wants a hands-on specialist role is a poor fit \
+(score 30-50) even when the domain matches.
+Employment model: read the NEGATIVE CRITERIA carefully. If the \
+candidate wants an in-house role at a single employer, set \
+matches_negative=true for agencies, consultancies, staffing or \
+secondment firms ("detachering", "detacheringsbureau", "bureau"), \
+and roles working on projects for multiple external clients \
+(billable / registered project hours).
 matches_negative: true if this job matches the negative criteria
 salary_min/salary_max: gross salary in EUR if stated or estimable \
 from the description, null if unknown. Always normalize to monthly \
