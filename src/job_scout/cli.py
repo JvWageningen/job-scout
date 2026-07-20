@@ -560,6 +560,46 @@ def _dedupe_matched_for_notification(
     return unique
 
 
+def _enrich_official_sources(
+    matched: list[JobListing], db: Database, config: Config, *, dry_run: bool
+) -> None:
+    """Attach the employer's own posting URL + availability to matched jobs.
+
+    Runs a web search per matched job to find the vacancy on the company's own
+    site (not a job board) and re-checks availability there. Failures are
+    swallowed so notification is never blocked.
+
+    Args:
+        matched: Newly matched jobs to enrich.
+        db: Database for persisting the official source.
+        config: Effective configuration.
+        dry_run: When True, do not persist.
+    """
+    if not matched or not getattr(config, "find_official_sources", True):
+        return
+    from job_scout.official_source import find_official_source  # noqa: PLC0415
+
+    use_browser = getattr(config, "prune_use_browser", False)
+
+    def _lookup(job: JobListing) -> None:
+        try:
+            source = find_official_source(
+                job.title, job.company, use_browser=use_browser
+            )
+        except Exception as exc:  # noqa: BLE001 - never block notification
+            logger.warning(f"Official-source lookup failed for {job.title!r}: {exc}")
+            return
+        job.official_url = source.url
+        job.official_available = source.available
+        if not dry_run and job.id and source.url:
+            db.set_official_source(job.id, source.url, source.available)
+
+    # Keep concurrency low to stay polite to the keyless search endpoint.
+    workers = min(2, len(matched))
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        list(executor.map(_lookup, matched))
+
+
 def _send_notifications(
     matched: list[JobListing], db: Database, config: Config, dry_run: bool
 ) -> int:
@@ -725,6 +765,7 @@ def _run_pipeline(
         screened, config, cv_text, db, dry_run, full=full, client=llm_client
     )
     _merge_stats(stats, run_stats)
+    _enrich_official_sources(matched, db, config, dry_run=dry_run)
     stats.notified = _send_notifications(matched, db, config, dry_run)
     _print_run_summary(stats)
     duration = (datetime.now() - started_at).total_seconds()
@@ -1036,6 +1077,40 @@ def prune(user_name: str | None, dry_run: bool, browser: bool, use_llm: bool) ->
         f"Checked {stats.checked}. {prefix} {stats.pruned} "
         f"(still open: {stats.still_open}, unknown: {stats.unknown})."
     )
+
+
+@cli.command("find-sources")
+@click.option("--user", "user_name", default=None, help="User whose matches to enrich")
+@click.option(
+    "--browser", is_flag=True, help="Render blocked pages with Playwright during checks"
+)
+def find_sources(user_name: str | None, browser: bool) -> None:
+    """Find the employer's own posting for matched jobs and check availability."""
+    target = _require_single_user(user_name)
+    config = build_effective_config(target)
+    if browser:
+        config.prune_use_browser = True
+    config.find_official_sources = True
+    db = Database(user_db_path(target))
+    matched = db.get_jobs_by_status(JobStatus.MATCHED)
+    if not matched:
+        click.echo("No matched jobs to enrich.")
+        return
+    click.echo(f"Finding official sources for {len(matched)} matched jobs…")
+    _enrich_official_sources(matched, db, config, dry_run=False)
+    found = sum(1 for job in matched if job.official_url)
+    click.echo(f"Found employer pages for {found}/{len(matched)} matched jobs:")
+    for job in matched:
+        if not job.official_url:
+            continue
+        state = (
+            "OPEN  "
+            if job.official_available
+            else "FILLED"
+            if job.official_available is False
+            else "?     "
+        )
+        click.echo(f"  {state} {job.title[:34]:34} -> {job.official_url}")
 
 
 def _print_run_summary(stats: RunStats) -> None:

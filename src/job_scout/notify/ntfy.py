@@ -80,6 +80,15 @@ def _build_notification_payload(job: JobListing) -> tuple[str, str]:
             f"Source: {job.source}",
         ]
     )
+    if job.official_url:
+        status = (
+            "still open"
+            if job.official_available
+            else "possibly filled"
+            if job.official_available is False
+            else "unverified"
+        )
+        lines.append(f"Employer page ({status}): {job.official_url}")
     return title, "\n".join(lines)
 
 

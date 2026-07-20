@@ -104,6 +104,8 @@ class JobListing(BaseModel):
     status_updated_at: datetime | None = None
     notes: str | None = None
     company_research: CompanyResearch | None = None
+    official_url: str | None = None
+    official_available: bool | None = None
 
 
 class CustomSite(BaseModel):
@@ -210,6 +212,8 @@ class Config(BaseModel):
     prune_enabled: bool = False
     prune_use_browser: bool = False
     prune_use_llm: bool = False
+    find_official_sources: bool = True
+    company_review_enabled: bool = True
     linkedin_import_allow_url_fetch: bool = False
     linkedin_profile_url: str | None = None
     schedule_hour: int = 8

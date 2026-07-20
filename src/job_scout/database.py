@@ -112,6 +112,9 @@ class Database:
                 ("applied_at", "TEXT"),
                 ("status_updated_at", "TEXT"),
                 ("notes", "TEXT"),
+                ("official_url", "TEXT"),
+                ("official_available", "INTEGER"),
+                ("official_checked_at", "TEXT"),
             ]:
                 with contextlib.suppress(sqlite3.OperationalError):
                     conn.execute(f"ALTER TABLE jobs ADD COLUMN {col} {typedef}")
@@ -713,6 +716,12 @@ class Database:
             applied_at=applied_at,
             status_updated_at=status_updated_at,
             notes=raw.get("notes"),
+            official_url=raw.get("official_url"),
+            official_available=(
+                bool(raw["official_available"])
+                if raw.get("official_available") is not None
+                else None
+            ),
         )
 
     def log_stats(self) -> dict[str, int]:
@@ -1150,6 +1159,25 @@ class Database:
                 """UPDATE jobs SET status = ?, status_updated_at = ?, notes = ?
                    WHERE id = ?""",
                 (JobStatus.EXPIRED.value, now, reason, job_id),
+            )
+
+    def set_official_source(
+        self, job_id: int, url: str | None, available: bool | None
+    ) -> None:
+        """Record the employer's own posting URL and its availability for a job.
+
+        Args:
+            job_id: ID of the job to update.
+            url: The official/employer page URL (None if none was found).
+            available: Whether the vacancy is still open there (None if unknown).
+        """
+        now = datetime.now(UTC).isoformat()
+        avail_int = None if available is None else int(available)
+        with self._conn() as conn:
+            conn.execute(
+                """UPDATE jobs SET official_url = ?, official_available = ?,
+                   official_checked_at = ? WHERE id = ?""",
+                (url, avail_int, now, job_id),
             )
 
     def get_jobs_by_status(self, status: JobStatus) -> list[JobListing]:
