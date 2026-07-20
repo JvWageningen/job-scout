@@ -1,6 +1,6 @@
 [project]
 name = "job-scout"
-version = "1.5.1"
+version = "1.6.0"
 description = "Automated daily job search tool for the Dutch job market"
 readme = "README.md"
 requires-python = ">=3.12"

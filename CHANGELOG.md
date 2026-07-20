@@ -4,6 +4,14 @@ Format: [Keep a Changelog](https://keepachangelog.com)
 
 <!-- version list -->
 
+## v1.6.0 (2026-07-20)
+
+### Features
+
+- **search**: Optional Brave Search API fallback for reliable web search
+  ([`6c9336d`](https://github.com/JvWageningen/job-scout/commit/6c9336d6ce5d2845f12c248bd70b3e828adc73d5))
+
+
 ## v1.5.1 (2026-07-20)
 
 ### Bug Fixes
