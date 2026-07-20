@@ -4,6 +4,14 @@ Format: [Keep a Changelog](https://keepachangelog.com)
 
 <!-- version list -->
 
+## v1.7.0 (2026-07-20)
+
+### Features
+
+- **review**: Best-effort company review from LLM knowledge when search is thin
+  ([`d7e366d`](https://github.com/JvWageningen/job-scout/commit/d7e366dd270dcaf2c33fb1bf5e0d9745bdcb0e79))
+
+
 ## v1.6.0 (2026-07-20)
 
 ### Features
