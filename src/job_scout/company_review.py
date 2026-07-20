@@ -73,15 +73,19 @@ COMPANY: {company}
 PUBLIC WEB EVIDENCE (search snippets — reviews, financials, news):
 {evidence or "(no useful public information was found)"}
 
-Using ONLY the evidence above plus well-known public facts, produce a balanced
-work-quality review. Weigh employee-review sentiment most heavily, then public
-signals (financial health, growth, company age/stability). Do NOT invent
-specifics that are not supported; when evidence is thin, say so and lower the
-confidence and score certainty accordingly.
+Combine the evidence above with your own knowledge of this company to produce a
+balanced work-quality review. Weigh employee-review sentiment most heavily, then
+public signals (financial health, growth, company age/stability). ALWAYS give a
+best-effort work_score using whatever is publicly known about the company (its
+sector, size, reputation, stability); use null ONLY when the company is truly
+unidentifiable or too generic to assess. Do NOT invent specific figures you are
+unsure of. Set confidence to reflect how much you actually know: "high" = solid
+live evidence; "medium" = a recognisable company or some evidence; "low" = mostly
+general inference with little concrete data.
 
 Respond with this exact JSON structure:
 {{
-  "work_score": <integer 0-100, or null if there is too little information>,
+  "work_score": <integer 0-100; null ONLY if the company is unidentifiable>,
   "summary": "<2-3 sentence balanced summary of what it's like to work there>",
   "pros": ["<short pro>", ...],
   "cons": ["<short con>", ...],
