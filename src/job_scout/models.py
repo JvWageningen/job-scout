@@ -68,6 +68,27 @@ class CompanyResearch(BaseModel):
     research_timestamp: datetime | None = None
 
 
+class CompanyReview(BaseModel):
+    """A work-quality review of a company, synthesised from public info.
+
+    Combines employee-review sentiment with public signals (financial health,
+    growth, company age) into a single estimate of how good it is to work there.
+    """
+
+    company: str
+    work_score: int | None = None  # 0-100 estimate; None if too little info
+    summary: str = ""
+    pros: list[str] = Field(default_factory=list)
+    cons: list[str] = Field(default_factory=list)
+    employee_sentiment: str | None = None
+    financial_health: str | None = None
+    growth: str | None = None
+    company_age: str | None = None
+    confidence: str = "low"  # low / medium / high
+    sources: list[str] = Field(default_factory=list)
+    reviewed_at: datetime | None = None
+
+
 class JobListing(BaseModel):
     """A single job listing with evaluation metadata."""
 
@@ -104,6 +125,7 @@ class JobListing(BaseModel):
     status_updated_at: datetime | None = None
     notes: str | None = None
     company_research: CompanyResearch | None = None
+    company_review: CompanyReview | None = None
     official_url: str | None = None
     official_available: bool | None = None
 

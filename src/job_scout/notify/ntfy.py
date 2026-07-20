@@ -89,6 +89,12 @@ def _build_notification_payload(job: JobListing) -> tuple[str, str]:
             else "unverified"
         )
         lines.append(f"Employer page ({status}): {job.official_url}")
+    review = job.company_review
+    if review and review.work_score is not None:
+        lines.append(
+            f"Company review: {review.work_score}/100 "
+            f"({review.confidence} confidence) — {review.summary}"
+        )
     return title, "\n".join(lines)
 
 

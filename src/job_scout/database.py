@@ -230,6 +230,13 @@ class Database:
                 "company_research(job_id)"
             )
             conn.execute("""
+                CREATE TABLE IF NOT EXISTS company_reviews (
+                    company_key TEXT PRIMARY KEY,
+                    review_json TEXT NOT NULL,
+                    reviewed_at TEXT NOT NULL
+                )
+            """)
+            conn.execute("""
                 CREATE TABLE IF NOT EXISTS star_stories (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     situation TEXT NOT NULL,
@@ -1305,6 +1312,50 @@ class Database:
             )
             row = cursor.fetchone()
             return row[0] if row else None
+
+    def save_company_review(self, company: str, review_json: str) -> None:
+        """Cache a company work-quality review, keyed by normalised name.
+
+        Args:
+            company: Company name.
+            review_json: Serialised CompanyReview JSON.
+        """
+        now = datetime.now(UTC).isoformat()
+        key = " ".join(company.lower().split())
+        with self._conn() as conn:
+            conn.execute(
+                """INSERT INTO company_reviews (company_key, review_json, reviewed_at)
+                   VALUES (?, ?, ?)
+                   ON CONFLICT(company_key) DO UPDATE SET
+                       review_json = excluded.review_json,
+                       reviewed_at = excluded.reviewed_at""",
+                (key, review_json, now),
+            )
+
+    def get_company_review(self, company: str, max_age_days: int = 30) -> str | None:
+        """Return a cached company review JSON if fresh enough.
+
+        Args:
+            company: Company name.
+            max_age_days: Maximum cache age in days.
+
+        Returns:
+            The cached review JSON, or None if absent or stale.
+        """
+        key = " ".join(company.lower().split())
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT review_json, reviewed_at FROM company_reviews "
+                "WHERE company_key = ?",
+                (key,),
+            ).fetchone()
+        if not row:
+            return None
+        try:
+            age = datetime.now(UTC) - datetime.fromisoformat(row[1])
+        except (ValueError, TypeError):
+            return None
+        return row[0] if age.days <= max_age_days else None
 
     def save_star_story(
         self, situation: str, task: str, action: str, result: str, keywords: list[str]

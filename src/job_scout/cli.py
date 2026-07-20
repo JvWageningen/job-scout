@@ -38,7 +38,13 @@ from job_scout.evaluator import (
 )
 from job_scout.llm.base import LLMClient, LLMError
 from job_scout.llm.factory import get_llm_client
-from job_scout.models import Config, JobListing, JobStatus, RunStats
+from job_scout.models import (
+    CompanyReview,
+    Config,
+    JobListing,
+    JobStatus,
+    RunStats,
+)
 from job_scout.notify import NotificationError, get_notifier
 from job_scout.salary import extract_salary_range
 from job_scout.scheduler import (
@@ -600,6 +606,59 @@ def _enrich_official_sources(
         list(executor.map(_lookup, matched))
 
 
+def _enrich_company_reviews(
+    matched: list[JobListing],
+    db: Database,
+    config: Config,
+    llm_client: LLMClient,
+    *,
+    dry_run: bool,
+) -> None:
+    """Attach a cached work-quality review to each matched job's company.
+
+    Reviews are cached per company (30-day freshness) so repeated runs and
+    multiple jobs at the same company are cheap. Failures are swallowed.
+
+    Args:
+        matched: Newly matched jobs to enrich.
+        db: Database used for the company-review cache.
+        config: Effective configuration.
+        llm_client: Client used to synthesise reviews.
+        dry_run: When True, do not persist to the cache.
+    """
+    if not matched or not getattr(config, "company_review_enabled", True):
+        return
+
+    seen: dict[str, CompanyReview | None] = {}
+    for job in matched:
+        company = job.company
+        if not company:
+            continue
+        key = company.lower()
+        if key not in seen:
+            seen[key] = _get_or_build_review(company, db, llm_client, dry_run=dry_run)
+        job.company_review = seen[key]
+
+
+def _get_or_build_review(
+    company: str, db: Database, llm_client: LLMClient, *, dry_run: bool
+) -> CompanyReview | None:
+    """Return a cached review for *company* or build and cache a fresh one."""
+    from job_scout.company_review import review_company  # noqa: PLC0415
+
+    cached = db.get_company_review(company)
+    if cached:
+        return CompanyReview.model_validate_json(cached)
+    try:
+        review = review_company(company, client=llm_client)
+    except Exception as exc:  # noqa: BLE001 - never block notification
+        logger.warning(f"Company review failed for {company!r}: {exc}")
+        return None
+    if not dry_run:
+        db.save_company_review(company, review.model_dump_json())
+    return review
+
+
 def _send_notifications(
     matched: list[JobListing], db: Database, config: Config, dry_run: bool
 ) -> int:
@@ -766,6 +825,7 @@ def _run_pipeline(
     )
     _merge_stats(stats, run_stats)
     _enrich_official_sources(matched, db, config, dry_run=dry_run)
+    _enrich_company_reviews(matched, db, config, llm_client, dry_run=dry_run)
     stats.notified = _send_notifications(matched, db, config, dry_run)
     _print_run_summary(stats)
     duration = (datetime.now() - started_at).total_seconds()
@@ -1111,6 +1171,43 @@ def find_sources(user_name: str | None, browser: bool) -> None:
             else "?     "
         )
         click.echo(f"  {state} {job.title[:34]:34} -> {job.official_url}")
+
+
+@cli.command("company-review")
+@click.argument("company")
+@click.option("--user", "user_name", default=None, help="User whose LLM config to use")
+@click.option("--refresh", is_flag=True, help="Ignore any cached review")
+def company_review_cmd(company: str, user_name: str | None, refresh: bool) -> None:
+    """Summarise how good a COMPANY is to work for, from public web info."""
+    from job_scout.company_review import review_company  # noqa: PLC0415
+    from job_scout.llm.factory import get_llm_client  # noqa: PLC0415
+
+    target = _require_single_user(user_name)
+    config = build_effective_config(target)
+    db = Database(user_db_path(target))
+    cached = None if refresh else db.get_company_review(company)
+    if cached:
+        review = CompanyReview.model_validate_json(cached)
+        click.echo("(cached)")
+    else:
+        review = review_company(company, client=get_llm_client(config))
+        db.save_company_review(company, review.model_dump_json())
+
+    score = "n/a" if review.work_score is None else f"{review.work_score}/100"
+    click.echo(f"\n{review.company} — work score: {score} ({review.confidence})")
+    click.echo(f"  {review.summary}")
+    for pro in review.pros:
+        click.echo(f"  + {pro}")
+    for con in review.cons:
+        click.echo(f"  - {con}")
+    for label, value in (
+        ("Sentiment", review.employee_sentiment),
+        ("Financial", review.financial_health),
+        ("Growth", review.growth),
+        ("Founded", review.company_age),
+    ):
+        if value:
+            click.echo(f"  {label}: {value}")
 
 
 def _print_run_summary(stats: RunStats) -> None:
