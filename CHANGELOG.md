@@ -4,6 +4,17 @@ Format: [Keep a Changelog](https://keepachangelog.com)
 
 <!-- version list -->
 
+## v1.5.1 (2026-07-20)
+
+### Bug Fixes
+
+- **prune+ui**: Auto-expire filled matches and surface new data in the dashboard
+  ([`8d8547b`](https://github.com/JvWageningen/job-scout/commit/8d8547bc5db458234a11590404ed64c3c646b526))
+
+- **web**: Send no-cache headers for static assets so UI updates aren't stale
+  ([`4080b7c`](https://github.com/JvWageningen/job-scout/commit/4080b7ce5e6fc17e34a6a8cabb0e833ce43b152e))
+
+
 ## v1.5.0 (2026-07-20)
 
 ### Features
