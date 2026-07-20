@@ -124,24 +124,28 @@ def create_app() -> FastAPI:
     # Add token authentication middleware
     app.add_middleware(TokenAuthMiddleware, dashboard_token=dashboard_token)
 
+    # Force the browser to revalidate static assets so UI updates are picked up
+    # immediately instead of serving a stale cached copy.
+    no_cache_headers = {"Cache-Control": "no-cache, must-revalidate"}
+
     # --- Static file serving ---
     @app.get("/", include_in_schema=False)
     def serve_index() -> FileResponse:
         """Serve the main dashboard HTML file."""
         static_dir = Path(__file__).parent / "static"
-        return FileResponse(static_dir / "index.html")
+        return FileResponse(static_dir / "index.html", headers=no_cache_headers)
 
     @app.get("/app.js", include_in_schema=False)
     def serve_app_js() -> FileResponse:
         """Serve the main application JavaScript file."""
         static_dir = Path(__file__).parent / "static"
-        return FileResponse(static_dir / "app.js")
+        return FileResponse(static_dir / "app.js", headers=no_cache_headers)
 
     @app.get("/style.css", include_in_schema=False)
     def serve_style_css() -> FileResponse:
         """Serve the stylesheet."""
         static_dir = Path(__file__).parent / "static"
-        return FileResponse(static_dir / "style.css")
+        return FileResponse(static_dir / "style.css", headers=no_cache_headers)
 
     # --- API Endpoints ---
 
