@@ -4,6 +4,14 @@ Format: [Keep a Changelog](https://keepachangelog.com)
 
 <!-- version list -->
 
+## v1.4.0 (2026-07-20)
+
+### Features
+
+- **sources**: Link matched jobs to the employer's own posting and re-check availability
+  ([`265b096`](https://github.com/JvWageningen/job-scout/commit/265b0962b04ca6be2fcc9c850da2b6fc17c07a25))
+
+
 ## v1.3.0 (2026-07-20)
 
 ### Bug Fixes
