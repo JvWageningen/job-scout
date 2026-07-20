@@ -4,6 +4,14 @@ Format: [Keep a Changelog](https://keepachangelog.com)
 
 <!-- version list -->
 
+## v1.5.0 (2026-07-20)
+
+### Features
+
+- **review**: Summarise how good each matched company is to work for
+  ([`09dded3`](https://github.com/JvWageningen/job-scout/commit/09dded3a27556970ed85c4eb4ee39d8ce1c2a3c2))
+
+
 ## v1.4.0 (2026-07-20)
 
 ### Features
