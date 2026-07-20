@@ -4,6 +4,14 @@ Format: [Keep a Changelog](https://keepachangelog.com)
 
 <!-- version list -->
 
+## v1.8.0 (2026-07-20)
+
+### Features
+
+- **search**: SearXNG as the default search backend
+  ([`9eb0943`](https://github.com/JvWageningen/job-scout/commit/9eb0943a717d315a938b894f4011f5dda06a5072))
+
+
 ## v1.7.0 (2026-07-20)
 
 ### Features
