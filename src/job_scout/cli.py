@@ -566,6 +566,48 @@ def _dedupe_matched_for_notification(
     return unique
 
 
+def _prune_filled_matches(
+    matched: list[JobListing], db: Database, config: Config, *, dry_run: bool
+) -> list[JobListing]:
+    """Drop matched jobs whose vacancy is already filled/closed at the source.
+
+    Each matched job's live page is checked before notifying; filled/closed ones
+    are marked EXPIRED and excluded, so neither the notification nor the
+    dashboard ever links to a dead posting.
+
+    Args:
+        matched: Newly matched jobs.
+        db: Database for expiring filled jobs.
+        config: Effective configuration.
+        dry_run: When True, do not persist expirations.
+
+    Returns:
+        The subset of jobs still open (safe to notify).
+    """
+    if not matched or not getattr(config, "verify_matches_open", True):
+        return matched
+    from job_scout.pruner import PruneCheck, check_vacancy_open  # noqa: PLC0415
+
+    def _check(job: JobListing) -> tuple[JobListing, PruneCheck]:
+        # Use the browser fallback so blocked boards (Indeed) are still verified.
+        return job, check_vacancy_open(job, use_browser=True)
+
+    still_open: list[JobListing] = []
+    workers = min(4, len(matched))
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        for job, check in executor.map(_check, matched):
+            if check.should_prune:
+                logger.info(
+                    f"Matched job already filled — expiring: "
+                    f"{job.title} @ {job.company} ({check.signal})"
+                )
+                if not dry_run and job.id:
+                    db.mark_expired(job.id, reason=f"filled at source: {check.reason}")
+            else:
+                still_open.append(job)
+    return still_open
+
+
 def _enrich_official_sources(
     matched: list[JobListing], db: Database, config: Config, *, dry_run: bool
 ) -> None:
@@ -824,6 +866,8 @@ def _run_pipeline(
         screened, config, cv_text, db, dry_run, full=full, client=llm_client
     )
     _merge_stats(stats, run_stats)
+    matched = _prune_filled_matches(matched, db, config, dry_run=dry_run)
+    stats.matched = len(matched)
     _enrich_official_sources(matched, db, config, dry_run=dry_run)
     _enrich_company_reviews(matched, db, config, llm_client, dry_run=dry_run)
     stats.notified = _send_notifications(matched, db, config, dry_run)

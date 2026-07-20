@@ -688,3 +688,62 @@ def test_send_notifications_dedupes_cross_source(cli_env: Path) -> None:
 
         # Two rows for the same job (different sources) → notified exactly once.
         assert mock_notifier.send.call_count == 1
+
+
+def test_prune_filled_matches_expires_and_excludes_filled() -> None:
+    """Filled matched jobs are marked expired and dropped from the notify set."""
+    from unittest.mock import MagicMock
+
+    from job_scout.cli import _prune_filled_matches
+    from job_scout.pruner import PruneCheck, PruneOutcome
+
+    open_job = JobListing(
+        title="CRO Specialist",
+        company="Praxis",
+        url="https://x/1",
+        source="linkedin",
+        seen_at=datetime.now(UTC),
+    )
+    open_job.id = 1
+    filled_job = JobListing(
+        title="Head of E-commerce",
+        company="Acme",
+        url="https://x/2",
+        source="linkedin",
+        seen_at=datetime.now(UTC),
+    )
+    filled_job.id = 2
+
+    def fake_check(job: JobListing, **_: object) -> PruneCheck:
+        if job.id == 2:
+            return PruneCheck(outcome=PruneOutcome.FILLED, reason="closed", signal="x")
+        return PruneCheck(outcome=PruneOutcome.OPEN, reason="open")
+
+    db = MagicMock()
+    config = Config(verify_matches_open=True)
+    with patch("job_scout.pruner.check_vacancy_open", side_effect=fake_check):
+        still_open = _prune_filled_matches(
+            [open_job, filled_job], db, config, dry_run=False
+        )
+
+    assert [j.id for j in still_open] == [1]
+    db.mark_expired.assert_called_once()
+    assert db.mark_expired.call_args[0][0] == 2
+
+
+def test_prune_filled_matches_disabled_returns_all() -> None:
+    """When verification is off, all matched jobs pass through untouched."""
+    from unittest.mock import MagicMock
+
+    from job_scout.cli import _prune_filled_matches
+
+    job = JobListing(
+        title="CRO Specialist",
+        company="Praxis",
+        url="https://x/1",
+        source="linkedin",
+        seen_at=datetime.now(UTC),
+    )
+    config = Config(verify_matches_open=False)
+    result = _prune_filled_matches([job], MagicMock(), config, dry_run=False)
+    assert result == [job]

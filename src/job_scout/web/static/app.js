@@ -435,6 +435,7 @@ function renderJobCard(job, rejected) {
                     <option value="interviewing" ${job.status === 'interviewing' ? 'selected' : ''}>Interviewing</option>
                     <option value="offer" ${job.status === 'offer' ? 'selected' : ''}>Offer</option>
                     <option value="rejected" ${job.status === 'rejected' ? 'selected' : ''}>Rejected</option>
+                    <option value="expired" ${job.status === 'expired' ? 'selected' : ''}>Expired (filled)</option>
                 </select>
             </div>
             <div class="notes-control">
@@ -452,11 +453,59 @@ function renderJobCard(job, rejected) {
             ${job.fit_reasoning ? `<p><em>${escapeHtml(job.fit_reasoning)}</em></p>` : ''}
             ${job.negative_reasoning ? `<p><em>Reason: ${escapeHtml(job.negative_reasoning)}</em></p>` : ''}
             ${job.compensation_reasoning ? `<p><em>Compensation: ${escapeHtml(job.compensation_reasoning)}</em></p>` : ''}
+            ${renderCompanyReview(job.company_review)}
             <div class="job-meta">
                 ${meta}
             </div>
             ${statusSection}
-            <p><a href="${escapeHtml(job.url)}" target="_blank" rel="noopener noreferrer">View Job →</a></p>
+            <p class="job-links">
+                <a href="${escapeHtml(job.url)}" target="_blank" rel="noopener noreferrer">View Job →</a>
+                ${renderOfficialLink(job)}
+            </p>
+        </div>
+    `;
+}
+
+/**
+ * Render a link to the employer's own posting, with an availability badge.
+ *
+ * @param {Object} job - The job object (uses official_url / official_available).
+ * @returns {string} HTML for the employer link, or empty string.
+ */
+function renderOfficialLink(job) {
+    if (!job.official_url) {
+        return '';
+    }
+    let badge = '';
+    if (job.official_available === true) {
+        badge = ' <span class="badge badge-open">open</span>';
+    } else if (job.official_available === false) {
+        badge = ' <span class="badge badge-filled">may be filled</span>';
+    }
+    return `<a href="${escapeHtml(job.official_url)}" target="_blank" rel="noopener noreferrer">🏢 Company site →</a>${badge}`;
+}
+
+/**
+ * Render a company work-quality review block.
+ *
+ * @param {Object|null} review - The company_review object.
+ * @returns {string} HTML for the review, or empty string.
+ */
+function renderCompanyReview(review) {
+    if (!review || review.work_score === null || review.work_score === undefined) {
+        return '';
+    }
+    const pros = (review.pros || []).slice(0, 3)
+        .map((p) => `<li>${escapeHtml(p)}</li>`).join('');
+    const cons = (review.cons || []).slice(0, 3)
+        .map((c) => `<li>${escapeHtml(c)}</li>`).join('');
+    return `
+        <div class="company-review">
+            <strong>Company: ${review.work_score}/100</strong>
+            <span class="review-confidence">(${escapeHtml(review.confidence || 'low')} confidence)</span>
+            ${review.summary ? `<p>${escapeHtml(review.summary)}</p>` : ''}
+            ${pros ? `<ul class="review-pros">${pros}</ul>` : ''}
+            ${cons ? `<ul class="review-cons">${cons}</ul>` : ''}
         </div>
     `;
 }

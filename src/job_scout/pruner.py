@@ -216,6 +216,15 @@ def _check_linkedin(url: str, timeout: int) -> PruneCheck:
             reason="LinkedIn redirected an expired posting away from the job view",
             signal="expired_jd_redirect",
         )
+    # A closed posting can stay at /jobs/view/ but show a "no longer accepting
+    # applications" banner — scan the page content for that too.
+    phrase = _scan_filled_phrases(_strip_html(resp.text))
+    if phrase:
+        return PruneCheck(
+            outcome=PruneOutcome.FILLED,
+            reason="LinkedIn page shows the posting is closed",
+            signal=phrase,
+        )
     return PruneCheck(outcome=PruneOutcome.OPEN, reason="still at LinkedIn job view")
 
 

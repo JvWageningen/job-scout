@@ -55,13 +55,30 @@ def test_linkedin_expired_redirect_is_gone() -> None:
 
 
 def test_linkedin_still_open_stays_open() -> None:
-    """A LinkedIn job still at /jobs/view/ is OPEN."""
+    """A LinkedIn job still at /jobs/view/ with no closed banner is OPEN."""
     job = _job("https://www.linkedin.com/jobs/view/123")
-    same = _resp("https://www.linkedin.com/jobs/view/123")
+    same = _resp("https://www.linkedin.com/jobs/view/123", text="<p>Apply now</p>")
     with patch("job_scout.pruner.requests.get", return_value=same):
         check = check_vacancy_open(job)
     assert check.outcome == PruneOutcome.OPEN
     assert not check.should_prune
+
+
+def test_linkedin_closed_banner_without_redirect_is_filled() -> None:
+    """A LinkedIn job at /jobs/view/ showing a closed banner is FILLED.
+
+    Regression: closed postings often stay at /jobs/view/ (no expired redirect)
+    but display "No longer accepting applications".
+    """
+    job = _job("https://www.linkedin.com/jobs/view/123")
+    closed = _resp(
+        "https://www.linkedin.com/jobs/view/123",
+        text="<div>No longer accepting applications</div>",
+    )
+    with patch("job_scout.pruner.requests.get", return_value=closed):
+        check = check_vacancy_open(job)
+    assert check.outcome == PruneOutcome.FILLED
+    assert check.should_prune
 
 
 def test_generic_404_is_gone() -> None:

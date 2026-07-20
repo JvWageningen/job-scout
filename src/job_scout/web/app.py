@@ -42,6 +42,26 @@ _run_registry: dict[str | None, dict[str, Any]] = {}
 _registry_lock = threading.Lock()
 
 
+def _attach_company_reviews(db: Database, jobs: list[JobListing]) -> None:
+    """Attach cached company work-quality reviews to jobs for display.
+
+    Reviews are cached per company (not per job), so look each up by company.
+
+    Args:
+        db: Database holding the company-review cache.
+        jobs: Jobs to enrich in place.
+    """
+    from job_scout.models import CompanyReview  # noqa: PLC0415
+
+    cache: dict[str, CompanyReview | None] = {}
+    for job in jobs:
+        key = job.company.lower()
+        if key not in cache:
+            raw = db.get_company_review(job.company, max_age_days=365)
+            cache[key] = CompanyReview.model_validate_json(raw) if raw else None
+        job.company_review = cache[key]
+
+
 class TokenAuthMiddleware(BaseHTTPMiddleware):
     """Middleware to check dashboard token on /api/* requests."""
 
@@ -219,9 +239,11 @@ def create_app() -> FastAPI:
             if not db_path.exists():
                 return []
             db = Database(db_path)
-            return db.get_recent_matches(
+            matches = db.get_recent_matches(
                 limit=limit, min_score=min_score, source=source, sort=sort
             )
+            _attach_company_reviews(db, matches)
+            return matches
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc  # noqa: B904
 

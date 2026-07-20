@@ -234,6 +234,7 @@ class Config(BaseModel):
     prune_enabled: bool = False
     prune_use_browser: bool = False
     prune_use_llm: bool = False
+    verify_matches_open: bool = True
     find_official_sources: bool = True
     company_review_enabled: bool = True
     linkedin_import_allow_url_fetch: bool = False

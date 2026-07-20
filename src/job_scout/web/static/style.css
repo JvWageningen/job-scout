@@ -654,3 +654,53 @@ footer {
     color: #388e3c;
     flex-basis: 100%;
 }
+
+/* Company work-quality review block */
+.company-review {
+    margin: 0.5rem 0;
+    padding: 0.5rem 0.75rem;
+    background: #f5f7fa;
+    border-left: 3px solid #5b8def;
+    border-radius: 4px;
+    font-size: 0.9rem;
+}
+.company-review p {
+    margin: 0.25rem 0;
+}
+.review-confidence {
+    color: #777;
+    font-size: 0.8rem;
+}
+.company-review ul {
+    margin: 0.25rem 0;
+    padding-left: 1.1rem;
+}
+.review-pros li {
+    color: #2e7d32;
+}
+.review-cons li {
+    color: #c62828;
+}
+
+/* Employer-link availability badges */
+.job-links {
+    display: flex;
+    gap: 1rem;
+    align-items: center;
+    flex-wrap: wrap;
+}
+.badge {
+    display: inline-block;
+    padding: 0.1rem 0.45rem;
+    border-radius: 10px;
+    font-size: 0.72rem;
+    font-weight: 600;
+}
+.badge-open {
+    background: #e6f4ea;
+    color: #1e7e34;
+}
+.badge-filled {
+    background: #fdecea;
+    color: #c0392b;
+}
