@@ -10,11 +10,16 @@ import zipfile
 from io import StringIO
 from pathlib import Path
 from time import sleep
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from loguru import logger
 
+from job_scout.evaluator import _extract_json
+from job_scout.llm.base import LLMError
 from job_scout.models import CurrentRoleConflict, CvProfile, CvRole
+
+if TYPE_CHECKING:
+    from job_scout.llm.base import LLMClient
 
 # Legal-form and filler tokens dropped when comparing company names.
 _COMPANY_NOISE_WORDS = frozenset(
@@ -306,6 +311,156 @@ def _fetch_profile_html(profile_url: str, headers: dict[str, str]) -> str:
         "common for automated requests. Use the paste or data-export import "
         "method instead -- they are more reliable and carry no ToS risk."
     )
+
+
+def _build_pdf_prompt(text: str) -> str:
+    """Build the prompt that structures a LinkedIn PDF export.
+
+    Args:
+        text: Text extracted from the "Save to PDF" profile export.
+
+    Returns:
+        Complete prompt string.
+    """
+    return f"""Extract the work history from this LinkedIn profile export.
+Respond ONLY with JSON.
+
+The export lists each role as: company name, then job title, then a date range,
+then a location. Dates may be in Dutch (e.g. "augustus 2024 - Present",
+"maart 2021 - juli 2024"). Convert them to YYYY-MM.
+
+A role that is ongoing ("Present", "Heden", "- heden") MUST have "end_date": null.
+Every other role MUST have a real end_date. At most ONE role may be ongoing.
+
+PROFILE EXPORT:
+{text[:6000]}
+
+Respond with this exact JSON structure:
+{{
+  "skills": ["<skill>"],
+  "education": ["<degree, institution (years)>"],
+  "past_roles": [
+    {{"title": "<job title>", "company": "<company>",
+      "start_date": "YYYY-MM", "end_date": "YYYY-MM or null",
+      "description": null}}
+  ]
+}}"""
+
+
+def parse_linkedin_pdf(pdf_path: str | Path, *, client: LLMClient) -> dict[str, Any]:
+    """Parse a LinkedIn "Save to PDF" profile export into structured data.
+
+    This is the richest safe import path: unlike an anonymous URL fetch, the
+    PDF the account holder downloads of their own profile contains the full
+    work history with real job titles and date ranges, so it can correct a CV
+    whose current role is out of date.
+
+    Args:
+        pdf_path: Path to the downloaded profile PDF.
+        client: LLM client used to structure the extracted text.
+
+    Returns:
+        Dictionary with skills, education, past_roles, and current_company.
+
+    Raises:
+        FileNotFoundError: If the PDF does not exist.
+        ValueError: If no text could be extracted from the PDF.
+    """
+    from job_scout.cv_parser import parse_cv  # noqa: PLC0415
+
+    path = Path(pdf_path)
+    if not path.exists():
+        raise FileNotFoundError(f"LinkedIn PDF not found: {pdf_path}")
+
+    text = parse_cv(path)
+    if not text.strip():
+        raise ValueError(
+            f"No text could be extracted from {pdf_path}. Make sure it is the "
+            'PDF from LinkedIn\'s "Save to PDF" option, not a screenshot.'
+        )
+
+    data: dict[str, Any] = {
+        "skills": [],
+        "education": [],
+        "past_roles": [],
+        "current_company": None,
+    }
+    try:
+        parsed = _extract_json(
+            client.complete(_build_pdf_prompt(text), purpose="cv_parsing")
+        )
+    except (LLMError, json.JSONDecodeError, ValueError) as exc:
+        logger.warning(f"LinkedIn PDF parsing failed: {exc}")
+        return data
+
+    data["skills"] = [
+        str(s).strip() for s in parsed.get("skills") or [] if str(s).strip()
+    ]
+    data["education"] = [
+        str(e).strip() for e in parsed.get("education") or [] if str(e).strip()
+    ]
+    data["past_roles"] = _roles_from_pdf(parsed.get("past_roles"))
+    current = [r for r in data["past_roles"] if not r.get("end_date")]
+    data["current_company"] = current[-1]["company"] if current else None
+    logger.info(
+        f"Parsed LinkedIn PDF: {len(data['past_roles'])} roles, "
+        f"current employer={data['current_company']!r}"
+    )
+    return data
+
+
+def _roles_from_pdf(value: object) -> list[dict[str, Any]]:
+    """Validate roles parsed from a LinkedIn PDF export.
+
+    Guards the "exactly one current role" invariant the export implies: if
+    the model marks several roles ongoing, only the most recent is kept open
+    so downstream code cannot read two employers as current.
+
+    Args:
+        value: Raw "past_roles" value from the LLM response.
+
+    Returns:
+        Validated role dicts, oldest first.
+    """
+    if not isinstance(value, list):
+        return []
+    roles: list[dict[str, Any]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        title, company = item.get("title"), item.get("company")
+        if not title or not company:
+            continue
+        roles.append(
+            CvRole(
+                title=str(title).strip(),
+                company=str(company).strip(),
+                start_date=_opt(item.get("start_date")),
+                end_date=_opt(item.get("end_date")),
+                description=_opt(item.get("description")),
+            ).model_dump()
+        )
+    roles.sort(key=lambda r: r.get("start_date") or "")
+    open_roles = [r for r in roles if not r["end_date"]]
+    for role in open_roles[:-1]:
+        logger.debug(f"Closing extra open role: {role['title']} @ {role['company']}")
+        role["end_date"] = "unknown"
+    return roles
+
+
+def _opt(value: object) -> str | None:
+    """Return a stripped string, or None for empty/null/"null" values.
+
+    Args:
+        value: Raw value from the LLM response.
+
+    Returns:
+        Stripped string, or None.
+    """
+    if value is None:
+        return None
+    text = str(value).strip()
+    return None if not text or text.lower() in ("null", "none", "present") else text
 
 
 def _find_person_ld(html: str) -> dict[str, Any] | None:
@@ -611,6 +766,43 @@ def detect_stale_current_role(
     )
 
 
+def reconcile_current_role(
+    profile: CvProfile, current_company: str | None
+) -> CvProfile:
+    """Ensure only the real current employer has an open-ended role.
+
+    Merging imported history cannot remove a stale role on its own: dedup
+    matches on company *and* title, so a CV saying "Photonics Sales Engineer"
+    and an import saying "Fotonica Sales Engineer" at the same employer are
+    treated as different roles, leaving two jobs looking current at once.
+
+    Args:
+        profile: The merged CV profile.
+        current_company: The employer the person actually works for now.
+
+    Returns:
+        A profile in which at most the current employer's role is open-ended.
+    """
+    if not current_company:
+        return profile
+
+    roles: list[CvRole] = []
+    closed = 0
+    for role in profile.past_roles:
+        is_stale = not role.end_date and not _same_company(
+            role.company, current_company
+        )
+        if is_stale:
+            closed += 1
+            roles.append(role.model_copy(update={"end_date": "unknown"}))
+        else:
+            roles.append(role)
+
+    if closed:
+        logger.info(f"Closed {closed} stale open-ended role(s) vs {current_company}")
+    return profile.model_copy(update={"past_roles": roles})
+
+
 def apply_current_role_correction(
     profile: CvProfile,
     conflict: CurrentRoleConflict,
@@ -657,6 +849,95 @@ def apply_current_role_correction(
     return profile.model_copy(update={"past_roles": roles})
 
 
+def _find_matching_role(roles: list[CvRole], candidate: CvRole) -> int | None:
+    """Locate an existing role describing the same job as *candidate*.
+
+    The same employment shows up worded differently in a CV and a LinkedIn
+    export, so an exact title match is too strict. Two roles are the same job
+    when they are at the same employer and either start in the same month or
+    carry the same title.
+
+    Args:
+        roles: Roles already on the profile.
+        candidate: Imported role to place.
+
+    Returns:
+        Index of the matching role, or None when it is genuinely new.
+    """
+    for idx, role in enumerate(roles):
+        same_start = _same_month(role.start_date, candidate.start_date)
+        same_end = _same_month(role.end_date, candidate.end_date)
+        same_title = role.title.strip().lower() == candidate.title.strip().lower()
+
+        if _same_company(role.company, candidate.company) and (
+            same_start or same_title
+        ):
+            return idx
+        # The same employer is often named differently across sources -- an
+        # acronym here, its expansion (sometimes in another language) there.
+        # Identical start and end months are a strong enough signal on their
+        # own, and a shared distinctive word confirms a matching start.
+        if same_start and (same_end or _shares_company_token(role, candidate)):
+            logger.debug(
+                f"Matched {candidate.title!r} @ {candidate.company!r} to existing "
+                f"{role.title!r} @ {role.company!r} on dates"
+            )
+            return idx
+    return None
+
+
+def _same_month(left: str | None, right: str | None) -> bool:
+    """Return True when two dates name the same year and month.
+
+    Args:
+        left: First date, "YYYY-MM" or longer.
+        right: Second date.
+
+    Returns:
+        True when both are present and share a year-month prefix.
+    """
+    return bool(left and right and left[:7] == right[:7])
+
+
+def _shares_company_token(left: CvRole, right: CvRole) -> bool:
+    """Return True when two company names share a distinctive word.
+
+    Args:
+        left: First role.
+        right: Second role.
+
+    Returns:
+        True when the normalised names share a token of 3+ characters.
+    """
+    a = {w for w in _normalise_company(left.company).split() if len(w) >= 3}
+    b = {w for w in _normalise_company(right.company).split() if len(w) >= 3}
+    return bool(a & b)
+
+
+def _enrich_role(existing: CvRole, imported: CvRole) -> CvRole:
+    """Fill gaps in an existing role from an imported duplicate.
+
+    The import is treated as the more current source for employment *dates*
+    -- that is the whole point of importing it, since a dated CV leaves an
+    old job open-ended. Wording already on the CV is kept.
+
+    Args:
+        existing: Role already on the profile.
+        imported: The matching imported role.
+
+    Returns:
+        The enriched role (unchanged when the import adds nothing).
+    """
+    updates: dict[str, Any] = {}
+    if imported.end_date and existing.end_date != imported.end_date:
+        updates["end_date"] = imported.end_date
+    if imported.start_date and not existing.start_date:
+        updates["start_date"] = imported.start_date
+    if imported.description and not existing.description:
+        updates["description"] = imported.description
+    return existing.model_copy(update=updates) if updates else existing
+
+
 def merge_linkedin_into_profile(
     existing_profile: CvProfile, linkedin_data: dict[str, list[Any]]
 ) -> tuple[CvProfile, dict[str, list[Any]]]:
@@ -677,6 +958,7 @@ def merge_linkedin_into_profile(
         "added_skills": [],
         "added_education": [],
         "added_roles": [],
+        "updated_roles": [],
     }
 
     # Merge skills (add new ones not already present)
@@ -701,20 +983,20 @@ def merge_linkedin_into_profile(
 
     merged_education = existing_profile.education + new_education
 
-    # Merge roles (add new ones not already present by company+title combo)
-    existing_role_keys = {
-        (r.company.lower(), r.title.lower()) for r in existing_profile.past_roles
-    }
-    new_roles: list[CvRole] = []
+    # Merge roles. A CV and a LinkedIn export describe the same job in
+    # different words ("Stagiair" vs "Intern ... Engineer", "Laser 2000
+    # Benelux CV" vs "Laser 2000 Benelux C.V."), so matching titles exactly
+    # would import every role a second time.
+    merged_roles = list(existing_profile.past_roles)
     for role_data in linkedin_data.get("past_roles", []) or []:
         if isinstance(role_data, dict):
             role = CvRole(**role_data)
         else:
             role = cast(CvRole, role_data)
 
-        role_key = (role.company.lower(), role.title.lower())
-        if role_key not in existing_role_keys:
-            new_roles.append(role)
+        match_idx = _find_matching_role(merged_roles, role)
+        if match_idx is None:
+            merged_roles.append(role)
             diff["added_roles"].append(
                 {
                     "title": role.title,
@@ -723,8 +1005,19 @@ def merge_linkedin_into_profile(
                     "end_date": role.end_date,
                 }
             )
+            continue
 
-    merged_roles = existing_profile.past_roles + new_roles
+        updated = _enrich_role(merged_roles[match_idx], role)
+        if updated != merged_roles[match_idx]:
+            merged_roles[match_idx] = updated
+            diff["updated_roles"].append(
+                {
+                    "title": updated.title,
+                    "company": updated.company,
+                    "start_date": updated.start_date,
+                    "end_date": updated.end_date,
+                }
+            )
 
     merged_profile = CvProfile(
         skills=merged_skills,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import tempfile
 import zipfile
 from pathlib import Path
@@ -20,6 +21,8 @@ from job_scout.linkedin_import import (
     compute_linkedin_hash,
     detect_stale_current_role,
     merge_linkedin_into_profile,
+    parse_linkedin_pdf,
+    reconcile_current_role,
 )
 from job_scout.models import CurrentRoleConflict, CvProfile, CvRole
 
@@ -642,3 +645,315 @@ class TestApplyCurrentRoleCorrection:
         apply_current_role_correction(profile, conflict, new_title="Approval Expert")
         assert profile.past_roles[0].end_date is None
         assert len(profile.past_roles) == 1
+
+
+class TestLinkedInPdfImport:
+    """Test parsing the "Save to PDF" profile export."""
+
+    def _client(self, payload: object) -> MagicMock:
+        client = MagicMock()
+        client.complete.return_value = (
+            payload if isinstance(payload, str) else json.dumps(payload)
+        )
+        return client
+
+    def _payload(self) -> dict[str, object]:
+        return {
+            "skills": ["Meet- en regeltechniek"],
+            "education": ["BSc Applied Physics, THUAS (2014 - 2018)"],
+            "past_roles": [
+                {
+                    "title": "Fotonica Sales Engineer",
+                    "company": "Laser 2000 Benelux CV",
+                    "start_date": "2021-03",
+                    "end_date": "2024-07",
+                },
+                {
+                    "title": "Approval Expert",
+                    "company": "NMi, Netherlands Measurement Institute",
+                    "start_date": "2024-08",
+                    "end_date": None,
+                },
+            ],
+        }
+
+    def test_missing_file_raises(self) -> None:
+        """A missing PDF is reported clearly."""
+        with pytest.raises(FileNotFoundError):
+            parse_linkedin_pdf("/nonexistent/Profile.pdf", client=MagicMock())
+
+    def test_unreadable_pdf_raises_actionable_error(self, tmp_path: Path) -> None:
+        """A PDF with no extractable text explains what to download instead."""
+        pdf = tmp_path / "Profile.pdf"
+        pdf.write_bytes(b"not a real pdf")
+        with (
+            patch("job_scout.cv_parser.parse_cv", return_value=""),
+            pytest.raises(ValueError, match="Save to PDF"),
+        ):
+            parse_linkedin_pdf(pdf, client=MagicMock())
+
+    def test_extracts_roles_with_dates(self, tmp_path: Path) -> None:
+        """Full work history is recovered, unlike the URL-fetch path."""
+        pdf = tmp_path / "Profile.pdf"
+        pdf.write_bytes(b"x")
+        with patch("job_scout.cv_parser.parse_cv", return_value="Ervaring ..."):
+            data = parse_linkedin_pdf(pdf, client=self._client(self._payload()))
+        assert len(data["past_roles"]) == 2
+        assert data["past_roles"][0]["end_date"] == "2024-07"
+
+    def test_identifies_the_current_employer(self, tmp_path: Path) -> None:
+        """The open-ended role determines the current employer."""
+        pdf = tmp_path / "Profile.pdf"
+        pdf.write_bytes(b"x")
+        with patch("job_scout.cv_parser.parse_cv", return_value="Ervaring ..."):
+            data = parse_linkedin_pdf(pdf, client=self._client(self._payload()))
+        assert data["current_company"] == "NMi, Netherlands Measurement Institute"
+
+    def test_only_one_role_stays_open(self, tmp_path: Path) -> None:
+        """Several ongoing roles would make two employers look current."""
+        payload = self._payload()
+        payload["past_roles"][0]["end_date"] = None  # type: ignore[index]
+        pdf = tmp_path / "Profile.pdf"
+        pdf.write_bytes(b"x")
+        with patch("job_scout.cv_parser.parse_cv", return_value="Ervaring ..."):
+            data = parse_linkedin_pdf(pdf, client=self._client(payload))
+        assert sum(1 for r in data["past_roles"] if not r["end_date"]) == 1
+
+    def test_roles_are_ordered_oldest_first(self, tmp_path: Path) -> None:
+        """Ordering makes the newest role the current one."""
+        pdf = tmp_path / "Profile.pdf"
+        pdf.write_bytes(b"x")
+        with patch("job_scout.cv_parser.parse_cv", return_value="Ervaring ..."):
+            data = parse_linkedin_pdf(pdf, client=self._client(self._payload()))
+        starts = [r["start_date"] for r in data["past_roles"]]
+        assert starts == sorted(starts)
+
+    def test_llm_failure_returns_empty_not_raise(self, tmp_path: Path) -> None:
+        """A failed parse degrades gracefully instead of crashing the import."""
+        pdf = tmp_path / "Profile.pdf"
+        pdf.write_bytes(b"x")
+        with patch("job_scout.cv_parser.parse_cv", return_value="Ervaring ..."):
+            data = parse_linkedin_pdf(pdf, client=self._client("not json"))
+        assert data["past_roles"] == []
+        assert data["current_company"] is None
+
+    def test_pdf_output_detects_the_stale_cv_role(self, tmp_path: Path) -> None:
+        """End to end: the PDF's employer flags a CV that is out of date."""
+        pdf = tmp_path / "Profile.pdf"
+        pdf.write_bytes(b"x")
+        with patch("job_scout.cv_parser.parse_cv", return_value="Ervaring ..."):
+            data = parse_linkedin_pdf(pdf, client=self._client(self._payload()))
+        stale_cv = CvProfile(
+            past_roles=[
+                CvRole(
+                    title="Photonics Sales Engineer",
+                    company="Laser 2000 Benelux C.V.",
+                    start_date="2021-03",
+                    end_date=None,
+                )
+            ]
+        )
+        conflict = detect_stale_current_role(stale_cv, data["current_company"])
+        assert conflict is not None
+        assert conflict.cv_current_company == "Laser 2000 Benelux C.V."
+
+
+class TestReconcileCurrentRole:
+    """Only the real current employer may keep an open-ended role."""
+
+    def test_closes_stale_role_with_a_different_title(self) -> None:
+        """A near-miss title at the same old employer is still closed.
+
+        Merging dedups on company+title, so "Photonics Sales Engineer" and
+        "Fotonica Sales Engineer" survive as separate roles; without this,
+        two employers would look current at once.
+        """
+        profile = CvProfile(
+            past_roles=[
+                CvRole(
+                    title="Photonics Sales Engineer",
+                    company="Laser 2000 Benelux C.V.",
+                    end_date=None,
+                ),
+                CvRole(
+                    title="Approval Expert",
+                    company="NMi, Netherlands Measurement Institute",
+                    end_date=None,
+                ),
+            ]
+        )
+        fixed = reconcile_current_role(
+            profile, "NMi, Netherlands Measurement Institute"
+        )
+        open_roles = [r for r in fixed.past_roles if not r.end_date]
+        assert len(open_roles) == 1
+        assert open_roles[0].company == "NMi, Netherlands Measurement Institute"
+
+    def test_leaves_the_current_employer_open(self) -> None:
+        """The genuine current role keeps its open end date."""
+        profile = CvProfile(
+            past_roles=[CvRole(title="Approval Expert", company="NMi", end_date=None)]
+        )
+        fixed = reconcile_current_role(profile, "NMi")
+        assert fixed.past_roles[0].end_date is None
+
+    def test_no_current_company_is_a_no_op(self) -> None:
+        """Without a known employer nothing is closed."""
+        profile = CvProfile(past_roles=[CvRole(title="X", company="Y", end_date=None)])
+        assert reconcile_current_role(profile, None).past_roles[0].end_date is None
+
+    def test_does_not_reopen_closed_roles(self) -> None:
+        """Already-closed roles keep their end dates."""
+        profile = CvProfile(
+            past_roles=[CvRole(title="X", company="Old", end_date="2020-01")]
+        )
+        fixed = reconcile_current_role(profile, "NMi")
+        assert fixed.past_roles[0].end_date == "2020-01"
+
+    def test_does_not_mutate_the_input(self) -> None:
+        """Reconciliation returns a new profile."""
+        profile = CvProfile(
+            past_roles=[CvRole(title="X", company="Old", end_date=None)]
+        )
+        reconcile_current_role(profile, "NMi")
+        assert profile.past_roles[0].end_date is None
+
+
+class TestRoleMatchingAcrossSources:
+    """A CV and a LinkedIn export word the same job differently."""
+
+    def _cv(self) -> CvProfile:
+        return CvProfile(
+            past_roles=[
+                CvRole(
+                    title="Intern System and Control Engineer",
+                    company="NLR (Dutch Aerospace Center)",
+                    start_date="2017-02",
+                    end_date="2017-07",
+                ),
+                CvRole(
+                    title="Photonics Sales Engineer",
+                    company="Laser 2000 Benelux C.V.",
+                    start_date="2021-03",
+                    end_date=None,
+                ),
+            ]
+        )
+
+    def test_matches_translated_title_at_same_employer(self) -> None:
+        """ "Stagiair" and "Intern ... Engineer" at NLR are one job."""
+        imported = {
+            "past_roles": [
+                {
+                    "title": "Stagiair",
+                    "company": "NLR - Netherlands Aerospace Centre",
+                    "start_date": "2017-02",
+                    "end_date": "2017-06",
+                }
+            ]
+        }
+        merged, diff = merge_linkedin_into_profile(self._cv(), imported)
+        assert diff["added_roles"] == []
+        assert len(merged.past_roles) == 2
+
+    def test_matches_company_named_in_another_language(self) -> None:
+        """Identical start and end months identify the same role."""
+        cv = CvProfile(
+            past_roles=[
+                CvRole(
+                    title="Application Engineer",
+                    company="NLR (Dutch Aerospace Center)",
+                    start_date="2019-11",
+                    end_date="2020-02",
+                )
+            ]
+        )
+        imported = {
+            "past_roles": [
+                {
+                    "title": "Application Engineer",
+                    "company": "Nederlands Lucht- en Ruimtevaartcentrum",
+                    "start_date": "2019-11",
+                    "end_date": "2020-02",
+                }
+            ]
+        }
+        merged, diff = merge_linkedin_into_profile(cv, imported)
+        assert diff["added_roles"] == []
+        assert len(merged.past_roles) == 1
+
+    def test_corrects_a_stale_open_role_instead_of_duplicating(self) -> None:
+        """The import closes the old role rather than adding a near-copy."""
+        imported = {
+            "past_roles": [
+                {
+                    "title": "Fotonica Sales Engineer",
+                    "company": "Laser 2000 Benelux CV",
+                    "start_date": "2021-03",
+                    "end_date": "2024-07",
+                }
+            ]
+        }
+        merged, diff = merge_linkedin_into_profile(self._cv(), imported)
+        assert diff["added_roles"] == []
+        assert len(diff["updated_roles"]) == 1
+        laser = next(r for r in merged.past_roles if "Laser" in r.company)
+        assert laser.end_date == "2024-07"
+
+    def test_genuinely_new_role_is_still_added(self) -> None:
+        """Matching must not swallow real new employment."""
+        imported = {
+            "past_roles": [
+                {
+                    "title": "Approval Expert",
+                    "company": "NMi",
+                    "start_date": "2024-08",
+                    "end_date": None,
+                }
+            ]
+        }
+        merged, diff = merge_linkedin_into_profile(self._cv(), imported)
+        assert len(diff["added_roles"]) == 1
+        assert len(merged.past_roles) == 3
+
+    def test_different_jobs_at_different_times_stay_separate(self) -> None:
+        """Unrelated roles are not merged just because titles are generic."""
+        cv = CvProfile(
+            past_roles=[
+                CvRole(
+                    title="Engineer",
+                    company="Alpha",
+                    start_date="2015-01",
+                    end_date="2016-01",
+                )
+            ]
+        )
+        imported = {
+            "past_roles": [
+                {
+                    "title": "Engineer",
+                    "company": "Beta",
+                    "start_date": "2020-01",
+                    "end_date": "2021-01",
+                }
+            ]
+        }
+        merged, diff = merge_linkedin_into_profile(cv, imported)
+        assert len(diff["added_roles"]) == 1
+        assert len(merged.past_roles) == 2
+
+    def test_existing_wording_is_preserved(self) -> None:
+        """Only dates are taken from the import; CV wording is kept."""
+        imported = {
+            "past_roles": [
+                {
+                    "title": "Fotonica Sales Engineer",
+                    "company": "Laser 2000 Benelux CV",
+                    "start_date": "2021-03",
+                    "end_date": "2024-07",
+                }
+            ]
+        }
+        merged, _ = merge_linkedin_into_profile(self._cv(), imported)
+        laser = next(r for r in merged.past_roles if "Laser" in r.company)
+        assert laser.title == "Photonics Sales Engineer"
