@@ -106,8 +106,11 @@ def parse_cv_structured(raw_text: str, client: LLMClient) -> CvProfile:
         "start_date (YYYY-MM or similar), "
         "end_date (YYYY-MM or similar, or null if current), "
         "description (optional).\n"
+        "education should be a list of plain strings, e.g. "
+        '"BSc Computer Science, TU Delft (2014-2018)".\n'
         'Example: {"skills": ["Python"], "years_experience": 5, '
-        '"education": [], "past_roles": '
+        '"education": ["BSc Computer Science, TU Delft (2014-2018)"], '
+        '"past_roles": '
         '[{"title": "Engineer", "company": "TechCorp", '
         '"start_date": "2020-01", "end_date": null, '
         '"description": null}]}'
@@ -138,10 +141,12 @@ def parse_cv_structured(raw_text: str, client: LLMClient) -> CvProfile:
             past_roles.append(role)
 
     # Validate and construct CvProfile
+    skills_data = cast(list[Any], data.get("skills", []) or [])
+    education_data = cast(list[Any], data.get("education", []) or [])
     profile = CvProfile(
-        skills=data.get("skills", []) or [],
+        skills=[str(s) for s in skills_data if str(s).strip()],
         years_experience=data.get("years_experience"),
-        education=data.get("education", []) or [],
+        education=_normalise_education(education_data),
         past_roles=past_roles,
     )
 
@@ -150,6 +155,54 @@ def parse_cv_structured(raw_text: str, client: LLMClient) -> CvProfile:
         f"{len(profile.past_roles)} roles"
     )
     return profile
+
+
+def _normalise_education(entries: list[Any]) -> list[str]:
+    """Flatten education entries into display strings.
+
+    The LLM sometimes returns education as objects (institution/degree/dates)
+    rather than the requested strings, which would fail CvProfile validation.
+    Mirrors the backward-compatible handling already applied to past_roles.
+
+    Args:
+        entries: Raw education values from the LLM response.
+
+    Returns:
+        List of non-empty display strings.
+    """
+    normalised: list[str] = []
+    for entry in entries:
+        if isinstance(entry, dict):
+            label = _format_education_dict(entry)
+        else:
+            label = str(entry).strip()
+        if label:
+            normalised.append(label)
+    return normalised
+
+
+def _format_education_dict(entry: dict[str, Any]) -> str:
+    """Render an education object as "Degree, Institution (start-end)".
+
+    Args:
+        entry: Education object from the LLM response.
+
+    Returns:
+        Display string, empty when no usable fields are present.
+    """
+    institution = str(
+        entry.get("institution") or entry.get("school") or entry.get("name") or ""
+    ).strip()
+    degree = str(entry.get("degree") or entry.get("qualification") or "").strip()
+    start = str(entry.get("start_date") or "").strip()
+    end = str(entry.get("end_date") or "").strip()
+
+    label = ", ".join(part for part in (degree, institution) if part)
+    if not label:
+        return ""
+    if start or end:
+        label += f" ({start or '?'}-{end or 'present'})"
+    return label
 
 
 def compute_cv_hash(raw_text: str) -> str:

@@ -353,7 +353,7 @@ def set_config_value(key: str, value: str, *, user: str | None = None) -> None:
         )
     if user is None:
         global_data = load_global_config()
-        default_val = Config.model_fields[key].default
+        default_val = _field_default(key)
         existing_val = global_data.get(key, default_val)
         global_data[key] = _coerce_value(existing_val, value)
         write_global_config(global_data)
@@ -364,7 +364,7 @@ def set_config_value(key: str, value: str, *, user: str | None = None) -> None:
             f"Omit --user to set it globally."
         )
     user_data = load_user_config(user)
-    default_val = Config.model_fields[key].default
+    default_val = _field_default(key)
     existing_val = user_data.get(key, default_val)
     user_data[key] = _coerce_value(existing_val, value)
     save_user_config(user, user_data)
@@ -407,6 +407,22 @@ def apply_user_init(name: str, fields: dict[str, Any]) -> None:
         update_secrets(secret_data)
 
     logger.info(f"User '{name}' initialized")
+
+
+def _field_default(key: str) -> object:
+    """Return a Config field's default, resolving default_factory fields.
+
+    FieldInfo.default is PydanticUndefined for fields declared with
+    default_factory (every list field here), which would leave _coerce_value
+    unable to detect the target type and silently store a raw string.
+
+    Args:
+        key: Config field name.
+
+    Returns:
+        The field's default value.
+    """
+    return Config.model_fields[key].get_default(call_default_factory=True)
 
 
 def _coerce_value(existing_val: object, raw: str) -> object:

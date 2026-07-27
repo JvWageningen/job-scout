@@ -151,3 +151,70 @@ def test_save_config_creates_parent_directory(
     cfg_module.save_config(Config())
 
     assert (deep_dir / "config.yaml").exists()
+
+
+def test_set_config_value_list_field_from_json(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A JSON list is stored as a real list, not a raw string.
+
+    Regression test: list fields use default_factory, whose FieldInfo.default
+    is PydanticUndefined. Reading .default directly made _coerce_value store
+    the raw JSON text, which then failed Config validation on every later load.
+    """
+    monkeypatch.setenv("JOB_SCOUT_DATA_DIR", str(tmp_path))
+
+    import importlib
+
+    import job_scout.config as cfg_module
+
+    importlib.reload(cfg_module)
+    cfg_module.save_config(Config())
+    cfg_module.set_config_value("jobspy_sites", '["indeed", "linkedin", "google"]')
+
+    raw = cfg_module.load_global_config()
+    assert raw["jobspy_sites"] == ["indeed", "linkedin", "google"]
+    assert cfg_module.load_config().jobspy_sites == ["indeed", "linkedin", "google"]
+
+
+def test_set_config_value_list_field_from_csv(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A comma-separated string is split into a list for list fields."""
+    monkeypatch.setenv("JOB_SCOUT_DATA_DIR", str(tmp_path))
+
+    import importlib
+
+    import job_scout.config as cfg_module
+
+    importlib.reload(cfg_module)
+    cfg_module.save_config(Config())
+    cfg_module.set_config_value("keywords_dutch", "ontwikkelaar, analist")
+
+    assert cfg_module.load_config().keywords_dutch == ["ontwikkelaar", "analist"]
+
+
+def test_set_user_config_list_field_stays_loadable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A per-user list field round-trips so the effective config still loads."""
+    monkeypatch.setenv("JOB_SCOUT_DATA_DIR", str(tmp_path))
+
+    import importlib
+
+    import job_scout.config as cfg_module
+
+    importlib.reload(cfg_module)
+    cfg_module.apply_user_init("tester", {"name": "tester"})
+    cfg_module.set_config_value("jobspy_sites", '["indeed", "google"]', user="tester")
+
+    effective = cfg_module.build_effective_config("tester")
+    assert effective.jobspy_sites == ["indeed", "google"]
+
+
+def test_field_default_resolves_default_factory() -> None:
+    """_field_default returns a real list for default_factory fields."""
+    from job_scout.config import _field_default
+
+    assert _field_default("jobspy_sites") == ["indeed", "linkedin"]
+    assert _field_default("keywords_dutch") == []

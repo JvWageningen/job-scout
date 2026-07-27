@@ -177,3 +177,79 @@ def test_compute_cv_hash() -> None:
     assert hash1 == hash2
     assert hash1 != hash3
     assert len(hash1) == 64  # SHA256 hex is 64 chars
+
+
+def test_normalise_education_accepts_dict_entries() -> None:
+    """Education objects from the LLM are flattened, not rejected.
+
+    Regression test: CvProfile.education is list[str], so dict entries raised
+    a ValidationError and broke CV parsing entirely.
+    """
+    from job_scout.cv_parser import _normalise_education
+
+    result = _normalise_education(
+        [
+            {
+                "institution": "Delft University of Technology",
+                "degree": "MSc",
+                "start_date": "2018",
+                "end_date": "2019",
+            }
+        ]
+    )
+    assert result == ["MSc, Delft University of Technology (2018-2019)"]
+
+
+def test_normalise_education_accepts_plain_strings() -> None:
+    """Plain string entries pass through unchanged."""
+    from job_scout.cv_parser import _normalise_education
+
+    assert _normalise_education(["BSc, TU Delft (2014-2018)"]) == [
+        "BSc, TU Delft (2014-2018)"
+    ]
+
+
+def test_normalise_education_handles_partial_dicts() -> None:
+    """Missing degree or dates still yield a usable label."""
+    from job_scout.cv_parser import _normalise_education
+
+    assert _normalise_education([{"institution": "TU Delft"}]) == ["TU Delft"]
+    assert _normalise_education([{"school": "MIT", "start_date": "2020"}]) == [
+        "MIT (2020-present)"
+    ]
+
+
+def test_normalise_education_drops_unusable_entries() -> None:
+    """Entries with no usable fields are skipped rather than emitted blank."""
+    from job_scout.cv_parser import _normalise_education
+
+    assert _normalise_education([{}, "", {"degree": ""}]) == []
+
+
+def test_parse_cv_structured_survives_dict_education() -> None:
+    """End-to-end: a response with dict education parses instead of raising."""
+    import json
+
+    from job_scout.cv_parser import parse_cv_structured
+
+    class StubClient:
+        def complete(self, prompt: str, *, purpose: str = "") -> str:
+            return json.dumps(
+                {
+                    "skills": ["Python"],
+                    "years_experience": 5,
+                    "education": [
+                        {
+                            "institution": "TU Delft",
+                            "degree": "MSc",
+                            "start_date": "2018",
+                            "end_date": "2019",
+                        }
+                    ],
+                    "past_roles": [],
+                }
+            )
+
+    profile = parse_cv_structured("some cv text", StubClient())
+    assert profile.education == ["MSc, TU Delft (2018-2019)"]
+    assert profile.skills == ["Python"]
