@@ -32,7 +32,12 @@ def scrape_all_jobs(
     Returns:
         Deduplicated list of JobListing instances.
     """
-    keywords = config.keywords_dutch + config.keywords_english
+    from job_scout.tracks import merged_keywords  # noqa: PLC0415
+
+    # With several career tracks, keywords are unioned and interleaved so the
+    # per-source keyword limits still cover every track.
+    kw_dutch, kw_english = merged_keywords(config)
+    keywords = kw_dutch + kw_english
     if not keywords:
         logger.warning("No keywords configured. Run 'job-scout keywords refresh'.")
         keywords = ["software developer", "data analyst"]
@@ -47,7 +52,7 @@ def scrape_all_jobs(
         tasks.append((_scrape_jobspy_with_rate_limit, (kw, config)))
 
     # Add nvb scraping tasks (limit based on nvb_keyword_limit)
-    for kw in config.keywords_dutch[: config.nvb_keyword_limit]:
+    for kw in kw_dutch[: config.nvb_keyword_limit]:
         tasks.append((_scrape_nvb_with_rate_limit, (kw, config.max_jobs_per_source)))
 
     # Add custom sites scraping tasks

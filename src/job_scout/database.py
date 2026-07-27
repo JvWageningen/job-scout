@@ -16,6 +16,7 @@ from job_scout.models import (
     JobStatus,
     RunHistoryEntry,
     RunStats,
+    TrackScore,
     TravelTime,
 )
 
@@ -33,6 +34,45 @@ def _dedup_key(title: str, company: str) -> str:
     title_norm = " ".join(title.lower().split())
     company_norm = " ".join(company.lower().split())
     return f"{title_norm}||{company_norm}"
+
+
+def _dump_track_scores(scores: list[TrackScore]) -> str | None:
+    """Serialise per-track scores for storage.
+
+    Args:
+        scores: Per-track scores to store.
+
+    Returns:
+        A JSON string, or None when there is nothing to store (the
+        single-profile case), keeping existing rows untouched.
+    """
+    if not scores:
+        return None
+    return json.dumps([s.model_dump() for s in scores])
+
+
+def _parse_track_scores(raw: object) -> list[TrackScore]:
+    """Deserialise per-track scores stored as JSON, tolerating bad data.
+
+    Args:
+        raw: The stored track_scores_json value.
+
+    Returns:
+        Parsed TrackScore entries, empty when absent or unparseable.
+    """
+    if not isinstance(raw, str) or not raw.strip():
+        return []
+    try:
+        items = json.loads(raw)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(items, list):
+        return []
+    scores: list[TrackScore] = []
+    for item in items:
+        if isinstance(item, dict) and item.get("track_id"):
+            scores.append(TrackScore(**item))
+    return scores
 
 
 class Database:
@@ -115,6 +155,9 @@ class Database:
                 ("official_url", "TEXT"),
                 ("official_available", "INTEGER"),
                 ("official_checked_at", "TEXT"),
+                ("primary_track_id", "TEXT"),
+                ("primary_track_name", "TEXT"),
+                ("track_scores_json", "TEXT"),
             ]:
                 with contextlib.suppress(sqlite3.OperationalError):
                     conn.execute(f"ALTER TABLE jobs ADD COLUMN {col} {typedef}")
@@ -380,6 +423,9 @@ class Database:
             job.status.value,
             int(job.location_unknown),
             _dedup_key(job.title, job.company),
+            job.primary_track_id,
+            job.primary_track_name,
+            _dump_track_scores(job.track_scores),
         )
         with self._conn() as conn:
             if update_existing:
@@ -391,8 +437,9 @@ class Database:
                        salary_min, salary_max, salary_period, vacation_days,
                        compensation_reasoning,
                        distance_km, travel_times_json, notified, notification_pending,
-                       seen_at, status, location_unknown, dedup_key)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                       seen_at, status, location_unknown, dedup_key,
+                       primary_track_id, primary_track_name, track_scores_json)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                     ON CONFLICT(url) DO UPDATE SET
                       fit_score=excluded.fit_score,
                       fit_reasoning=excluded.fit_reasoning,
@@ -408,7 +455,10 @@ class Database:
                       status=CASE WHEN jobs.status IN ('new', 'matched', 'rejected')
                                THEN excluded.status ELSE jobs.status END,
                       notified=excluded.notified,
-                      notification_pending=excluded.notification_pending
+                      notification_pending=excluded.notification_pending,
+                      primary_track_id=excluded.primary_track_id,
+                      primary_track_name=excluded.primary_track_name,
+                      track_scores_json=excluded.track_scores_json
                     RETURNING id
                     """,
                     params,
@@ -423,8 +473,9 @@ class Database:
                    salary_min, salary_max, salary_period, vacation_days,
                    compensation_reasoning,
                    distance_km, travel_times_json, notified, notification_pending,
-                   seen_at, status, location_unknown, dedup_key)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                   seen_at, status, location_unknown, dedup_key,
+                   primary_track_id, primary_track_name, track_scores_json)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 params,
             )
@@ -478,6 +529,9 @@ class Database:
                 job.status.value,
                 int(job.location_unknown),
                 _dedup_key(job.title, job.company),
+                job.primary_track_id,
+                job.primary_track_name,
+                _dump_track_scores(job.track_scores),
             )
             all_params.append(params)
 
@@ -491,8 +545,9 @@ class Database:
                        salary_min, salary_max, salary_period, vacation_days,
                        compensation_reasoning,
                        distance_km, travel_times_json, notified, notification_pending,
-                       seen_at, status, location_unknown, dedup_key)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                       seen_at, status, location_unknown, dedup_key,
+                       primary_track_id, primary_track_name, track_scores_json)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                     ON CONFLICT(url) DO UPDATE SET
                       fit_score=excluded.fit_score,
                       fit_reasoning=excluded.fit_reasoning,
@@ -508,7 +563,10 @@ class Database:
                       status=CASE WHEN jobs.status IN ('new', 'matched', 'rejected')
                                THEN excluded.status ELSE jobs.status END,
                       notified=excluded.notified,
-                      notification_pending=excluded.notification_pending
+                      notification_pending=excluded.notification_pending,
+                      primary_track_id=excluded.primary_track_id,
+                      primary_track_name=excluded.primary_track_name,
+                      track_scores_json=excluded.track_scores_json
                     RETURNING id
                     """
                 for params in all_params:
@@ -523,8 +581,9 @@ class Database:
                        salary_min, salary_max, salary_period, vacation_days,
                        compensation_reasoning,
                        distance_km, travel_times_json, notified, notification_pending,
-                       seen_at, status, location_unknown, dedup_key)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                       seen_at, status, location_unknown, dedup_key,
+                       primary_track_id, primary_track_name, track_scores_json)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                     """
                 for params in all_params:
                     cursor = conn.execute(sql, params)
@@ -736,6 +795,9 @@ class Database:
                 if raw.get("official_available") is not None
                 else None
             ),
+            primary_track_id=raw.get("primary_track_id"),
+            primary_track_name=raw.get("primary_track_name"),
+            track_scores=_parse_track_scores(raw.get("track_scores_json")),
         )
 
     def log_stats(self) -> dict[str, int]:

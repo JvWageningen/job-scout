@@ -184,6 +184,112 @@ Respond with: {{"fit_score": <integer 0-100>}}
 fit_score: 0=irrelevant, 40-59=partial match, 60-79=good fit, 80-100=strong match."""
 
 
+def _build_multi_track_prompt(
+    job: JobListing, tracks: list[tuple[str, str]], cv_text: str
+) -> str:
+    """Build one prompt scoring a job against every track at once.
+
+    Scoring each track in its own call would re-send the job description
+    every time, which is the bulk of the tokens. Track descriptions are
+    short, so asking for all scores in a single call keeps quick evaluation
+    at one request per job no matter how many tracks a user has.
+
+    Args:
+        job: The job listing to evaluate.
+        tracks: (track_id, description) pairs to score against.
+        cv_text: Extracted text from the candidate's CV.
+
+    Returns:
+        Complete prompt string.
+    """
+    job_text = (
+        f"Title: {job.title}\n"
+        f"Company: {job.company}\n"
+        f"Location: {job.location or 'Not specified'}\n"
+        f"Description:\n{(job.description or '')[:1000]}"
+    )
+    listed = "\n".join(
+        f'- id "{tid}": {desc[:400]}' for tid, desc in tracks if desc.strip()
+    )
+    keys = ", ".join(f'"{tid}": <0-100>' for tid, _ in tracks)
+    return f"""The candidate is open to several different kinds of role. Score \
+this ONE job against EACH direction separately. Respond ONLY with JSON.
+
+DIRECTIONS THE CANDIDATE IS CONSIDERING:
+{listed}
+
+CV (excerpt):
+{cv_text[:600]}
+
+JOB:
+{job_text}
+
+Score each direction independently -- a job that fits one direction well \
+should score high for it even if it is irrelevant to the others.
+0=irrelevant, 40-59=partial match, 60-79=good fit, 80-100=strong match.
+
+Respond with: {{"scores": {{{keys}}}}}"""
+
+
+def quick_evaluate_tracks(
+    job: JobListing,
+    tracks: list[tuple[str, str]],
+    cv_text: str,
+    *,
+    client: LLMClient | None = None,
+) -> dict[str, int | None]:
+    """Score a job against several tracks in a single LLM call.
+
+    Args:
+        job: Job listing to evaluate.
+        tracks: (track_id, effective description) pairs to score against.
+        cv_text: Extracted text from the candidate's CV.
+        client: LLM client to use; if None, one is built from config.
+
+    Returns:
+        Mapping of track_id to fit score. Values are ``None`` when the job
+        could not be scored (transient LLM error or unparseable response),
+        letting the caller fail *open* and pass the job through to full
+        evaluation rather than silently dropping it.
+    """
+    from job_scout.config import load_llm_config  # noqa: PLC0415
+
+    if not tracks:
+        return {}
+    if client is None:
+        client = get_llm_client(load_llm_config())
+
+    prompt = _build_multi_track_prompt(job, tracks, cv_text)
+    try:
+        data = _extract_json(client.complete(prompt, purpose="quick_eval"))
+        raw = data.get("scores")
+        scores = raw if isinstance(raw, dict) else {}
+        return {tid: _coerce_track_score(scores.get(tid)) for tid, _ in tracks}
+    except (json.JSONDecodeError, LLMError, ValueError) as exc:
+        logger.warning(
+            f"Multi-track quick eval failed for {job.title!r}: {exc} — "
+            "passing through to full evaluation"
+        )
+        return {tid: None for tid, _ in tracks}
+
+
+def _coerce_track_score(value: object) -> int | None:
+    """Clamp a raw per-track score into 0-100, or None when unusable.
+
+    Args:
+        value: Raw score from the LLM response.
+
+    Returns:
+        An int in [0, 100], or None.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        return None
+    try:
+        return max(0, min(100, int(float(value))))
+    except (TypeError, ValueError):
+        return None
+
+
 def quick_evaluate_fit(
     job: JobListing,
     profile: str,

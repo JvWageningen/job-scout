@@ -151,7 +151,12 @@ def screen_job_titles(
     if not jobs:
         return [], 0
 
-    if not config.profile_description:
+    from job_scout.tracks import merged_profile  # noqa: PLC0415
+
+    # Screening only asks "is this plausibly interesting for ANY direction?",
+    # so it runs once against the union of tracks rather than once per track.
+    screening_profile = merged_profile(config)
+    if not screening_profile:
         logger.warning("No profile — skipping title screening")
         return jobs, 0
 
@@ -180,7 +185,7 @@ def screen_job_titles(
                 _screen_batch_parallel,
                 (
                     batch,
-                    config.profile_description,
+                    screening_profile,
                     config.negative_description,
                     client,
                 ),

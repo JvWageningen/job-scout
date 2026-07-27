@@ -35,16 +35,19 @@ from job_scout.evaluator import (
     evaluate_fit,
     generate_keywords,
     quick_evaluate_fit,
+    quick_evaluate_tracks,
 )
 from job_scout.llm.base import LLMClient, LLMError
 from job_scout.llm.factory import get_llm_client
 from job_scout.models import (
+    CareerTrack,
     CompanyReview,
     Config,
     JobListing,
     JobStatus,
     PersonSearchResult,
     RunStats,
+    TrackScore,
 )
 from job_scout.notify import NotificationError, get_notifier
 from job_scout.salary import extract_salary_range
@@ -56,6 +59,12 @@ from job_scout.scheduler import (
 from job_scout.scraper import scrape_all_jobs
 from job_scout.title_filter import filter_jobs_by_title
 from job_scout.title_screener import screen_job_titles
+from job_scout.tracks import (
+    blend_tracks,
+    effective_description,
+    effective_negative,
+    standalone_tracks,
+)
 from job_scout.travel import calculate_travel_times, is_within_travel_limits
 
 
@@ -157,6 +166,28 @@ def _require_single_user(user_name: str | None) -> str:
     sys.exit(1)
 
 
+def _track_for_job(job: JobListing, config: Config) -> CareerTrack:
+    """Return the career track a job should be evaluated against.
+
+    Quick evaluation records the best-scoring track, so full evaluation
+    reuses it rather than re-scoring every track. Falls back to the first
+    standalone track when quick-eval was skipped or indeterminate.
+
+    Args:
+        job: Job whose track attribution is being resolved.
+        config: Application configuration.
+
+    Returns:
+        The track to evaluate this job against.
+    """
+    tracks = standalone_tracks(config)
+    if job.primary_track_id:
+        for track in tracks:
+            if track.id == job.primary_track_id:
+                return track
+    return tracks[0]
+
+
 def _evaluate_job(
     job: JobListing, config: Config, cv_text: str, client: LLMClient
 ) -> bool:
@@ -171,13 +202,17 @@ def _evaluate_job(
     Returns:
         True if the job passes fit, negative, and compensation filters.
     """
+    track = _track_for_job(job, config)
+    blends = blend_tracks(config)
     fit, neg, comp = evaluate_fit(
         job,
-        config.profile_description,
+        effective_description(track, blends),
         cv_text,
-        config.negative_description,
+        effective_negative(track, config),
         client=client,
     )
+    job.primary_track_id = track.id
+    job.primary_track_name = track.name
     job.fit_score = fit.fit_score
     job.fit_reasoning = fit.reasoning
     job.negative_match = neg.matches_negative
@@ -396,28 +431,58 @@ def _process_jobs(
 
 
 def _eval_job_quick_parallel(
-    args: tuple[JobListing, str, str, LLMClient, Database],
+    args: tuple[JobListing, Config, str, LLMClient, Database],
 ) -> tuple[JobListing, int | None]:
     """Evaluate a single job's fit score for parallel execution.
 
-    Checks database cache first before calling LLM.
+    Checks database cache first before calling LLM. With several career
+    tracks configured, all tracks are scored in one call and the job's best
+    track is recorded; the returned score is that best score.
 
     Args:
-        args: Tuple of (job, profile_desc, cv_text, llm_client, db).
+        args: Tuple of (job, config, cv_text, llm_client, db).
 
     Returns:
         Tuple of (job, fit_score). The score is ``None`` when quick-eval could
         not score the job (transient LLM error), signalling the caller to fail
         open and pass it through to full evaluation.
     """
-    job, profile_desc, cv_text, llm_client, db = args
+    job, config, cv_text, llm_client, db = args
     # Check cache first
     cached_score, _ = db.get_cached_evaluation(job)
     if cached_score is not None:
         logger.info(f"Using cached quick-eval score ({cached_score}): {job.title}")
         return job, cached_score
-    score = quick_evaluate_fit(job, profile_desc, cv_text, client=llm_client)
-    return job, score
+
+    tracks = standalone_tracks(config)
+    blends = blend_tracks(config)
+    if len(tracks) == 1 and not blends:
+        score = quick_evaluate_fit(
+            job, tracks[0].description, cv_text, client=llm_client
+        )
+        return job, score
+
+    # Several directions: score them all in ONE call. The job description is
+    # the bulk of the tokens, so a call per track would re-send it each time.
+    scored = quick_evaluate_tracks(
+        job,
+        [(t.id, effective_description(t, blends)) for t in tracks],
+        cv_text,
+        client=llm_client,
+    )
+    by_id = {t.id: t for t in tracks}
+    job.track_scores = [
+        TrackScore(track_id=tid, track_name=by_id[tid].name, fit_score=value)
+        for tid, value in scored.items()
+        if tid in by_id
+    ]
+    real = [s for s in job.track_scores if s.fit_score is not None]
+    if not real:
+        return job, None  # fail open, as before
+    best = max(real, key=lambda s: s.fit_score or 0)
+    job.primary_track_id = best.track_id
+    job.primary_track_name = best.track_name
+    return job, best.fit_score
 
 
 def _eval_job_full_parallel(
@@ -500,7 +565,7 @@ def _run_quick_eval(
         for idx, job in enumerate(jobs):
             future = executor.submit(
                 _eval_job_quick_parallel,
-                (job, config.profile_description, cv_text, llm_client, db),
+                (job, config, cv_text, llm_client, db),
             )
             future_to_idx[future] = (idx + 1, len(jobs))
 
