@@ -4,6 +4,14 @@ Format: [Keep a Changelog](https://keepachangelog.com)
 
 <!-- version list -->
 
+## v1.11.0 (2026-07-27)
+
+### Features
+
+- **dashboard**: Show live pipeline progress instead of just "running"
+  ([`d481368`](https://github.com/JvWageningen/job-scout/commit/d4813683e4250cb88bd7ea0f067746dc447c3e89))
+
+
 ## v1.10.0 (2026-07-27)
 
 ### Bug Fixes
