@@ -7,6 +7,7 @@ import pytest
 from job_scout.llm.base import LLMError
 from job_scout.llm.claude_cli import ClaudeCliClient
 from job_scout.llm.factory import get_llm_client
+from job_scout.llm.local import LocalLLMClient
 from job_scout.llm.retry import RetryingLLMClient
 from job_scout.llm.zai import ZaiClient
 from job_scout.models import Config
@@ -19,10 +20,18 @@ def test_factory_returns_retrying_client() -> None:
     assert isinstance(client, RetryingLLMClient)
 
 
-def test_factory_returns_claude_cli_by_default() -> None:
-    """get_llm_client wraps ClaudeCliClient when llm_provider is claude_cli."""
+def test_factory_returns_local_by_default() -> None:
+    """The default provider is the local LLM: no API key, no per-job cost."""
     config = Config()
-    assert config.llm_provider == "claude_cli"
+    assert config.llm_provider == "local"
+    client = get_llm_client(config)
+    assert isinstance(client, RetryingLLMClient)
+    assert isinstance(client.inner, LocalLLMClient)
+
+
+def test_factory_returns_claude_cli_when_configured() -> None:
+    """get_llm_client wraps ClaudeCliClient when llm_provider is claude_cli."""
+    config = Config(llm_provider="claude_cli")
     client = get_llm_client(config)
     assert isinstance(client, RetryingLLMClient)
     assert isinstance(client.inner, ClaudeCliClient)

@@ -235,7 +235,10 @@ class Config(BaseModel):
     min_salary: int | None = None
     max_salary: int | None = None
     min_vacation_days: int | None = None
-    llm_provider: Literal["claude_cli", "zai", "kilo_cli", "local"] = "claude_cli"
+    # Local by default: no API key, no per-job cost. Switch in the dashboard's
+    # LLM settings (or `job-scout config set llm_provider ...`) to use a
+    # hosted provider instead.
+    llm_provider: Literal["claude_cli", "zai", "kilo_cli", "local"] = "local"
     claude_evaluation_model: str | None = None
     claude_screening_model: str = "haiku"
     zai_api_key: str | None = None
