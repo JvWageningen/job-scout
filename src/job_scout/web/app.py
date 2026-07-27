@@ -16,6 +16,7 @@ from pydantic import ValidationError
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import FileResponse, JSONResponse
 
+from job_scout import progress
 from job_scout.config import (
     GLOBAL_FIELDS,
     apply_user_init,
@@ -1638,6 +1639,12 @@ def create_app() -> FastAPI:
             result["start_time"] = entry["start_time"].isoformat()
         if entry.get("end_time"):
             result["end_time"] = entry["end_time"].isoformat()
+        if entry["status"] == "running":
+            # A run takes minutes to over an hour; without this the dashboard
+            # cannot tell slow progress apart from a hang.
+            live = progress.get(user)
+            if live:
+                result["progress"] = live
 
         return result
 

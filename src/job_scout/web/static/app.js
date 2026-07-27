@@ -670,6 +670,65 @@ async function loadLogFile(filename) {
  */
 let statusPollInterval = null;
 
+/**
+ * Format a duration in seconds as a short human-readable string.
+ */
+function formatDuration(seconds) {
+    if (seconds === null || seconds === undefined) {
+        return '';
+    }
+    if (seconds < 60) {
+        return `${Math.round(seconds)}s`;
+    }
+    const mins = Math.round(seconds / 60);
+    if (mins < 60) {
+        return `${mins} min`;
+    }
+    const hours = Math.floor(mins / 60);
+    return `${hours}h ${mins % 60}m`;
+}
+
+/**
+ * Render the live progress of a running pipeline.
+ *
+ * A full run can take well over an hour, so without stage, counts and a time
+ * estimate a slow run is indistinguishable from a stuck one.
+ */
+function renderRunProgress(p) {
+    if (!p) {
+        return '';
+    }
+
+    const step = p.stage_index
+        ? `Step ${p.stage_index}/${p.stage_count} — `
+        : '';
+    const counts = p.total ? ` (${p.current}/${p.total})` : '';
+    const pct = p.percent === null || p.percent === undefined ? null : p.percent;
+
+    const bar =
+        pct === null
+            ? '<div class="progress-bar indeterminate"><span></span></div>'
+            : `<div class="progress-bar"><span style="width:${pct}%"></span></div>`;
+
+    const eta = p.eta_seconds
+        ? `about ${formatDuration(p.eta_seconds)} left in this step`
+        : 'estimating…';
+    const elapsed = p.elapsed_seconds
+        ? ` · ${formatDuration(p.elapsed_seconds)} elapsed`
+        : '';
+    const detail = p.detail
+        ? `<p class="progress-detail">${escapeHtml(p.detail)}</p>`
+        : '';
+
+    return `
+        <div class="run-progress">
+            <p class="progress-stage">${step}${escapeHtml(p.stage_label || '')}${counts}</p>
+            ${bar}
+            <p class="progress-eta">${eta}${elapsed}</p>
+            ${detail}
+        </div>`;
+}
+
 async function pollRunStatus() {
     try {
         const response = await fetchWithAuth(`${API_BASE}/run/status?user=${currentUser}`);
@@ -688,7 +747,9 @@ async function pollRunStatus() {
         const errorText = data.error ? `<p class="error">Error: ${escapeHtml(data.error)}</p>` : '';
         const timeText = data.start_time ? `<p class="time">Started: ${new Date(data.start_time).toLocaleString()}</p>` : '';
 
-        statusDiv.innerHTML = `<div class="status-info">${statusText}<p>${messageText}</p>${timeText}${errorText}</div>`;
+        statusDiv.innerHTML =
+            `<div class="status-info">${statusText}<p>${messageText}</p>` +
+            `${renderRunProgress(data.progress)}${timeText}${errorText}</div>`;
 
         if (data.status === 'running' && !statusPollInterval) {
             // A run is already in progress (e.g. started from another tab/session) — start

@@ -12,6 +12,7 @@ from typing import Any, Literal, cast
 import click
 from loguru import logger
 
+from job_scout import progress
 from job_scout.config import (
     SECRET_FIELDS,
     USER_FIELDS,
@@ -359,6 +360,7 @@ def _process_jobs(
     if not survivors:
         return matched, stats
 
+    progress.set_stage("evaluating", len(survivors))
     # Run full evaluations in parallel with bounded thread pool
     max_workers = min(config.max_parallel_evaluations, len(survivors))
     jobs_to_save: list[JobListing] = []
@@ -377,6 +379,7 @@ def _process_jobs(
         for future in as_completed(future_to_job):
             job, passed, error_msg = future.result()
             logger.info(f"Evaluating: {job.title} @ {job.company}")
+            progress.advance(f"{job.title} @ {job.company}")
             if error_msg:
                 logger.error(f"Evaluation error: {error_msg}")
                 stats.errors.append(error_msg)
@@ -556,6 +559,7 @@ def _run_quick_eval(
 
     survivors: list[JobListing] = []
     rejected: list[JobListing] = []
+    progress.set_stage("quick_eval", len(jobs))
 
     # Run evaluations in parallel with bounded thread pool
     max_workers = min(config.max_parallel_evaluations, len(jobs))
@@ -574,6 +578,7 @@ def _run_quick_eval(
             idx, total = future_to_idx[future]
             job, score = future.result()
             logger.info(f"Quick eval [{idx}/{total}]: {job.title} @ {job.company}")
+            progress.advance(f"{job.title} @ {job.company}")
             if score is None:
                 # Quick-eval could not score this job (transient LLM/parse
                 # error). Fail open: keep it and let full evaluation decide,
@@ -896,6 +901,7 @@ def _filter_and_screen(
         _print_run_summary(stats)
         return None
     click.echo("Screening job titles…")
+    progress.set_stage("screening", len(candidates))
     screened, title_screened = screen_job_titles(candidates, config)
     stats.title_screened = title_screened
     if not screened:
@@ -933,6 +939,7 @@ def _run_pipeline(
     if getattr(config, "prune_enabled", False):
         _auto_prune(db, config, dry_run=dry_run, llm_client=llm_client)
     click.echo("Scraping job listings…")
+    progress.set_stage("scraping")
     all_jobs = scrape_all_jobs(config, llm_client)
     new_jobs = all_jobs if full else [j for j in all_jobs if not db.is_duplicate(j)]
     deduped = 0 if full else (len(all_jobs) - len(new_jobs))
@@ -951,10 +958,13 @@ def _run_pipeline(
         screened, config, cv_text, db, dry_run, full=full, client=llm_client
     )
     _merge_stats(stats, run_stats)
+    progress.set_stage("verifying", len(matched))
     matched = _prune_filled_matches(matched, db, config, dry_run=dry_run)
     stats.matched = len(matched)
+    progress.set_stage("enriching", len(matched))
     _enrich_official_sources(matched, db, config, dry_run=dry_run)
     _enrich_company_reviews(matched, db, config, llm_client, dry_run=dry_run)
+    progress.set_stage("notifying", len(matched))
     stats.notified = _send_notifications(matched, db, config, dry_run)
     _print_run_summary(stats)
     duration = (datetime.now() - started_at).total_seconds()
@@ -991,9 +1001,13 @@ def _execute_run(name: str, *, dry_run: bool = False, full: bool = False) -> Non
     db = Database(user_db_path(name))
     cv_text = _load_cv_text(config)
     llm_client = get_llm_client(config)
-    stats, started_at, duration = _run_pipeline(
-        config, db, cv_text, dry_run=dry_run, full=full, llm_client=llm_client
-    )
+    progress.begin_run(name)
+    try:
+        stats, started_at, duration = _run_pipeline(
+            config, db, cv_text, dry_run=dry_run, full=full, llm_client=llm_client
+        )
+    finally:
+        progress.end_run(name)
     # Save run history only for non-dry-run executions
     if not dry_run:
         db.save_run_stats(stats, started_at, duration)

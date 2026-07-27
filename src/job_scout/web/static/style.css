@@ -765,3 +765,51 @@ footer {
     font-size: 0.75rem;
     margin-left: 0.4rem;
 }
+
+/* Live pipeline progress */
+.run-progress {
+    margin: 0.6rem 0;
+}
+.progress-stage {
+    margin: 0 0 0.3rem 0;
+    font-weight: 600;
+}
+.progress-bar {
+    background: #e6e9ef;
+    border-radius: 6px;
+    height: 10px;
+    overflow: hidden;
+}
+.progress-bar > span {
+    display: block;
+    height: 100%;
+    background: #5b8def;
+    border-radius: 6px;
+    transition: width 0.4s ease;
+}
+.progress-bar.indeterminate > span {
+    width: 35%;
+    animation: progress-slide 1.4s ease-in-out infinite;
+}
+@keyframes progress-slide {
+    0% { margin-left: -35%; }
+    100% { margin-left: 100%; }
+}
+.progress-eta,
+.progress-detail {
+    margin: 0.3rem 0 0 0;
+    font-size: 0.82rem;
+    color: #666;
+}
+.progress-detail {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+@media (prefers-reduced-motion: reduce) {
+    .progress-bar.indeterminate > span {
+        animation: none;
+        width: 100%;
+        opacity: 0.4;
+    }
+}
