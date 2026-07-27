@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 
 from job_scout.config import user_db_path, user_logs_dir
 from job_scout.database import Database
+from job_scout.llm.base import LLMClient
 from job_scout.models import JobListing, JobStatus
 from job_scout.web.app import create_app
 
@@ -1894,3 +1895,251 @@ class TestDetectLocalModels:
         call_kwargs = mock_init.call_args[1]
         assert call_kwargs["api_key"] == "test-key"
         assert call_kwargs["base_url"] == "http://localhost:11434/v1"
+
+
+class MockCVLLMClient(LLMClient):
+    """Minimal LLM client stub for profile-enrichment endpoint tests."""
+
+    def complete(self, prompt: str, *, purpose: str = "", timeout: float = 30.0) -> str:
+        """Return an empty completion.
+
+        Args:
+            prompt: Ignored.
+            purpose: Ignored.
+            timeout: Ignored.
+
+        Returns:
+            Empty string.
+        """
+        return ""
+
+    def check_available(self) -> str | None:
+        """Report the client as available.
+
+        Returns:
+            None, meaning no error.
+        """
+        return None
+
+
+class TestImportLinkedInEndpoint:
+    """Tests for POST /api/profile/import-linkedin."""
+
+    def test_no_user(self, client: TestClient) -> None:
+        """A missing user is rejected."""
+        response = client.post("/api/profile/import-linkedin", json={"method": "paste"})
+        assert response.status_code == 400
+
+    def test_nonexistent_user(self, client: TestClient) -> None:
+        """An unknown user yields 404."""
+        response = client.post(
+            "/api/profile/import-linkedin",
+            json={"user": "nonexistent", "method": "paste", "text": "Skills\nPython"},
+        )
+        assert response.status_code == 404
+
+    def test_invalid_method(self, client: TestClient, test_user: str) -> None:
+        """An unsupported import method is rejected."""
+        response = client.post(
+            "/api/profile/import-linkedin",
+            json={"user": test_user, "method": "carrier-pigeon"},
+        )
+        assert response.status_code == 400
+
+    def test_paste_empty_text(self, client: TestClient, test_user: str) -> None:
+        """Blank pasted text is rejected."""
+        response = client.post(
+            "/api/profile/import-linkedin",
+            json={"user": test_user, "method": "paste", "text": "   "},
+        )
+        assert response.status_code == 400
+
+    def test_url_requires_both_opt_ins(
+        self, client: TestClient, test_user: str
+    ) -> None:
+        """Per-request allow_fetch alone is not enough without the config flag."""
+        response = client.post(
+            "/api/profile/import-linkedin",
+            json={
+                "user": test_user,
+                "method": "url",
+                "profile_url": "https://www.linkedin.com/in/example",
+                "allow_fetch": True,
+            },
+        )
+        assert response.status_code == 400
+        assert "settings" in response.json()["detail"].lower()
+
+    def test_paste_without_cv_configured(
+        self, client: TestClient, test_user: str
+    ) -> None:
+        """Extracted data with no CV to merge into gives a clear error."""
+        response = client.post(
+            "/api/profile/import-linkedin",
+            json={
+                "user": test_user,
+                "method": "paste",
+                "text": "Skills\nPython, SQL\n",
+            },
+        )
+        assert response.status_code == 400
+        assert "cv" in response.json()["detail"].lower()
+
+    def test_preview_does_not_persist(
+        self, client: TestClient, test_user: str, monkeypatch
+    ) -> None:  # noqa: ANN001
+        """A preview returns a diff without writing to the CV cache."""
+        from job_scout.config import save_user_config, user_db_path
+        from job_scout.cv_parser import compute_cv_hash
+        from job_scout.database import Database
+        from job_scout.models import CvProfile
+
+        save_user_config(test_user, {"name": test_user, "cv_path": "/fake/cv.pdf"})
+        monkeypatch.setattr(
+            "job_scout.web.app.get_llm_client", lambda config: MockCVLLMClient()
+        )
+        monkeypatch.setattr("job_scout.cv_parser.parse_cv", lambda path: "raw cv text")
+        monkeypatch.setattr(
+            "job_scout.cv_profile.get_or_parse_cv_profile",
+            lambda text, client, db: CvProfile(skills=["Existing Skill"]),
+        )
+
+        response = client.post(
+            "/api/profile/import-linkedin",
+            json={
+                "user": test_user,
+                "method": "paste",
+                "text": "Skills\nExisting Skill, New Skill\n",
+                "apply": False,
+            },
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert "New Skill" in data["diff"]["added_skills"]
+        assert data["applied"] is False
+
+        db = Database(user_db_path(test_user))
+        assert db.get_cached_cv_profile(compute_cv_hash("raw cv text")) is None
+
+    def test_apply_persists_merged_profile(
+        self, client: TestClient, test_user: str, monkeypatch
+    ) -> None:  # noqa: ANN001
+        """apply=true writes the merged profile into the CV cache."""
+        from job_scout.config import save_user_config, user_db_path
+        from job_scout.cv_parser import compute_cv_hash
+        from job_scout.database import Database
+        from job_scout.models import CvProfile
+
+        save_user_config(test_user, {"name": test_user, "cv_path": "/fake/cv.pdf"})
+        monkeypatch.setattr(
+            "job_scout.web.app.get_llm_client", lambda config: MockCVLLMClient()
+        )
+        monkeypatch.setattr("job_scout.cv_parser.parse_cv", lambda path: "raw cv text")
+        monkeypatch.setattr(
+            "job_scout.cv_profile.get_or_parse_cv_profile",
+            lambda text, client, db: CvProfile(skills=[]),
+        )
+
+        response = client.post(
+            "/api/profile/import-linkedin",
+            json={
+                "user": test_user,
+                "method": "paste",
+                "text": "Skills\nRust\n",
+                "apply": True,
+            },
+        )
+        assert response.status_code == 200
+        assert response.json()["applied"] is True
+
+        db = Database(user_db_path(test_user))
+        cached = db.get_cached_cv_profile(compute_cv_hash("raw cv text"))
+        assert cached is not None
+        assert "Rust" in cached
+
+
+class TestSearchPersonEndpoint:
+    """Tests for POST /api/profile/search-person."""
+
+    def test_no_user(self, client: TestClient) -> None:
+        """A missing user is rejected."""
+        response = client.post("/api/profile/search-person", json={})
+        assert response.status_code == 400
+
+    def test_nonexistent_user(self, client: TestClient) -> None:
+        """An unknown user yields 404."""
+        response = client.post(
+            "/api/profile/search-person", json={"user": "nonexistent"}
+        )
+        assert response.status_code == 404
+
+    def test_no_name_available(
+        self, client: TestClient, test_user: str, monkeypatch
+    ) -> None:  # noqa: ANN001
+        """No explicit name and no configured name is rejected."""
+        from job_scout.config import save_user_config
+
+        save_user_config(test_user, {"name": ""})
+        monkeypatch.setattr(
+            "job_scout.web.app.get_llm_client", lambda config: MockCVLLMClient()
+        )
+        response = client.post("/api/profile/search-person", json={"user": test_user})
+        assert response.status_code == 400
+
+    def test_returns_result_without_cv_configured(
+        self, client: TestClient, test_user: str, monkeypatch
+    ) -> None:  # noqa: ANN001
+        """With no CV configured the search result is still returned."""
+        from job_scout.models import PersonSearchResult
+
+        monkeypatch.setattr(
+            "job_scout.web.app.get_llm_client", lambda config: MockCVLLMClient()
+        )
+        monkeypatch.setattr(
+            "job_scout.person_search.search_person",
+            lambda name, **kwargs: PersonSearchResult(
+                full_name=name, skills=["Python"], confidence="medium"
+            ),
+        )
+
+        response = client.post(
+            "/api/profile/search-person",
+            json={"user": test_user, "full_name": "Jane Doe"},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["result"]["full_name"] == "Jane Doe"
+        assert data["applied"] is False
+        assert data["diff"]["added_skills"] == []
+
+    def test_uses_cache_when_not_refreshed(
+        self, client: TestClient, test_user: str, monkeypatch
+    ) -> None:  # noqa: ANN001
+        """A fresh cached result short-circuits the live search."""
+        from job_scout.config import user_db_path
+        from job_scout.database import Database
+        from job_scout.models import PersonSearchResult
+
+        monkeypatch.setattr(
+            "job_scout.web.app.get_llm_client", lambda config: MockCVLLMClient()
+        )
+
+        db = Database(user_db_path(test_user))
+        db.save_person_search(
+            "Jane Doe",
+            PersonSearchResult(
+                full_name="Jane Doe", confidence="high"
+            ).model_dump_json(),
+        )
+
+        def fail_if_called(name: str, **kwargs: object) -> None:
+            raise AssertionError("search_person must not run on a cache hit")
+
+        monkeypatch.setattr("job_scout.person_search.search_person", fail_if_called)
+
+        response = client.post(
+            "/api/profile/search-person",
+            json={"user": test_user, "full_name": "Jane Doe"},
+        )
+        assert response.status_code == 200
+        assert response.json()["result"]["confidence"] == "high"

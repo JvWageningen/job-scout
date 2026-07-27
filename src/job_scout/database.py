@@ -237,6 +237,13 @@ class Database:
                 )
             """)
             conn.execute("""
+                CREATE TABLE IF NOT EXISTS person_search_cache (
+                    person_key TEXT PRIMARY KEY,
+                    result_json TEXT NOT NULL,
+                    searched_at TEXT NOT NULL
+                )
+            """)
+            conn.execute("""
                 CREATE TABLE IF NOT EXISTS star_stories (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     situation TEXT NOT NULL,
@@ -1347,6 +1354,51 @@ class Database:
             row = conn.execute(
                 "SELECT review_json, reviewed_at FROM company_reviews "
                 "WHERE company_key = ?",
+                (key,),
+            ).fetchone()
+        if not row:
+            return None
+        try:
+            age = datetime.now(UTC) - datetime.fromisoformat(row[1])
+        except (ValueError, TypeError):
+            return None
+        return row[0] if age.days <= max_age_days else None
+
+    def save_person_search(self, full_name: str, result_json: str) -> None:
+        """Cache a person-search result, keyed by normalised full name.
+
+        Args:
+            full_name: The person's full name.
+            result_json: Serialised PersonSearchResult JSON.
+        """
+        now = datetime.now(UTC).isoformat()
+        key = " ".join(full_name.lower().split())
+        with self._conn() as conn:
+            conn.execute(
+                """INSERT INTO person_search_cache
+                       (person_key, result_json, searched_at)
+                   VALUES (?, ?, ?)
+                   ON CONFLICT(person_key) DO UPDATE SET
+                       result_json = excluded.result_json,
+                       searched_at = excluded.searched_at""",
+                (key, result_json, now),
+            )
+
+    def get_person_search(self, full_name: str, max_age_days: int = 14) -> str | None:
+        """Return a cached person-search result JSON if fresh enough.
+
+        Args:
+            full_name: The person's full name.
+            max_age_days: Maximum cache age in days.
+
+        Returns:
+            The cached result JSON, or None if absent or stale.
+        """
+        key = " ".join(full_name.lower().split())
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT result_json, searched_at FROM person_search_cache "
+                "WHERE person_key = ?",
                 (key,),
             ).fetchone()
         if not row:

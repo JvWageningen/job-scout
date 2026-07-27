@@ -7,7 +7,7 @@ import secrets
 import threading
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -32,9 +32,12 @@ from job_scout.config import (
 )
 from job_scout.database import Database
 from job_scout.llm.factory import build_raw_client_for_test, get_llm_client
-from job_scout.models import Config, JobListing, JobStatus
+from job_scout.models import Config, JobListing, JobStatus, PersonSearchResult
 from job_scout.notify.factory import build_raw_notifier_for_test
 from job_scout.scheduler import check_schedule_status, install_schedule, remove_schedule
+
+if TYPE_CHECKING:
+    from job_scout.llm.base import LLMClient
 
 # Global registry for tracking run status
 # Keyed by user name (or None for global)
@@ -60,6 +63,106 @@ def _attach_company_reviews(db: Database, jobs: list[JobListing]) -> None:
             raw = db.get_company_review(job.company, max_age_days=365)
             cache[key] = CompanyReview.model_validate_json(raw) if raw else None
         job.company_review = cache[key]
+
+
+def _resolve_linkedin_data(
+    method: str | None, body: dict[str, Any], config: Config
+) -> dict[str, list[Any]]:
+    """Extract raw LinkedIn data per import method.
+
+    Args:
+        method: One of "paste", "file", "url".
+        body: Request body holding text/file_path/profile_url/allow_fetch.
+        config: Effective user config, for the saved URL and opt-in flag.
+
+    Returns:
+        Dictionary with extracted profile data (skills, education, roles).
+
+    Raises:
+        HTTPException: If the method is invalid or required input is missing.
+        FileNotFoundError: If a "file" export path does not exist.
+        ValueError: If a "file" export is not a valid ZIP.
+        RuntimeError: If a "url" fetch fails.
+    """
+    from job_scout.linkedin_import import LinkedInProfileImporter  # noqa: PLC0415
+
+    if method == "paste":
+        text = (body.get("text") or "").strip()
+        if not text:
+            raise HTTPException(status_code=400, detail="No text provided")
+        return LinkedInProfileImporter.parse_pasted_text(text)
+    if method == "file":
+        return LinkedInProfileImporter.parse_export(body.get("file_path") or "")
+    if method == "url":
+        profile_url = body.get("profile_url") or config.linkedin_profile_url
+        if not profile_url:
+            raise HTTPException(status_code=400, detail="No profile URL given")
+        allow = bool(body.get("allow_fetch")) and config.linkedin_import_allow_url_fetch
+        if not allow:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "URL fetch requires confirming the ToS risk here and enabling "
+                    "'Allow automated LinkedIn URL fetch' in settings."
+                ),
+            )
+        return LinkedInProfileImporter.fetch_profile_url(profile_url, allow_fetch=True)
+    raise HTTPException(
+        status_code=400, detail="method must be 'paste', 'file', or 'url'"
+    )
+
+
+def _preview_or_apply_merge(
+    config: Config,
+    db: Database,
+    client: LLMClient,
+    candidate_data: dict[str, list[Any]],
+    apply: bool,
+) -> dict[str, Any]:
+    """Merge candidate profile data against the CV, optionally persisting it.
+
+    Args:
+        config: Effective user config (needs cv_path).
+        db: The user's database, for CV cache read/write.
+        client: LLM client used to parse the current CV.
+        candidate_data: {skills, education, past_roles} to merge in.
+        apply: If True and anything is new, persist the merged profile.
+
+    Returns:
+        Dictionary with 'diff' and 'applied'.
+
+    Raises:
+        HTTPException: If the configured CV file cannot be read.
+    """
+    from job_scout.cv_parser import compute_cv_hash, parse_cv  # noqa: PLC0415
+    from job_scout.cv_profile import get_or_parse_cv_profile  # noqa: PLC0415
+    from job_scout.linkedin_import import merge_linkedin_into_profile  # noqa: PLC0415
+
+    empty_diff: dict[str, list[Any]] = {
+        "added_skills": [],
+        "added_education": [],
+        "added_roles": [],
+    }
+    if not any(candidate_data.values()) or not config.cv_path:
+        return {"diff": empty_diff, "applied": False}
+
+    try:
+        raw_cv_text = parse_cv(config.cv_path)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not raw_cv_text:
+        return {"diff": empty_diff, "applied": False}
+
+    current_profile = get_or_parse_cv_profile(raw_cv_text, client, db)
+    merged_profile, diff = merge_linkedin_into_profile(current_profile, candidate_data)
+
+    applied = False
+    if apply and any(diff.values()):
+        cv_hash = compute_cv_hash(raw_cv_text)
+        db.save_cv_profile_cache(cv_hash, json.dumps(merged_profile.model_dump()))
+        applied = True
+
+    return {"diff": diff, "applied": applied}
 
 
 class TokenAuthMiddleware(BaseHTTPMiddleware):
@@ -735,6 +838,117 @@ def create_app() -> FastAPI:
             }
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc  # noqa: B904
+
+    @app.post("/api/profile/import-linkedin")
+    def import_linkedin_profile(body: dict[str, Any]) -> dict[str, Any]:
+        """Import LinkedIn profile data and preview or apply a CV profile merge.
+
+        Args:
+            body: Request body with 'user', 'method' ("paste"|"file"|"url"), the
+                matching input field (text/file_path/profile_url), an optional
+                'allow_fetch' flag for the url method, and 'apply' (bool) to
+                persist the merge instead of only previewing it.
+
+        Returns:
+            Dictionary with the proposed diff and whether it was applied.
+
+        Raises:
+            HTTPException: On invalid input, missing CV, or LLM errors.
+        """
+        from job_scout.llm.base import LLMError  # noqa: PLC0415
+
+        user = body.get("user")
+        if not user:
+            raise HTTPException(status_code=400, detail="User is required")
+        if user not in list_users():
+            raise HTTPException(status_code=404, detail=f"User '{user}' not found")
+
+        config = build_effective_config(user)
+        try:
+            linkedin_data = _resolve_linkedin_data(body.get("method"), body, config)
+        except (FileNotFoundError, ValueError, RuntimeError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        if not any(linkedin_data.get(k) for k in ("skills", "education", "past_roles")):
+            empty: dict[str, list[Any]] = {
+                "added_skills": [],
+                "added_education": [],
+                "added_roles": [],
+            }
+            return {"diff": empty, "applied": False, "warning": "No data extracted."}
+
+        if not config.cv_path:
+            raise HTTPException(status_code=400, detail="CV path not configured")
+
+        try:
+            client = get_llm_client(config)
+        except LLMError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        db = Database(user_db_path(user))
+        return _preview_or_apply_merge(
+            config, db, client, linkedin_data, bool(body.get("apply"))
+        )
+
+    @app.post("/api/profile/search-person")
+    def search_person_endpoint(body: dict[str, Any]) -> dict[str, Any]:
+        """Search the public web for a person; preview or apply CV additions.
+
+        Args:
+            body: Request body with 'user', optional 'full_name' (defaults to the
+                configured profile name), optional 'known_context' for
+                disambiguation, 'refresh' (bool) to bypass cache, and 'apply'
+                (bool) to merge the result into the CV profile.
+
+        Returns:
+            Dictionary with the search result and the proposed/applied CV diff.
+
+        Raises:
+            HTTPException: On invalid input, missing name, or LLM errors.
+        """
+        from job_scout.llm.base import LLMError  # noqa: PLC0415
+        from job_scout.person_search import search_person  # noqa: PLC0415
+
+        user = body.get("user")
+        if not user:
+            raise HTTPException(status_code=400, detail="User is required")
+        if user not in list_users():
+            raise HTTPException(status_code=404, detail=f"User '{user}' not found")
+
+        config = build_effective_config(user)
+        full_name = body.get("full_name") or config.name
+        if not full_name:
+            raise HTTPException(status_code=400, detail="No name to search for")
+
+        db = Database(user_db_path(user))
+        try:
+            client = get_llm_client(config)
+        except LLMError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        cached = None if body.get("refresh") else db.get_person_search(full_name)
+        if cached:
+            result = PersonSearchResult.model_validate_json(cached)
+        else:
+            result = search_person(
+                full_name,
+                known_context=body.get("known_context"),
+                client=client,
+                searxng_url=config.searxng_url,
+                api_key=config.brave_api_key,
+            )
+            db.save_person_search(full_name, result.model_dump_json())
+
+        candidate_data: dict[str, list[Any]] = {
+            "skills": result.skills,
+            "education": result.education,
+            "past_roles": [r.model_dump() for r in result.past_roles],
+        }
+        response = _preview_or_apply_merge(
+            config, db, client, candidate_data, bool(body.get("apply"))
+        )
+        response["result"] = result.model_dump(mode="json")
+        return response
 
     @app.post("/api/sites")
     def add_site(body: dict[str, Any]) -> dict[str, str]:

@@ -9,11 +9,21 @@ import re
 import zipfile
 from io import StringIO
 from pathlib import Path
+from time import sleep
 from typing import Any, cast
 
 from loguru import logger
 
 from job_scout.models import CvProfile, CvRole
+
+_LD_JSON_RE = re.compile(
+    r'<script[^>]*type="application/ld\+json"[^>]*>(.*?)</script>', re.S
+)
+# LinkedIn's non-standard "request blocked" status; outside the 4xx/5xx range
+# that requests' raise_for_status() reacts to, so it must be checked by hand.
+_LINKEDIN_BLOCKED_STATUS = 999
+_FETCH_MAX_ATTEMPTS = 4
+_FETCH_RETRY_DELAY = 1.5
 
 
 class LinkedInProfileImporter:
@@ -170,12 +180,19 @@ class LinkedInProfileImporter:
         so it is gated behind an explicit allow_fetch flag and should only be
         used with clear user acknowledgment of the ToS risk.
 
+        LinkedIn actively masks (asterisks) almost all profile data -- including
+        every historical job title -- from anonymous/automated requests. Only
+        education history and any public skill tags survive this path; use
+        parse_pasted_text or parse_export for actual work-experience import.
+
         Args:
             profile_url: Full URL to the LinkedIn profile.
             allow_fetch: Must be explicitly True; raises ValueError if False.
 
         Returns:
-            Dictionary with extracted profile data (skills, education, roles).
+            Dictionary with extracted profile data (skills, education; roles
+            is always empty -- LinkedIn hides job titles from anonymous
+            requests).
 
         Raises:
             ValueError: If allow_fetch is False.
@@ -186,13 +203,6 @@ class LinkedInProfileImporter:
                 "LinkedIn URL fetch is disabled by default due to ToS concerns. "
                 "Set linkedin_import_allow_url_fetch=true to enable (at your own risk)."
             )
-
-        try:
-            import requests
-        except ImportError as e:
-            raise RuntimeError(
-                "requests library required for LinkedIn URL fetch. Run: uv add requests"
-            ) from e
 
         # Use a realistic User-Agent to avoid immediate rejection
         headers = {
@@ -208,39 +218,165 @@ class LinkedInProfileImporter:
             "This may violate LinkedIn's ToS. Proceed at your own risk."
         )
 
+        html = _fetch_profile_html(profile_url, headers)
+        data = _extract_profile_from_html(html)
+        logger.debug(
+            f"Fetched LinkedIn profile (anonymous): {len(data['education'])} "
+            f"education, {len(data['skills'])} skills found"
+        )
+        return data
+
+
+def _fetch_profile_html(profile_url: str, headers: dict[str, str]) -> str:
+    """Fetch profile HTML, retrying past LinkedIn's intermittent bot-blocks.
+
+    LinkedIn answers roughly half of anonymous requests with HTTP 999 (its
+    non-standard "blocked" status, which requests' raise_for_status ignores
+    because it is outside the 4xx/5xx range), returning a stub page instead of
+    the profile. Retrying usually gets through.
+
+    Args:
+        profile_url: Full URL to the LinkedIn profile.
+        headers: Request headers to send.
+
+    Returns:
+        The profile page HTML.
+
+    Raises:
+        RuntimeError: If the request fails or every attempt is blocked.
+    """
+    import requests  # noqa: PLC0415
+
+    last_status: int | None = None
+    for attempt in range(_FETCH_MAX_ATTEMPTS):
         try:
             resp = requests.get(profile_url, headers=headers, timeout=10)
-            resp.raise_for_status()
-        except Exception as e:
+        except requests.RequestException as e:
             raise RuntimeError(
                 f"Failed to fetch LinkedIn profile: {e}. "
                 "LinkedIn may have blocked the request."
             ) from e
 
-        # Parse the HTML response to extract profile data
-        data: dict[str, list[Any]] = {
-            "skills": [],
-            "education": [],
-            "past_roles": [],
-        }
+        last_status = resp.status_code
+        if resp.status_code == _LINKEDIN_BLOCKED_STATUS:
+            logger.debug(
+                f"LinkedIn returned {_LINKEDIN_BLOCKED_STATUS} (blocked) on attempt "
+                f"{attempt + 1}/{_FETCH_MAX_ATTEMPTS}"
+            )
+            if attempt < _FETCH_MAX_ATTEMPTS - 1:
+                sleep(_FETCH_RETRY_DELAY * (attempt + 1))
+            continue
 
-        # Simple regex-based extraction from HTML
-        # (LinkedIn's markup is complex and fragile)
-        html = resp.text
+        try:
+            resp.raise_for_status()
+        except requests.RequestException as e:
+            raise RuntimeError(
+                f"Failed to fetch LinkedIn profile: {e}. "
+                "LinkedIn may have blocked the request."
+            ) from e
+        return resp.text
 
-        # Try to extract role titles (very fragile, depends on LinkedIn's markup)
-        role_pattern = (
-            r"<span[^>]*>([^<]*(?:Engineer|Manager|Developer|"
-            r"Analyst|Designer)[^<]*)</span>"
-        )
-        roles = re.findall(role_pattern, html, re.IGNORECASE)
-        if roles:
-            data["past_roles"] = [
-                CvRole(title=r.strip(), company="").model_dump() for r in roles[:10]
-            ]
+    raise RuntimeError(
+        f"LinkedIn blocked every fetch attempt (HTTP {last_status}). This is "
+        "common for automated requests. Use the paste or data-export import "
+        "method instead -- they are more reliable and carry no ToS risk."
+    )
 
-        logger.debug(f"Fetched LinkedIn profile: {len(roles)} potential roles found")
+
+def _find_person_ld(html: str) -> dict[str, Any] | None:
+    """Extract the schema.org Person block from a profile page's JSON-LD.
+
+    Args:
+        html: Raw HTML of the profile page.
+
+    Returns:
+        The Person node as a dict, or None if not found/parseable.
+    """
+    for block in _LD_JSON_RE.findall(html):
+        try:
+            parsed = json.loads(block)
+        except json.JSONDecodeError:
+            continue
+        graph = parsed.get("@graph", []) if isinstance(parsed, dict) else []
+        for node in graph:
+            if isinstance(node, dict) and node.get("@type") == "Person":
+                return node
+    return None
+
+
+def _is_redacted(value: str) -> bool:
+    """Return True for LinkedIn's asterisk-masked placeholder text.
+
+    LinkedIn replaces most profile fields with asterisks for anonymous or
+    automated visitors as an anti-scraping measure.
+
+    Args:
+        value: Raw field text.
+
+    Returns:
+        True when the value is empty or entirely asterisks.
+    """
+    compact = value.strip().replace(" ", "")
+    return not compact or all(c == "*" for c in compact)
+
+
+def _clean_ld_text(value: object) -> str | None:
+    """Return a usable string from a JSON-LD field, or None if missing/redacted.
+
+    Args:
+        value: Raw JSON-LD field value.
+
+    Returns:
+        Stripped text, or None when absent or redacted.
+    """
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    return None if not text or _is_redacted(text) else text
+
+
+def _extract_profile_from_html(html: str) -> dict[str, list[Any]]:
+    """Extract whatever public, non-redacted profile data is present.
+
+    Only education and public skill tags are extracted -- LinkedIn hides
+    every historical job title from anonymous/automated requests, so
+    past_roles is always empty from this path.
+
+    Args:
+        html: Raw HTML of the profile page.
+
+    Returns:
+        Dictionary with extracted profile data (skills, education, roles).
+    """
+    data: dict[str, list[Any]] = {"skills": [], "education": [], "past_roles": []}
+    person = _find_person_ld(html)
+    if not person:
         return data
+
+    for edu in person.get("alumniOf") or []:
+        if not isinstance(edu, dict):
+            continue
+        school = _clean_ld_text(edu.get("name"))
+        if not school:
+            continue
+        raw_member = edu.get("member")
+        member: dict[str, Any] = raw_member if isinstance(raw_member, dict) else {}
+        start, end = member.get("startDate"), member.get("endDate")
+        label = f"{school} ({start or '?'}-{end or '?'})" if (start or end) else school
+        data["education"].append(label)
+
+    for skill in person.get("knowsAbout") or []:
+        if cleaned := _clean_ld_text(skill):
+            data["skills"].append(cleaned)
+
+    if not data["education"] and not data["skills"]:
+        logger.warning(
+            "LinkedIn anonymous fetch returned no usable data -- LinkedIn hides "
+            "most profile data (including all historical job titles) from "
+            "automated/anonymous requests. Use parse_pasted_text or parse_export "
+            "for full work history."
+        )
+    return data
 
 
 def _parse_profile_csv(csv_data: bytes, data: dict[str, list[Any]]) -> None:
@@ -361,14 +497,15 @@ def _try_parse_role_from_text(line: str, lines: list[str], idx: int) -> CvRole |
 def merge_linkedin_into_profile(
     existing_profile: CvProfile, linkedin_data: dict[str, list[Any]]
 ) -> tuple[CvProfile, dict[str, list[Any]]]:
-    """Merge LinkedIn data into existing CvProfile, filling gaps only.
+    """Merge external profile data into an existing CvProfile, filling gaps only.
 
     Never overwrites existing data; only adds new skills, education, and roles.
     Returns both the merged profile and a diff of what was added.
 
     Args:
         existing_profile: Current CvProfile to merge into.
-        linkedin_data: Data extracted from LinkedIn.
+        linkedin_data: Data extracted from LinkedIn, or any other source using
+            the same {skills, education, past_roles} shape (e.g. person search).
 
     Returns:
         Tuple of (merged_profile, diff_dict) where diff_dict shows what was added.

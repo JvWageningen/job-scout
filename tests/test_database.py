@@ -970,3 +970,43 @@ def test_upsert_preserves_user_set_lifecycle_status(
 
     # But the evaluation (fit_score) should be updated
     assert approved_after[0].fit_score == 95
+
+
+def test_save_and_get_person_search(tmp_db: Database) -> None:
+    """A saved person-search result round-trips through the cache."""
+    tmp_db.save_person_search("Jane Doe", '{"full_name": "Jane Doe"}')
+    assert tmp_db.get_person_search("Jane Doe") == '{"full_name": "Jane Doe"}'
+
+
+def test_get_person_search_normalises_key(tmp_db: Database) -> None:
+    """Lookup is case- and whitespace-insensitive, like company reviews."""
+    tmp_db.save_person_search("Jane   Doe", '{"full_name": "Jane Doe"}')
+    assert tmp_db.get_person_search("jane doe") is not None
+    assert tmp_db.get_person_search("JANE DOE") is not None
+
+
+def test_get_person_search_missing_returns_none(tmp_db: Database) -> None:
+    """An unknown name returns None rather than raising."""
+    assert tmp_db.get_person_search("Nobody Here") is None
+
+
+def test_save_person_search_overwrites_existing(tmp_db: Database) -> None:
+    """Re-saving for the same name replaces the cached value."""
+    tmp_db.save_person_search("Jane Doe", '{"confidence": "low"}')
+    tmp_db.save_person_search("Jane Doe", '{"confidence": "high"}')
+    assert tmp_db.get_person_search("Jane Doe") == '{"confidence": "high"}'
+
+
+def test_get_person_search_respects_max_age(tmp_db: Database) -> None:
+    """A result older than max_age_days is treated as absent."""
+    from datetime import timedelta
+
+    tmp_db.save_person_search("Jane Doe", '{"confidence": "low"}')
+    stale = (datetime.now(UTC) - timedelta(days=30)).isoformat()
+    with tmp_db._conn() as conn:
+        conn.execute(
+            "UPDATE person_search_cache SET searched_at = ? WHERE person_key = ?",
+            (stale, "jane doe"),
+        )
+    assert tmp_db.get_person_search("Jane Doe", max_age_days=14) is None
+    assert tmp_db.get_person_search("Jane Doe", max_age_days=60) is not None

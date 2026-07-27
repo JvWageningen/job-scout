@@ -43,6 +43,7 @@ from job_scout.models import (
     Config,
     JobListing,
     JobStatus,
+    PersonSearchResult,
     RunStats,
 )
 from job_scout.notify import NotificationError, get_notifier
@@ -1862,6 +1863,7 @@ def profile_import_linkedin(
     target = _require_single_user(user_name)
     config = build_effective_config(target)
     db = Database(user_db_path(target))
+    profile_url = profile_url or config.linkedin_profile_url
 
     # Get current CV profile
     if not config.cv_path:
@@ -1925,10 +1927,12 @@ def profile_import_linkedin(
         linkedin_data = LinkedInProfileImporter.parse_pasted_text(pasted_text)
 
     elif profile_url:
-        if not allow_fetch:
+        if not (allow_fetch and config.linkedin_import_allow_url_fetch):
             click.echo(
-                "LinkedIn URL fetch requires --allow-fetch flag. "
-                "This may violate LinkedIn's ToS. Use at your own risk.",
+                "LinkedIn URL fetch requires both --allow-fetch and "
+                "linkedin_import_allow_url_fetch=true in config (set it with: "
+                f"job-scout config set linkedin_import_allow_url_fetch true "
+                f"--user {target}). This may violate LinkedIn's ToS.",
                 err=True,
             )
             sys.exit(1)
@@ -2011,6 +2015,148 @@ def profile_import_linkedin(
     else:
         click.echo("Cancelled.", err=True)
         sys.exit(1)
+
+
+@profile_group.command("search-person")
+@click.option("--user", "user_name", default=None, help="User to search for")
+@click.option(
+    "--name",
+    "full_name",
+    default=None,
+    help="Full name to search (defaults to the configured profile name)",
+)
+@click.option(
+    "--context",
+    "known_context",
+    default=None,
+    help="Disambiguating context, e.g. current employer or city",
+)
+@click.option("--refresh", is_flag=True, help="Ignore any cached result")
+def profile_search_person(
+    user_name: str | None,
+    full_name: str | None,
+    known_context: str | None,
+    refresh: bool,
+) -> None:
+    """Search the public web for a person to find supplementary CV info.
+
+    Gathers public snippets about the named person via the configured search
+    backend, then has the LLM synthesise possible additional skills, education,
+    and roles. This is LOW-CONFIDENCE inference from a name search (which can
+    match the wrong person), so results are always reviewed before merging.
+    """
+    from job_scout.person_search import search_person  # noqa: PLC0415
+
+    target = _require_single_user(user_name)
+    config = build_effective_config(target)
+    db = Database(user_db_path(target))
+
+    name = full_name or config.name
+    if not name:
+        click.echo(
+            "No name to search for. Pass --name or set 'name' in your profile.",
+            err=True,
+        )
+        sys.exit(1)
+
+    try:
+        client = get_llm_client(config)
+    except LLMError as e:
+        click.echo(f"LLM configuration error: {e}", err=True)
+        sys.exit(1)
+
+    cached = None if refresh else db.get_person_search(name)
+    if cached:
+        result = PersonSearchResult.model_validate_json(cached)
+        click.echo("(cached)")
+    else:
+        result = search_person(
+            name,
+            known_context=known_context,
+            client=client,
+            searxng_url=config.searxng_url,
+            api_key=config.brave_api_key,
+        )
+        db.save_person_search(name, result.model_dump_json())
+
+    click.echo(f"\n{result.full_name} — confidence: {result.confidence}")
+    if result.summary:
+        click.echo(f"  {result.summary}")
+    if result.notes:
+        click.echo(f"  Note: {result.notes}")
+
+    if not any((result.skills, result.education, result.past_roles)):
+        click.echo("\nNo usable additions found.")
+        return
+
+    if not config.cv_path:
+        click.echo(
+            "\nFound possible additions, but no CV is configured to merge into. "
+            f"Run 'job-scout init --user {target}' first."
+        )
+        return
+
+    _review_and_apply_person_result(result, config, db, client, target)
+
+
+def _review_and_apply_person_result(
+    result: PersonSearchResult,
+    config: Config,
+    db: Database,
+    client: LLMClient,
+    target: str,
+) -> None:
+    """Show a person-search diff against the CV and optionally persist it.
+
+    Args:
+        result: The person-search result to merge.
+        config: Effective user config (needs cv_path).
+        db: The user's database, for CV cache read/write.
+        client: LLM client used to parse the current CV.
+        target: User name, for messages.
+    """
+    from job_scout.cv_parser import compute_cv_hash, parse_cv  # noqa: PLC0415
+    from job_scout.cv_profile import get_or_parse_cv_profile  # noqa: PLC0415
+    from job_scout.linkedin_import import merge_linkedin_into_profile  # noqa: PLC0415
+
+    try:
+        raw_cv_text = parse_cv(config.cv_path or "")
+    except FileNotFoundError as e:
+        click.echo(str(e), err=True)
+        sys.exit(1)
+    if not raw_cv_text:
+        click.echo("Failed to extract text from CV file.", err=True)
+        sys.exit(1)
+
+    current_profile = get_or_parse_cv_profile(raw_cv_text, client, db)
+    candidate_data: dict[str, list[Any]] = {
+        "skills": result.skills,
+        "education": result.education,
+        "past_roles": [r.model_dump() for r in result.past_roles],
+    }
+    merged_profile, diff = merge_linkedin_into_profile(current_profile, candidate_data)
+
+    click.echo("\n" + "=" * 50)
+    click.echo("Proposed additions (inferred from a name search -- review carefully):")
+    click.echo("=" * 50)
+    for skill in diff["added_skills"]:
+        click.echo(f"  + Skill: {skill}")
+    for edu in diff["added_education"]:
+        click.echo(f"  + Education: {edu}")
+    for role in diff["added_roles"]:
+        click.echo(f"  + Role: {role['title']} at {role['company']}")
+
+    if not any(diff.values()):
+        click.echo("  (everything found is already in your CV)")
+        return
+
+    click.echo("\n" + "=" * 50)
+    if click.confirm("Apply these changes?"):
+        cv_hash = compute_cv_hash(raw_cv_text)
+        db.save_cv_profile_cache(cv_hash, json.dumps(merged_profile.model_dump()))
+        click.echo("Profile updated successfully!")
+    else:
+        click.echo("Cancelled.", err=True)
 
 
 @profile_group.command("tailor-resume")

@@ -5,15 +5,59 @@ from __future__ import annotations
 import tempfile
 import zipfile
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from job_scout.linkedin_import import (
     LinkedInProfileImporter,
+    _clean_ld_text,
+    _extract_profile_from_html,
+    _find_person_ld,
+    _is_redacted,
     compute_linkedin_hash,
     merge_linkedin_into_profile,
 )
 from job_scout.models import CvProfile, CvRole
+
+# Mirrors LinkedIn's real anonymous-visitor response: the current employer and
+# one school survive, but historical titles/companies are asterisk-masked.
+_SAMPLE_LD_HTML = """
+<html><head>
+<script type="application/ld+json">
+{
+  "@context": "http://schema.org",
+  "@graph": [
+    {"@type": "WebPage", "url": "https://nl.linkedin.com/in/example"},
+    {
+      "@type": "Person",
+      "name": "Jane Doe",
+      "alumniOf": [
+        {
+          "@type": "EducationalOrganization",
+          "name": "Technische Universiteit Delft",
+          "member": {"@type": "OrganizationRole", "startDate": 2018, "endDate": 2019}
+        },
+        {
+          "@type": "EducationalOrganization",
+          "name": "***** ****** *** ***",
+          "member": {"@type": "OrganizationRole", "startDate": 2014, "endDate": 2018}
+        }
+      ],
+      "knowsAbout": ["Python", "*********"],
+      "jobTitle": ["******** ******", "********"]
+    }
+  ]
+}
+</script>
+</head><body></body></html>
+"""
+
+_FULLY_REDACTED_HTML = """
+<script type="application/ld+json">
+{"@graph": [{"@type": "Person", "name": "****", "alumniOf": [], "knowsAbout": []}]}
+</script>
+"""
 
 
 class TestLinkedInProfileImporter:
@@ -265,3 +309,172 @@ class TestComputeLinkedInHash:
         hash1 = compute_linkedin_hash(data1)
         hash2 = compute_linkedin_hash(data2)
         assert hash1 == hash2
+
+
+class TestRedactionDetection:
+    """Test detection of LinkedIn's asterisk-masked placeholder fields."""
+
+    def test_all_asterisks_is_redacted(self) -> None:
+        """A fully masked value is recognised as redacted."""
+        assert _is_redacted("******** ******") is True
+
+    def test_blank_is_redacted(self) -> None:
+        """Empty/whitespace values count as redacted."""
+        assert _is_redacted("") is True
+        assert _is_redacted("   ") is True
+
+    def test_real_text_is_not_redacted(self) -> None:
+        """Genuine text is not treated as redacted."""
+        assert _is_redacted("Technische Universiteit Delft") is False
+
+    def test_clean_ld_text_drops_redacted(self) -> None:
+        """_clean_ld_text returns None for masked values."""
+        assert _clean_ld_text("*****") is None
+
+    def test_clean_ld_text_drops_non_strings(self) -> None:
+        """_clean_ld_text returns None for non-string values."""
+        assert _clean_ld_text(None) is None
+        assert _clean_ld_text(123) is None
+
+    def test_clean_ld_text_strips_real_value(self) -> None:
+        """_clean_ld_text returns stripped text for genuine values."""
+        assert _clean_ld_text("  Acme Corp  ") == "Acme Corp"
+
+
+class TestFindPersonLd:
+    """Test locating the schema.org Person node inside a profile page."""
+
+    def test_finds_person_node_in_graph(self) -> None:
+        """The Person node is extracted from the JSON-LD @graph."""
+        person = _find_person_ld(_SAMPLE_LD_HTML)
+        assert person is not None
+        assert person["name"] == "Jane Doe"
+
+    def test_returns_none_when_no_ld_json(self) -> None:
+        """Pages without JSON-LD yield None instead of raising."""
+        assert _find_person_ld("<html><body>no data here</body></html>") is None
+
+    def test_returns_none_on_malformed_json(self) -> None:
+        """Malformed JSON-LD is skipped rather than raising."""
+        html = '<script type="application/ld+json">{not valid json</script>'
+        assert _find_person_ld(html) is None
+
+
+class TestExtractProfileFromHtml:
+    """Test redaction-aware extraction used by the URL-fetch path."""
+
+    def test_extracts_unredacted_education_with_dates(self) -> None:
+        """Visible schools are extracted with their date range."""
+        data = _extract_profile_from_html(_SAMPLE_LD_HTML)
+        assert any("Technische Universiteit Delft" in e for e in data["education"])
+        assert any("2018" in e and "2019" in e for e in data["education"])
+
+    def test_skips_redacted_education_entries(self) -> None:
+        """Masked school names are dropped, not imported as asterisks."""
+        data = _extract_profile_from_html(_SAMPLE_LD_HTML)
+        assert len(data["education"]) == 1
+        assert all("*" not in e for e in data["education"])
+
+    def test_extracts_unredacted_skills_only(self) -> None:
+        """Masked skills are dropped; visible ones are kept."""
+        data = _extract_profile_from_html(_SAMPLE_LD_HTML)
+        assert data["skills"] == ["Python"]
+
+    def test_never_returns_roles_from_url_fetch(self) -> None:
+        """Job titles are always masked for anonymous requests, so roles is empty."""
+        data = _extract_profile_from_html(_SAMPLE_LD_HTML)
+        assert data["past_roles"] == []
+
+    def test_fully_redacted_profile_returns_all_empty(self) -> None:
+        """A wholly masked profile yields no data rather than junk."""
+        data = _extract_profile_from_html(_FULLY_REDACTED_HTML)
+        assert data == {"skills": [], "education": [], "past_roles": []}
+
+    def test_no_person_node_returns_all_empty(self) -> None:
+        """Pages without a Person node degrade to empty data."""
+        data = _extract_profile_from_html("<html>nothing</html>")
+        assert data == {"skills": [], "education": [], "past_roles": []}
+
+
+class TestFetchProfileUrlWithMockedRequest:
+    """Test fetch_profile_url end-to-end against a mocked HTTP response."""
+
+    def test_fetch_returns_extracted_data_when_allowed(self) -> None:
+        """An allowed fetch parses the response into profile data."""
+        mock_resp = MagicMock()
+        mock_resp.text = _SAMPLE_LD_HTML
+        mock_resp.raise_for_status.return_value = None
+        with patch("requests.get", return_value=mock_resp):
+            data = LinkedInProfileImporter.fetch_profile_url(
+                "https://www.linkedin.com/in/example", allow_fetch=True
+            )
+        assert data["skills"] == ["Python"]
+        assert len(data["education"]) == 1
+        assert data["past_roles"] == []
+
+    def test_fetch_raises_runtime_error_on_request_failure(self) -> None:
+        """Network failures surface as RuntimeError with a clear message."""
+        import requests
+
+        with (
+            patch("requests.get", side_effect=requests.ConnectionError("boom")),
+            pytest.raises(RuntimeError, match="Failed to fetch"),
+        ):
+            LinkedInProfileImporter.fetch_profile_url(
+                "https://www.linkedin.com/in/example", allow_fetch=True
+            )
+
+
+class TestFetchProfileBlockedStatus:
+    """Test handling of LinkedIn's HTTP 999 bot-block responses."""
+
+    def test_retries_past_transient_block(self) -> None:
+        """A 999 block is retried, and a later 200 succeeds."""
+        blocked = MagicMock()
+        blocked.status_code = 999
+        blocked.text = "blocked stub"
+        ok = MagicMock()
+        ok.status_code = 200
+        ok.text = _SAMPLE_LD_HTML
+        ok.raise_for_status.return_value = None
+
+        with (
+            patch("requests.get", side_effect=[blocked, ok]) as get,
+            patch("job_scout.linkedin_import.sleep"),
+        ):
+            data = LinkedInProfileImporter.fetch_profile_url(
+                "https://www.linkedin.com/in/example", allow_fetch=True
+            )
+        assert get.call_count == 2
+        assert data["skills"] == ["Python"]
+
+    def test_all_attempts_blocked_raises_actionable_error(self) -> None:
+        """Persistent blocking raises rather than silently returning nothing."""
+        blocked = MagicMock()
+        blocked.status_code = 999
+        blocked.text = "blocked stub"
+
+        with (
+            patch("requests.get", return_value=blocked),
+            patch("job_scout.linkedin_import.sleep"),
+            pytest.raises(RuntimeError, match="blocked every fetch attempt"),
+        ):
+            LinkedInProfileImporter.fetch_profile_url(
+                "https://www.linkedin.com/in/example", allow_fetch=True
+            )
+
+    def test_blocked_error_points_to_safer_methods(self) -> None:
+        """The error tells the user which import methods actually work."""
+        blocked = MagicMock()
+        blocked.status_code = 999
+        blocked.text = "blocked stub"
+
+        with (
+            patch("requests.get", return_value=blocked),
+            patch("job_scout.linkedin_import.sleep"),
+            pytest.raises(RuntimeError) as exc_info,
+        ):
+            LinkedInProfileImporter.fetch_profile_url(
+                "https://www.linkedin.com/in/example", allow_fetch=True
+            )
+        assert "paste" in str(exc_info.value).lower()

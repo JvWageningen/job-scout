@@ -389,6 +389,25 @@ class CvProfile(BaseModel):
     past_roles: list[CvRole] = Field(default_factory=list)
 
 
+class PersonSearchResult(BaseModel):
+    """Supplementary CV data inferred from a public web search on a person's name.
+
+    Low-confidence by nature: a name search can match the wrong person, so
+    results are meant for review before merging into a CvProfile, never
+    applied automatically.
+    """
+
+    full_name: str
+    skills: list[str] = Field(default_factory=list)
+    education: list[str] = Field(default_factory=list)
+    past_roles: list[CvRole] = Field(default_factory=list)
+    summary: str = ""
+    confidence: str = "low"  # low / medium / high
+    notes: str = ""  # disambiguation caveats, e.g. "common name, low confidence"
+    sources: list[str] = Field(default_factory=list)
+    searched_at: datetime | None = None
+
+
 class StarStory(BaseModel):
     """A STAR (Situation, Task, Action, Result) story for interview preparation."""
 

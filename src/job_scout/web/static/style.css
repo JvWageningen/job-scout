@@ -704,3 +704,23 @@ footer {
     background: #fdecea;
     color: #c0392b;
 }
+
+/* Profile enrichment: LinkedIn import + web person search */
+.enrichment-panel {
+    background-color: #f5f5f5;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    padding: 15px;
+    margin-top: 10px;
+}
+.enrichment-panel h4 {
+    margin-top: 0;
+    margin-bottom: 8px;
+}
+#enrichment-diff ul {
+    margin: 0.4rem 0;
+    padding-left: 1.2rem;
+}
+#enrichment-diff li {
+    color: #2e7d32;
+}

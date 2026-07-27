@@ -224,6 +224,9 @@ function setupEventListeners() {
             el.addEventListener('change', loadRejectedJobs);
         }
     });
+
+    // Profile enrichment (LinkedIn import + web person search)
+    initEnrichmentUI();
 }
 
 /**
@@ -814,6 +817,7 @@ async function loadAllUserData() {
 
     await Promise.all([
         loadProfileData(),
+        loadCVProfile(),
         loadNotificationData(),
         loadSitesData(),
         loadLLMSettings(),
@@ -915,15 +919,16 @@ async function loadCVProfile() {
         if (profile.past_roles && profile.past_roles.length > 0) {
             profile.past_roles.forEach(role => {
                 const div = document.createElement('div');
-                div.textContent = role;
+                let text = `${role.title} at ${role.company}`;
+                if (role.start_date) {
+                    text += ` (${role.start_date} - ${role.end_date || 'present'})`;
+                }
+                div.textContent = text;
                 rolesList.appendChild(div);
             });
         } else {
             rolesList.innerHTML = '<span>No past roles information</span>';
         }
-
-        // Load CV profile
-        await loadCVProfile();
 
     } catch (error) {
         console.error('Error loading CV profile:', error);
@@ -931,6 +936,197 @@ async function loadCVProfile() {
         error.style.display = 'block';
         error.textContent = 'Error loading CV profile: ' + error.message;
     }
+}
+
+/**
+ * Wire up the LinkedIn import + person-search enrichment panel.
+ */
+function initEnrichmentUI() {
+    const methodSelect = document.getElementById('linkedin-method');
+    if (methodSelect) {
+        methodSelect.addEventListener('change', () => {
+            showLinkedInMethodGroup(methodSelect.value);
+        });
+    }
+
+    const previewBtn = document.getElementById('linkedin-preview-btn');
+    if (previewBtn) {
+        previewBtn.addEventListener('click', previewLinkedInImport);
+    }
+
+    const searchBtn = document.getElementById('person-search-btn');
+    if (searchBtn) {
+        searchBtn.addEventListener('click', previewPersonSearch);
+    }
+
+    const applyBtn = document.getElementById('enrichment-apply-btn');
+    if (applyBtn) {
+        applyBtn.addEventListener('click', applyEnrichment);
+    }
+}
+
+/**
+ * Show only the input group matching the selected LinkedIn import method.
+ */
+function showLinkedInMethodGroup(method) {
+    const groups = {
+        paste: document.getElementById('linkedin-paste-group'),
+        file: document.getElementById('linkedin-file-group'),
+        url: document.getElementById('linkedin-url-group'),
+    };
+    Object.entries(groups).forEach(([key, el]) => {
+        if (el) {
+            el.classList.toggle('hidden', key !== method);
+        }
+    });
+}
+
+// Holds the last previewed request so "Apply" can re-send it with apply=true.
+let _pendingEnrichment = null;
+
+/**
+ * Preview a LinkedIn import (nothing is persisted until "Apply" is clicked).
+ */
+async function previewLinkedInImport() {
+    if (!currentUser) {
+        alert('Please select a user first');
+        return;
+    }
+
+    const method = document.getElementById('linkedin-method').value;
+    const body = { user: currentUser, method, apply: false };
+    if (method === 'paste') {
+        body.text = document.getElementById('linkedin-paste-text').value;
+    } else if (method === 'file') {
+        body.file_path = document.getElementById('linkedin-file-path').value;
+    } else if (method === 'url') {
+        body.profile_url = document.getElementById('linkedin-url').value;
+        body.allow_fetch = document.getElementById('linkedin-allow-fetch').checked;
+    }
+
+    await runEnrichmentPreview('/profile/import-linkedin', body);
+}
+
+/**
+ * Preview a public web search for the current user's name.
+ */
+async function previewPersonSearch() {
+    if (!currentUser) {
+        alert('Please select a user first');
+        return;
+    }
+    const context = document.getElementById('person-search-context').value;
+    const body = { user: currentUser, apply: false };
+    if (context) {
+        body.known_context = context;
+    }
+    await runEnrichmentPreview('/profile/search-person', body);
+}
+
+/**
+ * POST an enrichment request and render the resulting diff.
+ */
+async function runEnrichmentPreview(path, body) {
+    const container = document.getElementById('enrichment-result');
+    const loading = document.getElementById('enrichment-loading');
+    const errorEl = document.getElementById('enrichment-error');
+    const diffEl = document.getElementById('enrichment-diff');
+    const applyBtn = document.getElementById('enrichment-apply-btn');
+
+    container.classList.remove('hidden');
+    loading.classList.remove('hidden');
+    errorEl.classList.add('hidden');
+    diffEl.innerHTML = '';
+    applyBtn.classList.add('hidden');
+    _pendingEnrichment = null;
+
+    try {
+        const response = await fetchWithAuth(`${API_BASE}${path}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        });
+        const data = await response.json();
+        loading.classList.add('hidden');
+
+        if (!response.ok) {
+            errorEl.classList.remove('hidden');
+            errorEl.textContent = data.detail || 'Request failed';
+            return;
+        }
+
+        renderEnrichmentDiff(data, path, body);
+    } catch (err) {
+        loading.classList.add('hidden');
+        errorEl.classList.remove('hidden');
+        errorEl.textContent = 'Error: ' + err.message;
+    }
+}
+
+/**
+ * Render a proposed (or applied) diff, plus any person-search metadata.
+ */
+function renderEnrichmentDiff(data, path, requestBody) {
+    const diffEl = document.getElementById('enrichment-diff');
+    const applyBtn = document.getElementById('enrichment-apply-btn');
+    const diff = data.diff || { added_skills: [], added_education: [], added_roles: [] };
+
+    let html = '';
+    if (data.result) {
+        const r = data.result;
+        html += `<p><strong>Confidence:</strong> ${escapeHtml(r.confidence)}</p>`;
+        if (r.summary) {
+            html += `<p>${escapeHtml(r.summary)}</p>`;
+        }
+        if (r.notes) {
+            html += `<p class="review-confidence">Note: ${escapeHtml(r.notes)}</p>`;
+        }
+    }
+    if (data.warning) {
+        html += `<p>${escapeHtml(data.warning)}</p>`;
+    }
+
+    const hasChanges =
+        diff.added_skills.length || diff.added_education.length || diff.added_roles.length;
+
+    if (!hasChanges) {
+        html += '<p>No new additions found — everything is already in your CV.</p>';
+        diffEl.innerHTML = html;
+        return;
+    }
+
+    html += `<p><strong>${data.applied ? 'Applied' : 'Proposed'} additions:</strong></p><ul>`;
+    diff.added_skills.forEach((s) => {
+        html += `<li>+ Skill: ${escapeHtml(s)}</li>`;
+    });
+    diff.added_education.forEach((e) => {
+        html += `<li>+ Education: ${escapeHtml(e)}</li>`;
+    });
+    diff.added_roles.forEach((r) => {
+        html += `<li>+ Role: ${escapeHtml(r.title)} at ${escapeHtml(r.company)}</li>`;
+    });
+    html += '</ul>';
+    diffEl.innerHTML = html;
+
+    if (data.applied) {
+        applyBtn.classList.add('hidden');
+        _pendingEnrichment = null;
+    } else {
+        _pendingEnrichment = { path, requestBody };
+        applyBtn.classList.remove('hidden');
+    }
+}
+
+/**
+ * Re-send the last previewed request with apply=true to persist it.
+ */
+async function applyEnrichment() {
+    if (!_pendingEnrichment) {
+        return;
+    }
+    const { path, requestBody } = _pendingEnrichment;
+    await runEnrichmentPreview(path, { ...requestBody, apply: true });
+    await loadCVProfile();
 }
 
 async function loadProfileData() {
@@ -950,6 +1146,9 @@ async function loadProfileData() {
         document.getElementById('negative-desc').value = config.negative_description || '';
         document.getElementById('cv-path').value = config.cv_path || '';
         document.getElementById('cv-notes').value = config.cv_notes || '';
+        document.getElementById('linkedin-profile-url-setting').value = config.linkedin_profile_url || '';
+        document.getElementById('linkedin-allow-fetch-setting').checked = !!config.linkedin_import_allow_url_fetch;
+        document.getElementById('linkedin-url').value = config.linkedin_profile_url || '';
         document.getElementById('salary-min').value = config.min_salary ?? '';
         document.getElementById('salary-max').value = config.max_salary ?? '';
         document.getElementById('max-distance-km').value = config.max_distance_km ?? '';
@@ -989,6 +1188,8 @@ async function saveProfile() {
         negative_description: document.getElementById('negative-desc').value,
         cv_path: document.getElementById('cv-path').value,
         cv_notes: document.getElementById('cv-notes').value,
+        linkedin_profile_url: document.getElementById('linkedin-profile-url-setting').value,
+        linkedin_import_allow_url_fetch: document.getElementById('linkedin-allow-fetch-setting').checked,
         min_salary: document.getElementById('salary-min').value,
         max_salary: document.getElementById('salary-max').value,
         max_distance_km: document.getElementById('max-distance-km').value,
