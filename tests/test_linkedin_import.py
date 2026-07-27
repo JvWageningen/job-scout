@@ -15,10 +15,13 @@ from job_scout.linkedin_import import (
     _extract_profile_from_html,
     _find_person_ld,
     _is_redacted,
+    _same_company,
+    apply_current_role_correction,
     compute_linkedin_hash,
+    detect_stale_current_role,
     merge_linkedin_into_profile,
 )
-from job_scout.models import CvProfile, CvRole
+from job_scout.models import CurrentRoleConflict, CvProfile, CvRole
 
 # Mirrors LinkedIn's real anonymous-visitor response: the current employer and
 # one school survive, but historical titles/companies are asterisk-masked.
@@ -388,12 +391,22 @@ class TestExtractProfileFromHtml:
     def test_fully_redacted_profile_returns_all_empty(self) -> None:
         """A wholly masked profile yields no data rather than junk."""
         data = _extract_profile_from_html(_FULLY_REDACTED_HTML)
-        assert data == {"skills": [], "education": [], "past_roles": []}
+        assert data == {
+            "skills": [],
+            "education": [],
+            "past_roles": [],
+            "current_company": None,
+        }
 
     def test_no_person_node_returns_all_empty(self) -> None:
         """Pages without a Person node degrade to empty data."""
         data = _extract_profile_from_html("<html>nothing</html>")
-        assert data == {"skills": [], "education": [], "past_roles": []}
+        assert data == {
+            "skills": [],
+            "education": [],
+            "past_roles": [],
+            "current_company": None,
+        }
 
 
 class TestFetchProfileUrlWithMockedRequest:
@@ -478,3 +491,154 @@ class TestFetchProfileBlockedStatus:
                 "https://www.linkedin.com/in/example", allow_fetch=True
             )
         assert "paste" in str(exc_info.value).lower()
+
+
+class TestCurrentEmployerExtraction:
+    """Test recovery of the current employer, which LinkedIn leaves unmasked."""
+
+    def test_extracts_unmasked_current_employer(self) -> None:
+        """The first visible worksFor entry is the current employer."""
+        html = """
+        <script type="application/ld+json">
+        {"@graph": [{"@type": "Person", "worksFor": [
+          {"@type": "Organization", "name": "NMi, Netherlands Measurement Institute"},
+          {"@type": "Organization", "name": "***** **** ******* **"}
+        ]}]}
+        </script>
+        """
+        data = _extract_profile_from_html(html)
+        assert data["current_company"] == "NMi, Netherlands Measurement Institute"
+
+    def test_all_employers_masked_yields_none(self) -> None:
+        """A fully masked worksFor gives no current employer."""
+        html = """
+        <script type="application/ld+json">
+        {"@graph": [{"@type": "Person", "worksFor": [
+          {"@type": "Organization", "name": "**** ****"}
+        ]}]}
+        </script>
+        """
+        assert _extract_profile_from_html(html)["current_company"] is None
+
+    def test_missing_works_for_yields_none(self) -> None:
+        """A profile with no worksFor gives no current employer."""
+        assert (
+            _extract_profile_from_html(_FULLY_REDACTED_HTML)["current_company"] is None
+        )
+
+
+class TestCompanyNameMatching:
+    """Test tolerant company-name comparison."""
+
+    def test_ignores_legal_suffixes(self) -> None:
+        """Legal forms do not prevent a match."""
+        assert _same_company("Laser 2000 Benelux C.V.", "Laser 2000 Benelux") is True
+        assert _same_company("Acme B.V.", "Acme") is True
+
+    def test_distinct_companies_do_not_match(self) -> None:
+        """Genuinely different employers do not match."""
+        assert _same_company("NMi", "Laser 2000 Benelux") is False
+
+    def test_blank_names_do_not_match(self) -> None:
+        """Empty or noise-only names never match."""
+        assert _same_company("", "Acme") is False
+        assert _same_company("B.V.", "Acme") is False
+
+
+class TestStaleCurrentRoleDetection:
+    """Test detecting a CV whose open-ended role is out of date."""
+
+    def _profile(self) -> CvProfile:
+        return CvProfile(
+            past_roles=[
+                CvRole(
+                    title="Application Engineer",
+                    company="NLR",
+                    start_date="2019-11",
+                    end_date="2020-02",
+                ),
+                CvRole(
+                    title="Photonics Sales Engineer",
+                    company="Laser 2000 Benelux C.V.",
+                    start_date="2021-03",
+                    end_date=None,
+                ),
+            ]
+        )
+
+    def test_detects_conflict_with_newer_employer(self) -> None:
+        """A different current employer is reported as a conflict."""
+        conflict = detect_stale_current_role(self._profile(), "NMi")
+        assert conflict is not None
+        assert conflict.cv_current_company == "Laser 2000 Benelux C.V."
+        assert conflict.cv_current_title == "Photonics Sales Engineer"
+        assert conflict.linkedin_current_company == "NMi"
+
+    def test_no_conflict_when_cv_already_current(self) -> None:
+        """A CV that already names the real employer reports no conflict."""
+        assert detect_stale_current_role(self._profile(), "Laser 2000 Benelux") is None
+
+    def test_no_conflict_without_linkedin_data(self) -> None:
+        """Without a LinkedIn employer there is nothing to compare against."""
+        assert detect_stale_current_role(self._profile(), None) is None
+
+    def test_conflict_when_cv_has_no_open_role(self) -> None:
+        """A CV with every role closed still learns the current employer."""
+        profile = CvProfile(
+            past_roles=[
+                CvRole(title="Engineer", company="NLR", end_date="2020-02"),
+            ]
+        )
+        conflict = detect_stale_current_role(profile, "NMi")
+        assert conflict is not None
+        assert conflict.cv_current_company is None
+        assert conflict.linkedin_current_company == "NMi"
+
+
+class TestApplyCurrentRoleCorrection:
+    """Test rewriting employment history once a conflict is confirmed."""
+
+    def _conflict_and_profile(self) -> tuple[CvProfile, CurrentRoleConflict]:
+        profile = CvProfile(
+            past_roles=[
+                CvRole(
+                    title="Photonics Sales Engineer",
+                    company="Laser 2000 Benelux C.V.",
+                    start_date="2021-03",
+                    end_date=None,
+                )
+            ]
+        )
+        conflict = detect_stale_current_role(profile, "NMi")
+        assert conflict is not None
+        return profile, conflict
+
+    def test_closes_stale_role_and_appends_current(self) -> None:
+        """The stale role gets an end date and the real role becomes current."""
+        profile, conflict = self._conflict_and_profile()
+        fixed = apply_current_role_correction(
+            profile,
+            conflict,
+            new_title="Approval Expert",
+            started="2024-01",
+            ended_previous="2023-12",
+        )
+        assert fixed.past_roles[0].end_date == "2023-12"
+        assert fixed.past_roles[-1].title == "Approval Expert"
+        assert fixed.past_roles[-1].company == "NMi"
+        assert fixed.past_roles[-1].end_date is None
+
+    def test_exactly_one_role_remains_current(self) -> None:
+        """Correction must not leave two open-ended roles."""
+        profile, conflict = self._conflict_and_profile()
+        fixed = apply_current_role_correction(
+            profile, conflict, new_title="Approval Expert"
+        )
+        assert sum(1 for r in fixed.past_roles if not r.end_date) == 1
+
+    def test_does_not_mutate_the_original_profile(self) -> None:
+        """Correction returns a new profile and leaves the input untouched."""
+        profile, conflict = self._conflict_and_profile()
+        apply_current_role_correction(profile, conflict, new_title="Approval Expert")
+        assert profile.past_roles[0].end_date is None
+        assert len(profile.past_roles) == 1

@@ -89,6 +89,39 @@ class CompanyReview(BaseModel):
     reviewed_at: datetime | None = None
 
 
+class CareerTrack(BaseModel):
+    """One direction a candidate is willing to move in.
+
+    A person is often open to several genuinely different searches (say a
+    quality/efficiency role or an R&D role). A single blended profile
+    describes that badly: no real vacancy matches all of it, so everything
+    scores middling. Each standalone track is evaluated as its own search.
+
+    Some interests are not a job of their own but a flavour the candidate
+    wants *within* another role -- "some coding and AI-tool building" is a
+    good example. Those are ``blend`` tracks: never searched alone, folded
+    into every standalone track instead.
+    """
+
+    id: str
+    name: str
+    description: str = ""
+    negative_description: str = ""
+    keywords_dutch: list[str] = Field(default_factory=list)
+    keywords_english: list[str] = Field(default_factory=list)
+    mode: Literal["standalone", "blend"] = "standalone"
+    required: bool = False  # blend only: must-have rather than a bonus
+    enabled: bool = True
+
+
+class TrackScore(BaseModel):
+    """How well one job fits one career track."""
+
+    track_id: str
+    track_name: str = ""
+    fit_score: int | None = None
+
+
 class JobListing(BaseModel):
     """A single job listing with evaluation metadata."""
 
@@ -104,6 +137,11 @@ class JobListing(BaseModel):
     fit_reasoning: str | None = None
     negative_match: bool = False
     negative_reasoning: str | None = None
+    # Which career track this job was matched on, and its score per track.
+    # Empty for single-profile users, so existing behaviour is unchanged.
+    primary_track_id: str | None = None
+    primary_track_name: str | None = None
+    track_scores: list[TrackScore] = Field(default_factory=list)
     salary_min: int | None = None
     salary_max: int | None = None
     salary_period: str | None = None
@@ -177,6 +215,9 @@ class Config(BaseModel):
     max_travel_bike: int = 45
     profile_description: str = ""
     negative_description: str = ""
+    # Optional multi-track search. Empty means "single profile", in which case
+    # profile_description/negative_description are used exactly as before.
+    career_tracks: list[CareerTrack] = Field(default_factory=list)
     cv_path: str | None = None
     cv_notes: str = ""
     keywords_dutch: list[str] = Field(default_factory=list)
@@ -387,6 +428,19 @@ class CvProfile(BaseModel):
     years_experience: int | None = None
     education: list[str] = Field(default_factory=list)
     past_roles: list[CvRole] = Field(default_factory=list)
+
+
+class CurrentRoleConflict(BaseModel):
+    """A CV whose open-ended "current" role disagrees with a newer source.
+
+    An out-of-date CV keeps an old job open-ended, so the evaluator treats it
+    as the candidate's current work and matches against the wrong role.
+    """
+
+    cv_current_title: str | None = None
+    cv_current_company: str | None = None
+    cv_current_since: str | None = None
+    linkedin_current_company: str
 
 
 class PersonSearchResult(BaseModel):

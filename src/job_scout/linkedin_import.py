@@ -14,7 +14,32 @@ from typing import Any, cast
 
 from loguru import logger
 
-from job_scout.models import CvProfile, CvRole
+from job_scout.models import CurrentRoleConflict, CvProfile, CvRole
+
+# Legal-form and filler tokens dropped when comparing company names.
+_COMPANY_NOISE_WORDS = frozenset(
+    {
+        "bv",
+        "b",
+        "v",
+        "nv",
+        "n",
+        "cv",
+        "c",
+        "vof",
+        "holding",
+        "group",
+        "groep",
+        "inc",
+        "ltd",
+        "llc",
+        "gmbh",
+        "sa",
+        "the",
+        "de",
+        "het",
+    }
+)
 
 _LD_JSON_RE = re.compile(
     r'<script[^>]*type="application/ld\+json"[^>]*>(.*?)</script>', re.S
@@ -335,23 +360,50 @@ def _clean_ld_text(value: object) -> str | None:
     return None if not text or _is_redacted(text) else text
 
 
-def _extract_profile_from_html(html: str) -> dict[str, list[Any]]:
+def _current_employer(person: dict[str, Any]) -> str | None:
+    """Return the profile's current employer name, if LinkedIn left it visible.
+
+    LinkedIn masks previous employers and every job title for anonymous
+    visitors, but keeps the *current* employer readable (it is also in the
+    page title and meta description). That single fact is enough to detect a
+    CV whose "current" role is out of date.
+
+    Args:
+        person: The schema.org Person node.
+
+    Returns:
+        The current employer name, or None if absent or masked.
+    """
+    for org in person.get("worksFor") or []:
+        if isinstance(org, dict) and (name := _clean_ld_text(org.get("name"))):
+            return name
+    return None
+
+
+def _extract_profile_from_html(html: str) -> dict[str, Any]:
     """Extract whatever public, non-redacted profile data is present.
 
-    Only education and public skill tags are extracted -- LinkedIn hides
-    every historical job title from anonymous/automated requests, so
-    past_roles is always empty from this path.
+    Only education, public skill tags, and the current employer are
+    extractable -- LinkedIn hides every historical job title from
+    anonymous/automated requests, so past_roles is always empty here.
 
     Args:
         html: Raw HTML of the profile page.
 
     Returns:
-        Dictionary with extracted profile data (skills, education, roles).
+        Dictionary with skills, education, past_roles, and current_company.
     """
-    data: dict[str, list[Any]] = {"skills": [], "education": [], "past_roles": []}
+    data: dict[str, Any] = {
+        "skills": [],
+        "education": [],
+        "past_roles": [],
+        "current_company": None,
+    }
     person = _find_person_ld(html)
     if not person:
         return data
+
+    data["current_company"] = _current_employer(person)
 
     for edu in person.get("alumniOf") or []:
         if not isinstance(edu, dict):
@@ -369,7 +421,7 @@ def _extract_profile_from_html(html: str) -> dict[str, list[Any]]:
         if cleaned := _clean_ld_text(skill):
             data["skills"].append(cleaned)
 
-    if not data["education"] and not data["skills"]:
+    if not any((data["education"], data["skills"], data["current_company"])):
         logger.warning(
             "LinkedIn anonymous fetch returned no usable data -- LinkedIn hides "
             "most profile data (including all historical job titles) from "
@@ -492,6 +544,117 @@ def _try_parse_role_from_text(line: str, lines: list[str], idx: int) -> CvRole |
             )
 
     return None
+
+
+def _normalise_company(name: str) -> str:
+    """Reduce a company name to a comparable core token set.
+
+    Strips legal suffixes and punctuation so "Laser 2000 Benelux C.V." and
+    "Laser 2000 Benelux" compare equal.
+
+    Args:
+        name: Raw company name.
+
+    Returns:
+        Normalised comparison key.
+    """
+    lowered = re.sub(r"[^\w\s]", " ", name.lower())
+    words = [w for w in lowered.split() if w not in _COMPANY_NOISE_WORDS]
+    return " ".join(words)
+
+
+def _same_company(left: str, right: str) -> bool:
+    """Return True when two company names plausibly refer to one employer.
+
+    Args:
+        left: First company name.
+        right: Second company name.
+
+    Returns:
+        True when the normalised names match or one contains the other.
+    """
+    a, b = _normalise_company(left), _normalise_company(right)
+    if not a or not b:
+        return False
+    return a == b or a in b or b in a
+
+
+def detect_stale_current_role(
+    profile: CvProfile, current_company: str | None
+) -> CurrentRoleConflict | None:
+    """Detect a CV whose open-ended role is no longer the person's real job.
+
+    A CV role with no end date is read as "current" everywhere downstream,
+    including by the fit evaluator. When a dated CV is uploaded, that role is
+    often an old one, which skews matching toward the wrong kind of work.
+
+    Args:
+        profile: The parsed CV profile.
+        current_company: Employer reported by LinkedIn, if known.
+
+    Returns:
+        A CurrentRoleConflict when the CV disagrees with LinkedIn, else None.
+    """
+    if not current_company:
+        return None
+
+    open_roles = [r for r in profile.past_roles if not r.end_date]
+    if any(_same_company(r.company, current_company) for r in open_roles):
+        return None  # CV already reflects the real employer
+
+    stale = open_roles[-1] if open_roles else None
+    return CurrentRoleConflict(
+        cv_current_title=stale.title if stale else None,
+        cv_current_company=stale.company if stale else None,
+        cv_current_since=stale.start_date if stale else None,
+        linkedin_current_company=current_company,
+    )
+
+
+def apply_current_role_correction(
+    profile: CvProfile,
+    conflict: CurrentRoleConflict,
+    *,
+    new_title: str,
+    started: str | None = None,
+    ended_previous: str | None = None,
+) -> CvProfile:
+    """Close the stale open-ended role and record the real current one.
+
+    Args:
+        profile: The CV profile to correct.
+        conflict: The detected conflict identifying the stale role.
+        new_title: Job title at the current employer (LinkedIn masks titles,
+            so this must be supplied by the user).
+        started: Start date at the current employer, if known.
+        ended_previous: End date to close the stale role with, if known.
+
+    Returns:
+        A new CvProfile with the corrected employment history.
+    """
+    roles: list[CvRole] = []
+    for role in profile.past_roles:
+        stale = (
+            not role.end_date
+            and conflict.cv_current_company is not None
+            and _same_company(role.company, conflict.cv_current_company)
+        )
+        roles.append(
+            role.model_copy(update={"end_date": ended_previous or "unknown"})
+            if stale
+            else role
+        )
+
+    roles.append(
+        CvRole(
+            title=new_title,
+            company=conflict.linkedin_current_company,
+            start_date=started,
+            end_date=None,
+            description=None,
+        )
+    )
+    return profile.model_copy(update={"past_roles": roles})
 
 
 def merge_linkedin_into_profile(
