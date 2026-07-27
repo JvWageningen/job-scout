@@ -4,6 +4,19 @@ Format: [Keep a Changelog](https://keepachangelog.com)
 
 <!-- version list -->
 
+## v1.9.0 (2026-07-27)
+
+### Bug Fixes
+
+- **config,cv**: Repair config list-field corruption and dict education parsing
+  ([`8ab7ec1`](https://github.com/JvWageningen/job-scout/commit/8ab7ec1426dac68475e5c57a8843b83564edf2d6))
+
+### Features
+
+- **profile**: LinkedIn import and web person search in the dashboard
+  ([`19e5e47`](https://github.com/JvWageningen/job-scout/commit/19e5e471386eaf208c323a3bfe734f4f52a6b0aa))
+
+
 ## v1.8.0 (2026-07-20)
 
 ### Features
