@@ -4,6 +4,28 @@ Format: [Keep a Changelog](https://keepachangelog.com)
 
 <!-- version list -->
 
+## v1.10.0 (2026-07-27)
+
+### Bug Fixes
+
+- **cv**: Detect a CV whose "current" role is out of date
+  ([`e5a169a`](https://github.com/JvWageningen/job-scout/commit/e5a169a40bbf0fe63d6175f53bac9c72db160550))
+
+### Features
+
+- **coach**: Guided intake that proposes concrete search directions
+  ([`507af46`](https://github.com/JvWageningen/job-scout/commit/507af46c4b3e52b7063b8aa907c7ed694a760841))
+
+- **linkedin**: Import full work history from the profile PDF
+  ([`2ceb86a`](https://github.com/JvWageningen/job-scout/commit/2ceb86a7915b935e0eedb5e003f2b7a9be18b81b))
+
+- **llm**: Default to the local provider
+  ([`5381203`](https://github.com/JvWageningen/job-scout/commit/5381203b587b44c8fe75ef1e70255b815314c683))
+
+- **tracks**: Search several career directions instead of one blended profile
+  ([`c9a811c`](https://github.com/JvWageningen/job-scout/commit/c9a811ca0bd3413d6fbb2fc9c5e1dc5faeb36f9b))
+
+
 ## v1.9.0 (2026-07-27)
 
 ### Bug Fixes
