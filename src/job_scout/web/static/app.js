@@ -227,6 +227,10 @@ function setupEventListeners() {
 
     // Profile enrichment (LinkedIn import + web person search)
     initEnrichmentUI();
+    initCoachUI();
+
+    // Coach suggestion chips are rendered dynamically, so delegate.
+    document.addEventListener('click', handleCoachOptionClick);
 }
 
 /**
@@ -417,6 +421,15 @@ function renderJobCard(job, rejected) {
     let meta = '';
     if (job.fit_score !== null && !rejected) {
         meta += `<span class="job-score ${scoreClass}">Score: ${job.fit_score}/100</span>`;
+    }
+    if (job.primary_track_name) {
+        const others = (job.track_scores || [])
+            .filter((s) => s.track_id !== job.primary_track_id && s.fit_score !== null)
+            .map((s) => `${escapeHtml(s.track_name || s.track_id)} ${s.fit_score}`)
+            .join(', ');
+        meta +=
+            `<span class="job-track" title="${others ? 'Also scored — ' + others : 'Matched direction'}">` +
+            `${escapeHtml(job.primary_track_name)}</span>`;
     }
     if (job.location) {
         meta += `<span>Location: ${escapeHtml(job.location)}</span>`;
@@ -818,6 +831,7 @@ async function loadAllUserData() {
     await Promise.all([
         loadProfileData(),
         loadCVProfile(),
+        loadTracks(),
         loadNotificationData(),
         loadSitesData(),
         loadLLMSettings(),
@@ -938,6 +952,248 @@ async function loadCVProfile() {
     }
 }
 
+// The coach's proposal, held until the user confirms it.
+let _coachProposal = null;
+
+/**
+ * Wire up the job-coach panel.
+ */
+function initCoachUI() {
+    const startBtn = document.getElementById('coach-start-btn');
+    if (startBtn) {
+        startBtn.addEventListener('click', startCoach);
+    }
+    const proposeBtn = document.getElementById('coach-propose-btn');
+    if (proposeBtn) {
+        proposeBtn.addEventListener('click', requestCoachProposal);
+    }
+    const cancelBtn = document.getElementById('coach-cancel-btn');
+    if (cancelBtn) {
+        cancelBtn.addEventListener('click', () => {
+            document.getElementById('coach-questions').classList.add('hidden');
+            document.getElementById('coach-result').classList.add('hidden');
+        });
+    }
+    const applyBtn = document.getElementById('coach-apply-btn');
+    if (applyBtn) {
+        applyBtn.addEventListener('click', applyCoachTracks);
+    }
+}
+
+/**
+ * Fetch the coach questions and render them as a short form.
+ */
+async function startCoach() {
+    if (!currentUser) {
+        alert('Please select a user first');
+        return;
+    }
+    const panel = document.getElementById('coach-questions');
+    const list = document.getElementById('coach-question-list');
+    list.innerHTML = '<p class="loading">Loading questions…</p>';
+    panel.classList.remove('hidden');
+
+    try {
+        const response = await fetchWithAuth(
+            `${API_BASE}/coach/questions?user=${encodeURIComponent(currentUser)}`
+        );
+        const data = await response.json();
+        if (!response.ok) {
+            list.innerHTML = `<p style="color:#d32f2f;">${escapeHtml(data.detail || 'Failed to load')}</p>`;
+            return;
+        }
+        list.innerHTML = data.questions.map(renderCoachQuestion).join('');
+    } catch (err) {
+        list.innerHTML = `<p style="color:#d32f2f;">Error: ${escapeHtml(err.message)}</p>`;
+    }
+}
+
+/**
+ * Render one coach question, with its suggested answers as quick-fill chips.
+ */
+function renderCoachQuestion(q) {
+    const options = (q.options || [])
+        .map(
+            (o) =>
+                `<button type="button" class="btn btn-secondary coach-option" data-for="coach-a-${escapeHtml(q.id)}" data-value="${escapeHtml(o)}">${escapeHtml(o)}</button>`
+        )
+        .join(' ');
+    return `
+        <div class="form-group coach-question" data-qid="${escapeHtml(q.id)}">
+            <label for="coach-a-${escapeHtml(q.id)}">${escapeHtml(q.question)}</label>
+            ${q.hint ? `<p class="info-text">${escapeHtml(q.hint)}</p>` : ''}
+            ${options ? `<div class="coach-options">${options}</div>` : ''}
+            <textarea id="coach-a-${escapeHtml(q.id)}" rows="2" placeholder="Your answer — or leave blank if you're not sure"></textarea>
+        </div>`;
+}
+
+/**
+ * Append a clicked suggestion into that question's answer box.
+ */
+function handleCoachOptionClick(event) {
+    const btn = event.target.closest('.coach-option');
+    if (!btn) {
+        return;
+    }
+    const box = document.getElementById(btn.dataset.for);
+    if (!box) {
+        return;
+    }
+    const value = btn.dataset.value;
+    box.value = box.value.trim() ? `${box.value.trim()}, ${value}` : value;
+}
+
+/**
+ * Send the answers to the coach and render its proposed directions.
+ */
+async function requestCoachProposal() {
+    const answers = Array.from(document.querySelectorAll('.coach-question')).map(
+        (el) => ({
+            id: el.dataset.qid,
+            answer: el.querySelector('textarea').value,
+        })
+    );
+
+    const box = document.getElementById('coach-result');
+    const loading = document.getElementById('coach-loading');
+    const errorEl = document.getElementById('coach-error');
+    const out = document.getElementById('coach-proposal');
+    const applyBtn = document.getElementById('coach-apply-btn');
+
+    box.classList.remove('hidden');
+    loading.classList.remove('hidden');
+    errorEl.classList.add('hidden');
+    applyBtn.classList.add('hidden');
+    out.innerHTML = '';
+    _coachProposal = null;
+
+    try {
+        const response = await fetchWithAuth(`${API_BASE}/coach/propose`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ user: currentUser, answers }),
+        });
+        const data = await response.json();
+        loading.classList.add('hidden');
+        if (!response.ok) {
+            errorEl.classList.remove('hidden');
+            errorEl.textContent = data.detail || 'The coach could not respond';
+            return;
+        }
+        _coachProposal = data;
+        out.innerHTML = renderCoachProposal(data);
+        if ((data.tracks || []).length) {
+            applyBtn.classList.remove('hidden');
+        }
+    } catch (err) {
+        loading.classList.add('hidden');
+        errorEl.classList.remove('hidden');
+        errorEl.textContent = 'Error: ' + err.message;
+    }
+}
+
+/**
+ * Render the coach's proposal as reviewable cards.
+ */
+function renderCoachProposal(data) {
+    let html = data.summary ? `<p>${escapeHtml(data.summary)}</p>` : '';
+    const tracks = data.tracks || [];
+    if (!tracks.length) {
+        return html + '<p>The coach could not suggest directions from those answers.</p>';
+    }
+    html += tracks.map(renderTrackCard).join('');
+    if (data.negative_description) {
+        html += `<p class="review-confidence">Will avoid: ${escapeHtml(data.negative_description)}</p>`;
+    }
+    if (data.follow_up) {
+        html += `<p class="review-confidence">Worth thinking about: ${escapeHtml(data.follow_up)}</p>`;
+    }
+    return html;
+}
+
+/**
+ * Render one career track as a card.
+ */
+function renderTrackCard(t) {
+    const badge =
+        t.mode === 'blend'
+            ? '<span class="badge badge-blend">blend — folded into the others</span>'
+            : '<span class="badge badge-open">standalone search</span>';
+    const kw = [...(t.keywords_dutch || []), ...(t.keywords_english || [])]
+        .slice(0, 6)
+        .map((k) => escapeHtml(k))
+        .join(', ');
+    return `
+        <div class="track-card">
+            <p><strong>${escapeHtml(t.name)}</strong> ${badge}</p>
+            <p>${escapeHtml(t.description || '')}</p>
+            ${kw ? `<p class="review-confidence">Keywords: ${kw}</p>` : ''}
+        </div>`;
+}
+
+/**
+ * Save the proposed directions as the user's career tracks.
+ */
+async function applyCoachTracks() {
+    if (!_coachProposal) {
+        return;
+    }
+    try {
+        const response = await fetchWithAuth(`${API_BASE}/coach/apply`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                user: currentUser,
+                tracks: _coachProposal.tracks,
+                negative_description: _coachProposal.negative_description,
+            }),
+        });
+        const data = await response.json();
+        if (!response.ok) {
+            alert(`Error: ${data.detail || 'Failed to save'}`);
+            return;
+        }
+        alert(`Saved ${data.saved} search directions.`);
+        document.getElementById('coach-apply-btn').classList.add('hidden');
+        document.getElementById('coach-questions').classList.add('hidden');
+        _coachProposal = null;
+        await loadTracks();
+    } catch (err) {
+        alert('Error saving directions: ' + err.message);
+    }
+}
+
+/**
+ * Load and display the user's configured search directions.
+ */
+async function loadTracks() {
+    if (!currentUser) {
+        return;
+    }
+    const container = document.getElementById('tracks-list');
+    if (!container) {
+        return;
+    }
+    try {
+        const response = await fetchWithAuth(
+            `${API_BASE}/config?user=${encodeURIComponent(currentUser)}`
+        );
+        if (!response.ok) {
+            return;
+        }
+        const config = await response.json();
+        const tracks = config.career_tracks || [];
+        if (!tracks.length) {
+            container.innerHTML =
+                '<p class="info-text">No separate directions configured — your profile description is used as a single search.</p>';
+            return;
+        }
+        container.innerHTML = tracks.map(renderTrackCard).join('');
+    } catch (err) {
+        console.error('Error loading tracks:', err);
+    }
+}
+
 /**
  * Wire up the LinkedIn import + person-search enrichment panel.
  */
@@ -970,6 +1226,7 @@ function initEnrichmentUI() {
  */
 function showLinkedInMethodGroup(method) {
     const groups = {
+        pdf: document.getElementById('linkedin-pdf-group'),
         paste: document.getElementById('linkedin-paste-group'),
         file: document.getElementById('linkedin-file-group'),
         url: document.getElementById('linkedin-url-group'),
@@ -994,6 +1251,20 @@ async function previewLinkedInImport() {
     }
 
     const method = document.getElementById('linkedin-method').value;
+    if (method === 'pdf') {
+        const pdfPath = document.getElementById('linkedin-pdf-path').value.trim();
+        if (!pdfPath) {
+            alert('Give the path to your LinkedIn profile PDF first');
+            return;
+        }
+        await runEnrichmentPreview('/profile/import-linkedin-pdf', {
+            user: currentUser,
+            pdf_path: pdfPath,
+            apply: false,
+        });
+        return;
+    }
+
     const body = { user: currentUser, method, apply: false };
     if (method === 'paste') {
         body.text = document.getElementById('linkedin-paste-text').value;
@@ -1085,14 +1356,37 @@ function renderEnrichmentDiff(data, path, requestBody) {
     if (data.warning) {
         html += `<p>${escapeHtml(data.warning)}</p>`;
     }
+    if (data.conflict) {
+        const c = data.conflict;
+        const was = c.cv_current_company
+            ? `${escapeHtml(c.cv_current_title || 'a role')} at ${escapeHtml(c.cv_current_company)}`
+            : 'nothing';
+        html +=
+            `<p class="review-confidence">Your CV still lists ${was} as your current job, ` +
+            `but LinkedIn shows <strong>${escapeHtml(c.linkedin_current_company)}</strong>. ` +
+            `Applying these changes will correct your work history.</p>`;
+    }
 
+    const updated = diff.updated_roles || [];
     const hasChanges =
-        diff.added_skills.length || diff.added_education.length || diff.added_roles.length;
+        diff.added_skills.length ||
+        diff.added_education.length ||
+        diff.added_roles.length ||
+        updated.length;
 
     if (!hasChanges) {
         html += '<p>No new additions found — everything is already in your CV.</p>';
         diffEl.innerHTML = html;
         return;
+    }
+
+    if (updated.length) {
+        html += `<p><strong>${data.applied ? 'Corrected' : 'Will correct'} existing roles:</strong></p><ul>`;
+        updated.forEach((r) => {
+            const until = r.end_date ? `until ${escapeHtml(r.end_date)}` : 'now current';
+            html += `<li>~ ${escapeHtml(r.title)} at ${escapeHtml(r.company)} — ${until}</li>`;
+        });
+        html += '</ul>';
     }
 
     html += `<p><strong>${data.applied ? 'Applied' : 'Proposed'} additions:</strong></p><ul>`;
@@ -1363,7 +1657,7 @@ async function loadLLMSettings() {
         }
 
         const config = await response.json();
-        document.getElementById('llm-provider').value = config.llm_provider || 'claude_cli';
+        document.getElementById('llm-provider').value = config.llm_provider || 'local';
         document.getElementById('eval-provider').value = config.evaluation_provider || '';
         document.getElementById('screen-provider').value = config.screening_provider || '';
         document.getElementById('quick-eval-provider').value = config.quick_eval_provider || '';

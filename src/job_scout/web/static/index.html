@@ -291,6 +291,42 @@
                     </div>
                 </div>
 
+                <!-- Job Coach: guided intake producing career tracks -->
+                <div id="coach-container" class="form-group">
+                    <h3>Job Coach</h3>
+                    <p class="info-text">
+                        Not sure exactly what you're looking for? Answer a few
+                        questions and the coach will suggest a few concrete
+                        directions to search for. Nothing is saved until you confirm.
+                    </p>
+                    <button id="coach-start-btn" class="btn btn-primary" type="button">Start the coach</button>
+
+                    <div id="coach-questions" class="enrichment-panel hidden">
+                        <div id="coach-question-list"></div>
+                        <button id="coach-propose-btn" class="btn btn-primary" type="button">Suggest directions</button>
+                        <button id="coach-cancel-btn" class="btn btn-secondary" type="button">Cancel</button>
+                    </div>
+
+                    <div id="coach-result" class="info-box hidden">
+                        <p id="coach-loading" class="hidden">Thinking…</p>
+                        <p id="coach-error" class="hidden" style="color: #d32f2f;"></p>
+                        <div id="coach-proposal"></div>
+                        <button id="coach-apply-btn" class="btn btn-primary hidden" type="button">Use these directions</button>
+                    </div>
+                </div>
+
+                <!-- Career tracks: the searches actually run -->
+                <div id="tracks-container" class="form-group">
+                    <h3>Search Directions</h3>
+                    <p class="info-text">
+                        Each <strong>standalone</strong> direction is searched on its own.
+                        A <strong>blend</strong> is never searched alone — it's folded into
+                        every other direction, for things you want <em>within</em> a role
+                        rather than as the whole job.
+                    </p>
+                    <div id="tracks-list"></div>
+                </div>
+
                 <!-- Profile Enrichment: LinkedIn import + web person search -->
                 <div id="enrichment-container" class="form-group">
                     <h3>Profile Enrichment</h3>
@@ -304,14 +340,25 @@
                         <div class="form-group">
                             <label for="linkedin-method">Method:</label>
                             <select id="linkedin-method">
-                                <option value="paste">Paste profile text (recommended)</option>
+                                <option value="pdf">Profile PDF (recommended — full work history)</option>
+                                <option value="paste">Paste profile text</option>
                                 <option value="file">Data export ZIP (from "Get a copy of your data")</option>
                                 <option value="url">Profile URL (opt-in, limited results)</option>
                             </select>
                         </div>
-                        <div class="form-group" id="linkedin-paste-group">
+                        <div class="form-group" id="linkedin-pdf-group">
+                            <label for="linkedin-pdf-path">Path to your LinkedIn profile PDF:</label>
+                            <input type="text" id="linkedin-pdf-path" placeholder="/home/you/Downloads/Profile.pdf">
+                            <p class="info-text">
+                                On your LinkedIn profile choose <em>More → Save to PDF</em>,
+                                then give the downloaded file's path here. This is the only
+                                import that reliably recovers your full job history with
+                                dates, so it can also fix an out-of-date current role.
+                            </p>
+                        </div>
+                        <div class="form-group hidden" id="linkedin-paste-group">
                             <label for="linkedin-paste-text">Paste your LinkedIn profile page text:</label>
-                            <textarea id="linkedin-paste-text" rows="6" placeholder="Open your LinkedIn profile, select all the text (or use the PDF export), and paste it here"></textarea>
+                            <textarea id="linkedin-paste-text" rows="6" placeholder="Open your LinkedIn profile, select all the text, and paste it here"></textarea>
                         </div>
                         <div class="form-group hidden" id="linkedin-file-group">
                             <label for="linkedin-file-path">Path to export ZIP on this machine:</label>

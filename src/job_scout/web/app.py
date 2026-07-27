@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 import uvicorn
 from fastapi import FastAPI, HTTPException, Query, Request
 from loguru import logger
+from pydantic import ValidationError
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import FileResponse, JSONResponse
 
@@ -32,7 +33,13 @@ from job_scout.config import (
 )
 from job_scout.database import Database
 from job_scout.llm.factory import build_raw_client_for_test, get_llm_client
-from job_scout.models import Config, JobListing, JobStatus, PersonSearchResult
+from job_scout.models import (
+    Config,
+    CvProfile,
+    JobListing,
+    JobStatus,
+    PersonSearchResult,
+)
 from job_scout.notify.factory import build_raw_notifier_for_test
 from job_scout.scheduler import check_schedule_status, install_schedule, remove_schedule
 
@@ -63,6 +70,55 @@ def _attach_company_reviews(db: Database, jobs: list[JobListing]) -> None:
             raw = db.get_company_review(job.company, max_age_days=365)
             cache[key] = CompanyReview.model_validate_json(raw) if raw else None
         job.company_review = cache[key]
+
+
+def _require_user(user: object) -> str:
+    """Validate that a request names an existing user.
+
+    Args:
+        user: The raw 'user' value from the request.
+
+    Returns:
+        The validated user name.
+
+    Raises:
+        HTTPException: If the user is missing or unknown.
+    """
+    if not user or not isinstance(user, str):
+        raise HTTPException(status_code=400, detail="User is required")
+    if user not in list_users():
+        raise HTTPException(status_code=404, detail=f"User '{user}' not found")
+    return user
+
+
+def _load_cv_profile_quietly(user: str) -> CvProfile | None:
+    """Load a user's parsed CV profile, returning None instead of raising.
+
+    The coach and PDF import both work better with CV context but must not
+    fail when no CV is configured or parsing is unavailable.
+
+    Args:
+        user: User name.
+
+    Returns:
+        The parsed CvProfile, or None when unavailable.
+    """
+    from job_scout.cv_parser import parse_cv  # noqa: PLC0415
+    from job_scout.cv_profile import get_or_parse_cv_profile  # noqa: PLC0415
+    from job_scout.llm.base import LLMError  # noqa: PLC0415
+
+    config = build_effective_config(user)
+    if not config.cv_path:
+        return None
+    try:
+        raw = parse_cv(config.cv_path)
+        if not raw:
+            return None
+        client = get_llm_client(config)
+        return get_or_parse_cv_profile(raw, client, Database(user_db_path(user)))
+    except (FileNotFoundError, LLMError, ValueError) as exc:
+        logger.debug(f"CV profile unavailable for {user}: {exc}")
+        return None
 
 
 def _resolve_linkedin_data(
@@ -116,7 +172,7 @@ def _preview_or_apply_merge(
     config: Config,
     db: Database,
     client: LLMClient,
-    candidate_data: dict[str, list[Any]],
+    candidate_data: dict[str, Any],
     apply: bool,
 ) -> dict[str, Any]:
     """Merge candidate profile data against the CV, optionally persisting it.
@@ -136,12 +192,16 @@ def _preview_or_apply_merge(
     """
     from job_scout.cv_parser import compute_cv_hash, parse_cv  # noqa: PLC0415
     from job_scout.cv_profile import get_or_parse_cv_profile  # noqa: PLC0415
-    from job_scout.linkedin_import import merge_linkedin_into_profile  # noqa: PLC0415
+    from job_scout.linkedin_import import (  # noqa: PLC0415
+        merge_linkedin_into_profile,
+        reconcile_current_role,
+    )
 
     empty_diff: dict[str, list[Any]] = {
         "added_skills": [],
         "added_education": [],
         "added_roles": [],
+        "updated_roles": [],
     }
     if not any(candidate_data.values()) or not config.cv_path:
         return {"diff": empty_diff, "applied": False}
@@ -155,6 +215,11 @@ def _preview_or_apply_merge(
 
     current_profile = get_or_parse_cv_profile(raw_cv_text, client, db)
     merged_profile, diff = merge_linkedin_into_profile(current_profile, candidate_data)
+    # Merging alone cannot close a stale role whose title differs slightly from
+    # the imported one, which would leave two employers looking current.
+    merged_profile = reconcile_current_role(
+        merged_profile, candidate_data.get("current_company")
+    )
 
     applied = False
     if apply and any(diff.values()):
@@ -874,6 +939,7 @@ def create_app() -> FastAPI:
                 "added_skills": [],
                 "added_education": [],
                 "added_roles": [],
+                "updated_roles": [],
             }
             return {"diff": empty, "applied": False, "warning": "No data extracted."}
 
@@ -889,6 +955,165 @@ def create_app() -> FastAPI:
         return _preview_or_apply_merge(
             config, db, client, linkedin_data, bool(body.get("apply"))
         )
+
+    @app.get("/api/coach/questions")
+    def coach_questions(user: str | None = None) -> dict[str, Any]:
+        """Return the coach's intake questions, grounded in the user's CV.
+
+        Args:
+            user: User name (required).
+
+        Returns:
+            Dictionary with the question list.
+
+        Raises:
+            HTTPException: If the user is missing or unknown.
+        """
+        from job_scout.coach import baseline_questions  # noqa: PLC0415
+
+        _require_user(user)
+        cv = _load_cv_profile_quietly(cast(str, user))
+        return {"questions": [q.model_dump() for q in baseline_questions(cv)]}
+
+    @app.post("/api/coach/propose")
+    def coach_propose(body: dict[str, Any]) -> dict[str, Any]:
+        """Turn intake answers into proposed career tracks for review.
+
+        Nothing is saved here -- the proposal is returned for the user to
+        confirm, edit, or discard via /api/coach/apply.
+
+        Args:
+            body: Request body with 'user' and 'answers' (a list of
+                {id, answer} objects).
+
+        Returns:
+            Dictionary with the proposal (tracks, summary, follow-up).
+
+        Raises:
+            HTTPException: On invalid input or LLM configuration errors.
+        """
+        from job_scout.coach import CoachAnswer, propose_tracks  # noqa: PLC0415
+        from job_scout.llm.base import LLMError  # noqa: PLC0415
+
+        user = _require_user(body.get("user"))
+        raw = body.get("answers")
+        if not isinstance(raw, list):
+            raise HTTPException(status_code=400, detail="'answers' must be a list")
+        answers = [
+            CoachAnswer(id=str(a.get("id") or ""), answer=str(a.get("answer") or ""))
+            for a in raw
+            if isinstance(a, dict)
+        ]
+        if not any(a.answer.strip() for a in answers):
+            raise HTTPException(status_code=400, detail="Answer at least one question")
+
+        try:
+            client = get_llm_client(build_effective_config(user))
+        except LLMError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        proposal = propose_tracks(
+            answers, cv=_load_cv_profile_quietly(user), client=client
+        )
+        return proposal.model_dump()
+
+    @app.post("/api/coach/apply")
+    def coach_apply(body: dict[str, Any]) -> dict[str, Any]:
+        """Save confirmed career tracks to the user's configuration.
+
+        Args:
+            body: Request body with 'user', 'tracks' (list of track objects),
+                and an optional 'negative_description'.
+
+        Returns:
+            Dictionary with the saved track count.
+
+        Raises:
+            HTTPException: On invalid input or a failed save.
+        """
+        from job_scout.models import CareerTrack  # noqa: PLC0415
+
+        user = _require_user(body.get("user"))
+        raw = body.get("tracks")
+        if not isinstance(raw, list) or not raw:
+            raise HTTPException(
+                status_code=400, detail="At least one track is required"
+            )
+        try:
+            tracks = [CareerTrack(**t) for t in raw if isinstance(t, dict)]
+        except ValidationError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if not any(t.mode == "standalone" and t.enabled for t in tracks):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "At least one track must be a standalone search -- a blend "
+                    "only colours other tracks and cannot be searched on its own."
+                ),
+            )
+
+        user_data = load_user_config(user)
+        user_data["career_tracks"] = [t.model_dump() for t in tracks]
+        negative = body.get("negative_description")
+        if isinstance(negative, str) and negative.strip():
+            user_data["negative_description"] = negative.strip()
+        save_user_config(user, user_data)
+        logger.info(f"Saved {len(tracks)} career tracks for {user}")
+        return {"status": "success", "saved": len(tracks)}
+
+    @app.post("/api/profile/import-linkedin-pdf")
+    def import_linkedin_pdf(body: dict[str, Any]) -> dict[str, Any]:
+        """Import work history from a LinkedIn "Save to PDF" profile export.
+
+        This is the richest safe import path: the PDF the account holder
+        downloads of their own profile carries real job titles and dates,
+        so it can also correct a CV whose current role is out of date.
+
+        Args:
+            body: Request body with 'user', 'pdf_path', and 'apply' (bool).
+
+        Returns:
+            Dictionary with the proposed diff, any current-role conflict, and
+            whether the merge was applied.
+
+        Raises:
+            HTTPException: On invalid input or LLM configuration errors.
+        """
+        from job_scout.linkedin_import import (  # noqa: PLC0415
+            detect_stale_current_role,
+            parse_linkedin_pdf,
+        )
+        from job_scout.llm.base import LLMError  # noqa: PLC0415
+
+        user = _require_user(body.get("user"))
+        pdf_path = str(body.get("pdf_path") or "").strip()
+        if not pdf_path:
+            raise HTTPException(status_code=400, detail="pdf_path is required")
+
+        config = build_effective_config(user)
+        try:
+            client = get_llm_client(config)
+        except LLMError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        try:
+            data = parse_linkedin_pdf(pdf_path, client=client)
+        except (FileNotFoundError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        db = Database(user_db_path(user))
+        result = _preview_or_apply_merge(
+            config, db, client, data, bool(body.get("apply"))
+        )
+        current_profile = _load_cv_profile_quietly(user)
+        conflict = (
+            detect_stale_current_role(current_profile, data.get("current_company"))
+            if current_profile
+            else None
+        )
+        result["current_company"] = data.get("current_company")
+        result["conflict"] = conflict.model_dump() if conflict else None
+        return result
 
     @app.post("/api/profile/search-person")
     def search_person_endpoint(body: dict[str, Any]) -> dict[str, Any]:

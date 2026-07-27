@@ -724,3 +724,44 @@ footer {
 #enrichment-diff li {
     color: #2e7d32;
 }
+
+/* Job coach + career tracks */
+.track-card {
+    background: #fff;
+    border: 1px solid #ddd;
+    border-left: 3px solid #5b8def;
+    border-radius: 4px;
+    padding: 0.6rem 0.8rem;
+    margin: 0.5rem 0;
+}
+.track-card p {
+    margin: 0.25rem 0;
+}
+.badge-blend {
+    background: #fff4e5;
+    color: #a15c00;
+}
+.coach-options {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 6px;
+}
+.coach-option {
+    padding: 3px 10px;
+    font-size: 0.85em;
+}
+.coach-question {
+    border-bottom: 1px solid #eee;
+    padding-bottom: 10px;
+}
+.job-track {
+    display: inline-block;
+    background: #eef3fd;
+    color: #2c5aa0;
+    border: 1px solid #b9cdf0;
+    border-radius: 10px;
+    padding: 0.1rem 0.5rem;
+    font-size: 0.75rem;
+    margin-left: 0.4rem;
+}
