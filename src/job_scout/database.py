@@ -452,6 +452,7 @@ class Database:
                       compensation_reasoning=excluded.compensation_reasoning,
                       distance_km=excluded.distance_km,
                       travel_times_json=excluded.travel_times_json,
+                      location_unknown=excluded.location_unknown,
                       status=CASE WHEN jobs.status IN ('new', 'matched', 'rejected')
                                THEN excluded.status ELSE jobs.status END,
                       notified=excluded.notified,
@@ -560,6 +561,7 @@ class Database:
                       compensation_reasoning=excluded.compensation_reasoning,
                       distance_km=excluded.distance_km,
                       travel_times_json=excluded.travel_times_json,
+                      location_unknown=excluded.location_unknown,
                       status=CASE WHEN jobs.status IN ('new', 'matched', 'rejected')
                                THEN excluded.status ELSE jobs.status END,
                       notified=excluded.notified,

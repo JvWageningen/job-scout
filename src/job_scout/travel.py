@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import math
+import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any
 
@@ -18,6 +20,17 @@ NOMINATIM_BASE = "https://nominatim.openstreetmap.org"
 OSRM_BASE = "https://router.project-osrm.org/route/v1"
 ORS_BASE = "https://api.openrouteservice.org/v2"
 NS_BASE = "https://gateway.apiportal.ns.nl/reisinformatie-api/api/v3"
+
+# Nominatim's usage policy caps public requests at one per second with no
+# concurrent connections. The pipeline geocodes many jobs in parallel threads,
+# so without throttling a burst of simultaneous requests gets rate-limited
+# (429) -- and a rate-limited job looks identical to "no such place", which
+# silently exempts it from the travel-distance filter instead of just being
+# a real address that needs a retry.
+_NOMINATIM_MIN_INTERVAL_S = 1.1
+_NOMINATIM_MAX_ATTEMPTS = 3
+_nominatim_lock = threading.Lock()
+_nominatim_last_call = 0.0
 
 # The free public OSRM server only has the 'driving' graph loaded, so its
 # 'bike' profile returns *car* times (a 39 km trip comes back as ~50 min).
@@ -60,6 +73,20 @@ def _haversine_km(
     return _EARTH_RADIUS_KM * 2 * math.asin(math.sqrt(a))
 
 
+def _throttle_nominatim() -> None:
+    """Block until it is safe to send another Nominatim request.
+
+    Serialises callers across threads to stay within Nominatim's one
+    request per second usage policy.
+    """
+    global _nominatim_last_call
+    with _nominatim_lock:
+        wait = _NOMINATIM_MIN_INTERVAL_S - (time.monotonic() - _nominatim_last_call)
+        if wait > 0:
+            time.sleep(wait)
+        _nominatim_last_call = time.monotonic()
+
+
 def _geocode(
     address: str,
     db: Database | None = None,
@@ -82,24 +109,35 @@ def _geocode(
             logger.debug(f"Geocode cache hit for '{address}'")
             return cached
 
-    try:
-        resp = requests.get(
-            f"{NOMINATIM_BASE}/search",
-            params={"q": address, "format": "json", "limit": "1"},
-            headers={"User-Agent": "job-scout/0.1 (job search tool)"},
-            timeout=10,
-        )
-        resp.raise_for_status()
-        results: list[dict[str, str]] = resp.json()
-        if results:
-            lon = float(results[0]["lon"])
-            lat = float(results[0]["lat"])
-            # Save to cache
-            if db:
-                db.save_geocode_cache(address, lat, lon)
-            return lon, lat
-    except requests.RequestException as e:
-        logger.warning(f"Geocoding failed for '{address}': {e}")
+    for attempt in range(1, _NOMINATIM_MAX_ATTEMPTS + 1):
+        _throttle_nominatim()
+        try:
+            resp = requests.get(
+                f"{NOMINATIM_BASE}/search",
+                params={"q": address, "format": "json", "limit": "1"},
+                headers={"User-Agent": "job-scout/0.1 (job search tool)"},
+                timeout=10,
+            )
+            if resp.status_code == 429:
+                logger.warning(
+                    f"Nominatim rate-limited geocoding '{address}' "
+                    f"(attempt {attempt}/{_NOMINATIM_MAX_ATTEMPTS})"
+                )
+                continue
+            resp.raise_for_status()
+            results: list[dict[str, str]] = resp.json()
+            if results:
+                lon = float(results[0]["lon"])
+                lat = float(results[0]["lat"])
+                # Save to cache
+                if db:
+                    db.save_geocode_cache(address, lat, lon)
+                return lon, lat
+            return None
+        except requests.RequestException as e:
+            logger.warning(f"Geocoding failed for '{address}': {e}")
+            return None
+    logger.warning(f"Geocoding failed for '{address}': rate-limited by Nominatim")
     return None
 
 

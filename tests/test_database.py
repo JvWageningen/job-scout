@@ -972,6 +972,54 @@ def test_upsert_preserves_user_set_lifecycle_status(
     assert approved_after[0].fit_score == 95
 
 
+def test_upsert_refreshes_location_unknown(
+    tmp_db: Database, sample_job: JobListing
+) -> None:
+    """Re-checking a job's travel data must be able to clear location_unknown.
+
+    A rechecked job that now resolves cleanly must not stay flagged unknown
+    forever -- otherwise the travel filter keeps waving it through no matter
+    how far away it really is.
+    """
+    job = sample_job.model_copy(
+        update={"status": JobStatus.MATCHED, "location_unknown": True}
+    )
+    job_id = tmp_db.save_job(job)
+
+    rechecked = sample_job.model_copy(
+        update={
+            "status": JobStatus.MATCHED,
+            "location_unknown": False,
+            "distance_km": 42.0,
+        }
+    )
+    tmp_db.save_job(rechecked, update_existing=True)
+
+    saved = tmp_db.get_job(job_id)
+    assert saved is not None
+    assert saved.location_unknown is False
+    assert saved.distance_km == 42.0
+
+
+def test_batch_upsert_refreshes_location_unknown(
+    tmp_db: Database, sample_job: JobListing
+) -> None:
+    """save_jobs_batch (the path a real pipeline run uses) has the same fix."""
+    job = sample_job.model_copy(
+        update={"status": JobStatus.MATCHED, "location_unknown": True}
+    )
+    job_id = tmp_db.save_jobs_batch([job])[0]
+
+    rechecked = sample_job.model_copy(
+        update={"status": JobStatus.MATCHED, "location_unknown": False}
+    )
+    tmp_db.save_jobs_batch([rechecked], update_existing=True)
+
+    saved = tmp_db.get_job(job_id)
+    assert saved is not None
+    assert saved.location_unknown is False
+
+
 def test_save_and_get_person_search(tmp_db: Database) -> None:
     """A saved person-search result round-trips through the cache."""
     tmp_db.save_person_search("Jane Doe", '{"full_name": "Jane Doe"}')

@@ -8,6 +8,13 @@ from job_scout.models import Config, TravelMode, TravelTime
 from job_scout.travel import is_remote_location, is_within_travel_limits
 
 
+@pytest.fixture(autouse=True)
+def _fast_nominatim_throttle(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep the Nominatim rate limiter from slowing the suite down."""
+    monkeypatch.setattr("job_scout.travel._NOMINATIM_MIN_INTERVAL_S", 0.0)
+    monkeypatch.setattr("job_scout.travel._nominatim_last_call", 0.0)
+
+
 def test_remote_location_keywords() -> None:
     """Known remote/vague location strings are detected correctly."""
     assert is_remote_location("Remote") is True
@@ -381,3 +388,98 @@ def test_address_change_bypasses_geocode_cache(
     result3 = _geocode("Amsterdam, Netherlands", tmp_db, cache_days=90)
     assert result3 == (4.9041, 52.3676)
     assert call_count == 2  # Still 2, cache was used
+
+
+def test_geocode_retries_after_rate_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A 429 from Nominatim is retried instead of being reported as unknown."""
+    from unittest.mock import Mock
+
+    from job_scout.travel import _geocode
+
+    call_count = 0
+
+    def mock_get(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        resp = Mock()
+        if call_count == 1:
+            resp.status_code = 429
+        else:
+            resp.status_code = 200
+            resp.raise_for_status = Mock()
+            resp.json.return_value = [{"lon": "4.9041", "lat": "52.3676"}]
+        return resp
+
+    monkeypatch.setattr("job_scout.travel.requests.get", mock_get)
+
+    result = _geocode("Amsterdam, Netherlands")
+
+    assert result == (4.9041, 52.3676)
+    assert call_count == 2
+
+
+def test_geocode_gives_up_after_repeated_rate_limiting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Persistent 429s eventually report failure rather than retrying forever."""
+    from unittest.mock import Mock
+
+    from job_scout.travel import _NOMINATIM_MAX_ATTEMPTS, _geocode
+
+    call_count = 0
+
+    def mock_get(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        resp = Mock()
+        resp.status_code = 429
+        return resp
+
+    monkeypatch.setattr("job_scout.travel.requests.get", mock_get)
+
+    result = _geocode("Nowhereville, Netherlands")
+
+    assert result is None
+    assert call_count == _NOMINATIM_MAX_ATTEMPTS
+
+
+def test_geocode_no_results_does_not_retry(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A genuine 'no such place' returns immediately without burning retries."""
+    from unittest.mock import Mock
+
+    from job_scout.travel import _geocode
+
+    call_count = 0
+
+    def mock_get(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        resp = Mock()
+        resp.status_code = 200
+        resp.raise_for_status = Mock()
+        resp.json.return_value = []
+        return resp
+
+    monkeypatch.setattr("job_scout.travel.requests.get", mock_get)
+
+    result = _geocode("Not A Real Place At All")
+
+    assert result is None
+    assert call_count == 1
+
+
+def test_throttle_enforces_minimum_interval(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Back-to-back Nominatim calls are spaced at least the minimum interval apart."""
+    import time
+
+    from job_scout.travel import _throttle_nominatim
+
+    monkeypatch.setattr("job_scout.travel._NOMINATIM_MIN_INTERVAL_S", 0.2)
+    monkeypatch.setattr("job_scout.travel._nominatim_last_call", 0.0)
+
+    start = time.monotonic()
+    _throttle_nominatim()
+    _throttle_nominatim()
+    elapsed = time.monotonic() - start
+
+    assert elapsed >= 0.2
