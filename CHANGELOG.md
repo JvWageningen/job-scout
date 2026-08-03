@@ -4,6 +4,14 @@ Format: [Keep a Changelog](https://keepachangelog.com)
 
 <!-- version list -->
 
+## v1.11.1 (2026-08-03)
+
+### Bug Fixes
+
+- **travel**: Stop Nominatim rate-limiting from bypassing the distance filter
+  ([`1417c63`](https://github.com/JvWageningen/job-scout/commit/1417c637e5e1a900562c18396c9b0be1d2952f41))
+
+
 ## v1.11.0 (2026-07-27)
 
 ### Features
