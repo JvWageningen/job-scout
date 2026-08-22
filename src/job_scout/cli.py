@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sys
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
@@ -67,6 +68,12 @@ from job_scout.tracks import (
     standalone_tracks,
 )
 from job_scout.travel import calculate_travel_times, is_within_travel_limits
+from job_scout.weekly_schedule import (
+    DEFAULT_TIMEZONE,
+    parse_slots,
+    run_scheduler,
+)
+from job_scout.wol import send_magic_packet, wake_and_wait
 
 
 def _setup_logging(verbose: bool = False) -> None:
@@ -1192,6 +1199,148 @@ def run(dry_run: bool, user_name: str | None, all_users: bool, full: bool) -> No
             logger.exception(f"Run failed for user '{name}'")
         finally:
             logger.remove(sink_id)
+
+
+# The containerised deployment runs on a NAS while the model server lives on a
+# workstation that sleeps between runs, so these defaults wake it first.
+DEFAULT_SCHEDULE = "tue:17:00,sat:03:00"
+
+
+@cli.command()
+@click.option("--mac", envvar="JOB_SCOUT_WAKE_MAC", help="MAC of the LLM host")
+@click.option(
+    "--broadcast",
+    default="255.255.255.255",
+    envvar="JOB_SCOUT_WAKE_BROADCAST",
+    show_default=True,
+    help="Broadcast address for the magic packet",
+)
+@click.option("--url", envvar="JOB_SCOUT_LLM_HEALTH_URL", help="Readiness URL to poll")
+@click.option(
+    "--timeout",
+    default=300.0,
+    show_default=True,
+    help="Seconds to wait for the readiness URL",
+)
+def wake(mac: str | None, broadcast: str, url: str | None, timeout: float) -> None:
+    """Wake the machine hosting the LLM and wait for it to answer."""
+    if not mac:
+        click.echo("No MAC address given (--mac or JOB_SCOUT_WAKE_MAC).", err=True)
+        sys.exit(1)
+    if not url:
+        send_magic_packet(mac, broadcast=broadcast)
+        click.echo(f"Magic packet sent to {mac}.")
+        return
+    if wake_and_wait(mac, url, broadcast=broadcast, timeout=timeout):
+        click.echo(f"{url} is up.")
+        return
+    click.echo(f"{url} did not answer within {timeout:.0f}s.", err=True)
+    sys.exit(1)
+
+
+def _build_scheduled_action(
+    ctx: click.Context,
+    *,
+    user_name: str | None,
+    all_users: bool,
+    mac: str | None,
+    broadcast: str,
+    url: str | None,
+    wake_timeout: float,
+) -> Callable[[], None]:
+    """Build the callable the scheduler invokes on each occurrence.
+
+    Args:
+        ctx: Click context, used to invoke the existing ``run`` command.
+        user_name: Specific user to run for, or None.
+        all_users: Whether to run for every user.
+        mac: MAC of the LLM host, or None to skip waking.
+        broadcast: Broadcast address for the magic packet.
+        url: Readiness URL for the LLM, or None to skip waiting.
+        wake_timeout: Seconds to wait for the LLM after waking.
+
+    Returns:
+        A zero-argument callable that wakes the LLM host then runs the pipeline.
+    """
+
+    def action() -> None:
+        """Wake the LLM host if configured, then run the pipeline once."""
+        if (
+            mac
+            and url
+            and not wake_and_wait(mac, url, broadcast=broadcast, timeout=wake_timeout)
+        ):
+            logger.warning("LLM host did not come up; running anyway")
+        ctx.invoke(
+            run, dry_run=False, user_name=user_name, all_users=all_users, full=False
+        )
+
+    return action
+
+
+@click.command("loop")
+@click.option(
+    "--slots",
+    default=DEFAULT_SCHEDULE,
+    envvar="JOB_SCOUT_SCHEDULE",
+    show_default=True,
+    help="Comma-separated day:HH:MM entries",
+)
+@click.option(
+    "--timezone",
+    default=DEFAULT_TIMEZONE,
+    envvar="JOB_SCOUT_TIMEZONE",
+    show_default=True,
+    help="IANA timezone the schedule is expressed in",
+)
+@click.option("--user", "user_name", default=None, help="Run for a specific user")
+@click.option("--all", "all_users", is_flag=True, help="Run for all users")
+@click.option("--wake-mac", envvar="JOB_SCOUT_WAKE_MAC", help="MAC of the LLM host")
+@click.option(
+    "--wake-broadcast",
+    default="255.255.255.255",
+    envvar="JOB_SCOUT_WAKE_BROADCAST",
+    help="Broadcast address for the magic packet",
+)
+@click.option(
+    "--llm-health-url", envvar="JOB_SCOUT_LLM_HEALTH_URL", help="LLM readiness URL"
+)
+@click.option(
+    "--wake-timeout",
+    default=300.0,
+    show_default=True,
+    help="Seconds to wait for the LLM after waking",
+)
+@click.option("--run-now", is_flag=True, help="Run once at start-up, then follow it")
+@click.pass_context
+def schedule_loop(  # noqa: PLR0913 - each option maps to one deployment knob
+    ctx: click.Context,
+    slots: str,
+    timezone: str,
+    user_name: str | None,
+    all_users: bool,
+    wake_mac: str | None,
+    wake_broadcast: str,
+    llm_health_url: str | None,
+    wake_timeout: float,
+    run_now: bool,
+) -> None:
+    """Run the pipeline on a recurring weekly schedule (container entrypoint)."""
+    try:
+        parsed = parse_slots(slots)
+    except ValueError as exc:
+        click.echo(f"Invalid --slots: {exc}", err=True)
+        sys.exit(1)
+    action = _build_scheduled_action(
+        ctx,
+        user_name=user_name,
+        all_users=all_users,
+        mac=wake_mac,
+        broadcast=wake_broadcast,
+        url=llm_health_url,
+        wake_timeout=wake_timeout,
+    )
+    run_scheduler(parsed, action, timezone=timezone, run_immediately=run_now)
 
 
 def _collect_active_jobs(db: Database) -> list[JobListing]:
@@ -3088,6 +3237,11 @@ def company_view_cmd(job_id: int, user_name: str | None) -> None:
 @cli.group("schedule")
 def schedule_group() -> None:
     """Manage the automated daily run schedule."""
+
+
+# Defined earlier in the file (next to the wake helpers it depends on) and
+# attached here, once the group it belongs to exists.
+schedule_group.add_command(schedule_loop)
 
 
 @schedule_group.command("install")

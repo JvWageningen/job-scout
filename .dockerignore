@@ -1,0 +1,36 @@
+# Keep the build context small and, more importantly, keep local state and
+# secrets out of the image. 'data/' holds the live databases, parsed CVs and
+# config.yaml (which carries API tokens) -- it is bind-mounted at runtime and
+# must never be baked in.
+data/
+*.db
+*.db-journal
+*.sqlite3
+
+.venv/
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+dist/
+build/
+*.egg-info/
+
+.git/
+.github/
+.gitignore
+.gitattributes
+
+# Docs and tests are not needed at runtime.
+tests/
+docs/
+*.md
+!README.md
+
+.env
+.env.*
+!.env.example
+secrets.yaml

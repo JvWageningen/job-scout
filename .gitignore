@@ -29,3 +29,6 @@ data/
 
 # Added by vibegen
 .claude/.fuse_hidden*
+
+# The template is meant to be committed; the real .env is not.
+!.env.example

@@ -1,0 +1,54 @@
+# job-scout on a NAS: a scheduler that runs the pipeline twice a week, and a
+# dashboard to read the results. Both come from the same image.
+#
+# Deployment-specific values (the LLM host's MAC, its URL, the dashboard port)
+# live in .env -- copy .env.example to .env and edit. See deploy/nas-install.sh.
+
+x-common: &common
+  image: job-scout:latest
+  build:
+    context: .
+  restart: unless-stopped
+  environment: &common-env
+    TZ: ${JOB_SCOUT_TZ:-Europe/Amsterdam}
+    JOB_SCOUT_DATA_DIR: /data
+    # Optional: set a token to require auth on the dashboard. Without it the
+    # dashboard is open to anyone who can reach the port.
+    JOB_SCOUT_DASHBOARD_TOKEN: ${JOB_SCOUT_DASHBOARD_TOKEN:-}
+  volumes:
+    # Bind-mounted rather than a named volume so the databases and parsed CVs
+    # stay visible in the NAS share and get picked up by its backup job.
+    - ./data:/data
+  labels:
+    # Built locally with no upstream registry tag, so keep Watchtower away
+    # from it even if its container filter is ever widened.
+    com.centurylinklabs.watchtower.enable: "false"
+
+services:
+  # Runs the pipeline on the configured weekly slots. Host networking is
+  # required: a wake-on-LAN magic packet is a layer-2 broadcast and does not
+  # survive Docker's bridge NAT.
+  scheduler:
+    <<: *common
+    container_name: job-scout-scheduler
+    network_mode: host
+    environment:
+      <<: *common-env
+      JOB_SCOUT_SCHEDULE: ${JOB_SCOUT_SCHEDULE:-tue:17:00,sat:03:00}
+      JOB_SCOUT_TIMEZONE: ${JOB_SCOUT_TZ:-Europe/Amsterdam}
+      JOB_SCOUT_WAKE_MAC: ${JOB_SCOUT_WAKE_MAC:-}
+      JOB_SCOUT_WAKE_BROADCAST: ${JOB_SCOUT_WAKE_BROADCAST:-255.255.255.255}
+      JOB_SCOUT_LLM_HEALTH_URL: ${JOB_SCOUT_LLM_HEALTH_URL:-}
+    command: ["schedule", "loop", "--all"]
+    # A run in progress can take well over an hour; let it finish the job it
+    # is on and save state rather than being SIGKILLed mid-evaluation.
+    stop_grace_period: 120s
+
+  # The dashboard. Also host-networked so it can reach the LLM over the same
+  # path the scheduler uses.
+  web:
+    <<: *common
+    container_name: job-scout-web
+    network_mode: host
+    command: ["web", "--host", "0.0.0.0", "--port", "${JOB_SCOUT_PORT:-24817}"]
+    stop_grace_period: 30s
