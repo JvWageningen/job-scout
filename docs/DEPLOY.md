@@ -23,7 +23,20 @@ NAS share and are picked up by its backup job.
 
 ## Configuration
 
-Everything host-specific lives in `.env` (gitignored):
+Two places, deliberately split.
+
+**The dashboard**, under Schedule &rarr; Automatic runs, owns anything you
+might want to change later: when to run, and how to wake the model-server
+host. It is stored in `data/config.yaml` and the scheduler re-reads it every
+cycle, so a change applies within a minute without restarting anything.
+
+Setting `JOB_SCOUT_SCHEDULE`, `JOB_SCOUT_WAKE_MAC` or
+`JOB_SCOUT_LLM_HEALTH_URL` as environment variables still works and takes
+precedence -- but then the dashboard can no longer change them, so leave them
+unset unless you specifically want to pin a value.
+
+**`.env`** (gitignored) holds what has to be known before the container
+starts:
 
 ```sh
 cp .env.example .env
@@ -33,13 +46,9 @@ cp .env.example .env
 |---|---|
 | `JOB_SCOUT_PORT` | Dashboard port on the host |
 | `JOB_SCOUT_DASHBOARD_TOKEN` | Leave empty for no auth; set to require a token |
-| `JOB_SCOUT_SCHEDULE` | `day:HH:MM` entries, comma-separated |
-| `JOB_SCOUT_TZ` | IANA timezone the schedule is read in |
-| `JOB_SCOUT_WAKE_MAC` | MAC of the model-server host; empty disables waking |
-| `JOB_SCOUT_WAKE_BROADCAST` | Prefer the subnet broadcast over `255.255.255.255` |
-| `JOB_SCOUT_LLM_HEALTH_URL` | Polled until it answers before a run starts |
+| `JOB_SCOUT_TZ` | Container timezone, for log timestamps |
 
-`data/config.yaml` still holds `local_base_url`. It must point at an address
+`data/config.yaml` also holds `local_base_url`. It must point at an address
 the **container** can reach -- a Docker bridge address like `172.17.0.1` on
 another machine will not resolve from the NAS.
 

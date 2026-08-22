@@ -823,12 +823,17 @@ footer {
     flex-wrap: wrap;
 }
 
+/* A global `select { width: 100% }` would otherwise push the time input
+   onto its own line, so both controls get an explicit basis. */
 .slot-row .slot-day {
-    min-width: 9rem;
+    flex: 0 1 12rem;
+    width: auto;
+    min-width: 8rem;
 }
 
 .slot-row .slot-time {
-    width: 8rem;
+    flex: 0 0 auto;
+    width: 8.5rem;
 }
 
 .slot-row .slot-remove {
