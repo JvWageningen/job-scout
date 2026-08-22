@@ -4,6 +4,19 @@ Format: [Keep a Changelog](https://keepachangelog.com)
 
 <!-- version list -->
 
+## v1.13.1 (2026-08-22)
+
+### Bug Fixes
+
+- **dashboard**: Keep each schedule row on one line
+  ([`e120a15`](https://github.com/JvWageningen/job-scout/commit/e120a15fa2d95c28c184fc2a0bdcb4a65f397db2))
+
+### Chores
+
+- Sync uv.lock to 1.13.0 [skip ci]
+  ([`c8ff315`](https://github.com/JvWageningen/job-scout/commit/c8ff315ca61050a46a0515c6ea43dc6539f38e37))
+
+
 ## v1.13.0 (2026-08-22)
 
 ### Bug Fixes
