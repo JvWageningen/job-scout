@@ -4,6 +4,19 @@ Format: [Keep a Changelog](https://keepachangelog.com)
 
 <!-- version list -->
 
+## v1.12.0 (2026-08-22)
+
+### Continuous Integration
+
+- Keep uv.lock in sync with the released version
+  ([`a6b347a`](https://github.com/JvWageningen/job-scout/commit/a6b347adb7c90e02846cfced2c8446e3120e1ff8))
+
+### Features
+
+- **deploy**: Run job-scout as a container with a built-in weekly schedule
+  ([`a413af5`](https://github.com/JvWageningen/job-scout/commit/a413af5f77ae59804acd454590dcd4eb9bd46b3a))
+
+
 ## v1.11.1 (2026-08-03)
 
 ### Bug Fixes
