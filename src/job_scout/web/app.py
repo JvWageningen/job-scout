@@ -8,6 +8,7 @@ import threading
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -43,6 +44,12 @@ from job_scout.models import (
 )
 from job_scout.notify.factory import build_raw_notifier_for_test
 from job_scout.scheduler import check_schedule_status, install_schedule, remove_schedule
+from job_scout.weekly_schedule import next_run_after, parse_slots
+from job_scout.wol import normalise_mac, wake_and_wait
+
+# How many upcoming runs the schedule panel previews, so a change can be
+# sanity-checked before it fires.
+_SCHEDULE_PREVIEW_COUNT = 3
 
 if TYPE_CHECKING:
     from job_scout.llm.base import LLMClient
@@ -789,6 +796,159 @@ def create_app() -> FastAPI:
         if errors:
             return {"status": "partial", "errors": errors}
         return {"status": "success"}
+
+    def _schedule_preview(cfg: Config) -> dict[str, Any]:
+        """Validate the stored schedule and project the next few run times.
+
+        Args:
+            cfg: Configuration holding the slot spec and timezone.
+
+        Returns:
+            Validity, an error message when invalid, and upcoming run times.
+        """
+        try:
+            slots = parse_slots(cfg.schedule_slots)
+        except ValueError as exc:
+            return {"valid": False, "error": str(exc), "next_runs": []}
+        try:
+            tz = ZoneInfo(cfg.schedule_timezone)
+        except (ZoneInfoNotFoundError, ValueError) as exc:
+            return {
+                "valid": False,
+                "error": f"Unknown timezone: {exc}",
+                "next_runs": [],
+            }
+
+        moment = datetime.now(tz)
+        upcoming: list[str] = []
+        for _ in range(_SCHEDULE_PREVIEW_COUNT):
+            moment = next_run_after(moment, slots)
+            upcoming.append(moment.isoformat())
+        return {"valid": True, "error": None, "next_runs": upcoming}
+
+    @app.get("/api/auto-schedule")
+    def get_schedule() -> dict[str, Any]:
+        """Return the container schedule, wake settings and upcoming runs.
+
+        Returns:
+            The stored settings plus a validated preview of the next runs.
+        """
+        cfg = load_config()
+        payload: dict[str, Any] = {
+            "slots": cfg.schedule_slots,
+            "timezone": cfg.schedule_timezone,
+            "enabled": cfg.schedule_enabled,
+            "wake_mac": cfg.wake_mac or "",
+            "wake_broadcast": cfg.wake_broadcast,
+            "llm_health_url": cfg.llm_health_url or "",
+            "wake_timeout_seconds": cfg.wake_timeout_seconds,
+        }
+        payload.update(_schedule_preview(cfg))
+        return payload
+
+    @app.post("/api/auto-schedule")
+    def update_schedule(body: dict[str, Any]) -> dict[str, Any]:
+        """Validate and persist the schedule and wake settings.
+
+        Validation happens before anything is written: an invalid slot spec
+        would pause the scheduler, so it is rejected here instead.
+
+        Args:
+            body: Any of slots, timezone, paused, wake_mac, wake_broadcast,
+                llm_health_url, wake_timeout_seconds.
+
+        Returns:
+            The saved settings with a refreshed next-run preview.
+
+        Raises:
+            HTTPException: If a supplied value is invalid.
+        """
+        if "slots" in body:
+            try:
+                parse_slots(str(body["slots"]))
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=400, detail=f"Invalid schedule: {exc}"
+                ) from exc
+        if body.get("timezone"):
+            try:
+                ZoneInfo(str(body["timezone"]))
+            except (ZoneInfoNotFoundError, ValueError) as exc:
+                raise HTTPException(
+                    status_code=400, detail=f"Unknown timezone: {exc}"
+                ) from exc
+        if body.get("wake_mac"):
+            try:
+                normalise_mac(str(body["wake_mac"]))
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        allowed = (
+            "slots",
+            "timezone",
+            "enabled",
+            "wake_mac",
+            "wake_broadcast",
+            "llm_health_url",
+            "wake_timeout_seconds",
+        )
+        # 'slots'/'timezone'/'paused' are exposed under friendlier names than
+        # the config fields they map to.
+        field_names = {
+            "slots": "schedule_slots",
+            "timezone": "schedule_timezone",
+            "enabled": "schedule_enabled",
+        }
+        for key in allowed:
+            if key not in body:
+                continue
+            value = body[key]
+            set_config_value(
+                field_names.get(key, key),
+                "" if value is None else str(value),
+                user=None,
+            )
+
+        cfg = load_config()
+        result: dict[str, Any] = {"status": "success"}
+        result.update(_schedule_preview(cfg))
+        return result
+
+    @app.post("/api/auto-schedule/test-wake")
+    def test_wake() -> dict[str, Any]:
+        """Send a magic packet now and report whether the model server answers.
+
+        Lets the wake settings be verified from the dashboard rather than by
+        waiting for the next scheduled run to fail.
+
+        Returns:
+            Whether the model server is reachable, and a message to display.
+
+        Raises:
+            HTTPException: If the wake settings are incomplete.
+        """
+        cfg = load_config()
+        if not cfg.wake_mac:
+            raise HTTPException(status_code=400, detail="No MAC address configured.")
+        if not cfg.llm_health_url:
+            raise HTTPException(
+                status_code=400, detail="No model server readiness URL configured."
+            )
+        reachable = wake_and_wait(
+            cfg.wake_mac,
+            cfg.llm_health_url,
+            broadcast=cfg.wake_broadcast,
+            timeout=cfg.wake_timeout_seconds,
+        )
+        message = (
+            f"Model server is reachable at {cfg.llm_health_url}."
+            if reachable
+            else (
+                f"Sent the packet, but {cfg.llm_health_url} did not answer within "
+                f"{cfg.wake_timeout_seconds:.0f}s."
+            )
+        )
+        return {"reachable": reachable, "message": message}
 
     @app.post("/api/secrets")
     def update_secrets_endpoint(body: dict[str, Any]) -> dict[str, str]:

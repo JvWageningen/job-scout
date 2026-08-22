@@ -1169,6 +1169,66 @@ class TestSites:
         assert response.status_code == 404
 
 
+class TestAutoSchedule:
+    """Tests for /api/auto-schedule, the container scheduler's settings."""
+
+    def test_defaults_are_returned_with_a_preview(self, client: TestClient) -> None:
+        """The panel needs both the settings and the upcoming runs."""
+        data = client.get("/api/auto-schedule").json()
+        assert data["slots"] == "tue:17:00,sat:03:00"
+        assert data["enabled"] is True
+        assert data["valid"] is True
+        assert len(data["next_runs"]) == 3
+
+    def test_saving_persists_and_recomputes(self, client: TestClient) -> None:
+        """A saved change is reflected in the next GET and in the preview."""
+        response = client.post(
+            "/api/auto-schedule", json={"slots": "mon:09:00", "timezone": "Europe/Oslo"}
+        )
+        assert response.status_code == 200
+        assert response.json()["next_runs"][0].endswith(("+02:00", "+01:00"))
+
+        data = client.get("/api/auto-schedule").json()
+        assert data["slots"] == "mon:09:00"
+        assert data["timezone"] == "Europe/Oslo"
+
+    def test_invalid_slots_are_rejected_before_saving(self, client: TestClient) -> None:
+        """A bad spec would pause the scheduler, so it must not persist."""
+        assert (
+            client.post("/api/auto-schedule", json={"slots": "funday:9:00"}).status_code
+            == 400
+        )
+        assert client.get("/api/auto-schedule").json()["slots"] == "tue:17:00,sat:03:00"
+
+    def test_invalid_timezone_is_rejected(self, client: TestClient) -> None:
+        """An unknown zone would make every run time meaningless."""
+        response = client.post("/api/auto-schedule", json={"timezone": "Mars/Olympus"})
+        assert response.status_code == 400
+
+    def test_invalid_mac_is_rejected(self, client: TestClient) -> None:
+        """A malformed MAC would silently never wake anything."""
+        response = client.post("/api/auto-schedule", json={"wake_mac": "not-a-mac"})
+        assert response.status_code == 400
+
+    def test_mac_accepts_common_notations(self, client: TestClient) -> None:
+        """Dashes and uppercase are what people paste from Windows."""
+        response = client.post(
+            "/api/auto-schedule", json={"wake_mac": "2C-F0-5D-0E-B1-EF"}
+        )
+        assert response.status_code == 200
+
+    def test_disabling_is_reported(self, client: TestClient) -> None:
+        """Turning automatic runs off round-trips."""
+        client.post("/api/auto-schedule", json={"enabled": False})
+        assert client.get("/api/auto-schedule").json()["enabled"] is False
+
+    def test_test_wake_requires_configuration(self, client: TestClient) -> None:
+        """Without a MAC there is nothing to send, so say so."""
+        response = client.post("/api/auto-schedule/test-wake")
+        assert response.status_code == 400
+        assert "MAC" in response.json()["detail"]
+
+
 class TestSchedule:
     """Tests for /api/schedule endpoints."""
 

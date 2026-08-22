@@ -36,6 +36,10 @@ WEEKDAY_NAMES: dict[str, int] = {
 # responsive to shutdown and re-derives the target after a clock or DST jump.
 _MAX_SLEEP_SECONDS = 300.0
 
+# How often to re-check settings while the schedule is paused, so resuming
+# from the dashboard takes effect without restarting the container.
+_PAUSED_POLL_SECONDS = 30.0
+
 
 @dataclass(frozen=True)
 class ScheduleSlot:
@@ -62,6 +66,25 @@ class ScheduleSlot:
         """Return a human-readable ``tue 17:00`` style label."""
         name = next(k for k, v in WEEKDAY_NAMES.items() if v == self.weekday)
         return f"{name} {self.hour:02d}:{self.minute:02d}"
+
+
+@dataclass(frozen=True)
+class ScheduleSettings:
+    """Everything the loop needs to decide when to run next.
+
+    Passed as a provider callable so the dashboard can change the schedule
+    while the container keeps running.
+    """
+
+    slots: tuple[ScheduleSlot, ...]
+    timezone: str = DEFAULT_TIMEZONE
+    enabled: bool = True
+
+    def describe(self) -> str:
+        """Return a one-line summary for logging."""
+        if not self.enabled:
+            return "paused"
+        return ", ".join(str(s) for s in self.slots) or "no slots"
 
 
 def parse_slots(spec: str) -> list[ScheduleSlot]:
@@ -144,38 +167,55 @@ def next_run_after(now: datetime, slots: Sequence[ScheduleSlot]) -> datetime:
 
 
 def run_scheduler(
-    slots: Sequence[ScheduleSlot],
+    settings: ScheduleSettings | Callable[[], ScheduleSettings],
     action: Callable[[], None],
     *,
-    timezone: str = DEFAULT_TIMEZONE,
     run_immediately: bool = False,
     max_runs: int | None = None,
 ) -> None:
     """Run ``action`` on every scheduled occurrence, forever.
 
-    A failing action is logged and the loop continues, so one bad run does
-    not silently end the schedule.
+    Settings are re-read at the top of every cycle, so passing a provider
+    callable lets the dashboard change the schedule -- or pause it -- without
+    restarting the process. A failing action is logged and the loop
+    continues, so one bad run does not silently end the schedule.
 
     Args:
-        slots: Weekly slots to run on.
+        settings: The schedule, or a callable returning it. A callable is
+            re-invoked each cycle to pick up changes.
         action: Callable invoked at each occurrence.
-        timezone: IANA timezone the slots are expressed in.
         run_immediately: Run once at start-up before waiting.
         max_runs: Stop after this many runs; None means never stop. Intended
             for tests.
     """
-    tz = ZoneInfo(timezone)
-    logger.info(
-        f"Scheduler started ({timezone}); slots: {', '.join(str(s) for s in slots)}"
-    )
+    provider = settings if callable(settings) else (lambda: settings)
+    logger.info(f"Scheduler started; schedule: {provider().describe()}")
+
     runs = 0
     if run_immediately:
         runs += _invoke(action)
 
+    previous = ""
     while max_runs is None or runs < max_runs:
-        target = next_run_after(datetime.now(tz), slots)
+        current = provider()
+        summary = f"{current.describe()} ({current.timezone})"
+        if summary != previous:
+            logger.info(f"Schedule is now: {summary}")
+            previous = summary
+
+        if not current.enabled or not current.slots:
+            # Paused from the dashboard. Keep polling so it can be resumed
+            # without a restart, rather than exiting the loop.
+            time_module.sleep(_PAUSED_POLL_SECONDS)
+            continue
+
+        tz = ZoneInfo(current.timezone)
+        target = next_run_after(datetime.now(tz), current.slots)
         logger.info(f"Next run at {target.isoformat()}")
-        _sleep_until(target, tz)
+        if not _sleep_until(target, tz, provider=provider, baseline=current):
+            # The schedule changed while waiting; recompute rather than
+            # firing at a time the user has since edited away.
+            continue
         runs += _invoke(action)
 
 
@@ -199,15 +239,30 @@ def _invoke(action: Callable[[], None]) -> int:
     return 1
 
 
-def _sleep_until(target: datetime, tz: ZoneInfo) -> None:
+def _sleep_until(
+    target: datetime,
+    tz: ZoneInfo,
+    *,
+    provider: Callable[[], ScheduleSettings] | None = None,
+    baseline: ScheduleSettings | None = None,
+) -> bool:
     """Sleep in bounded steps until ``target`` passes.
 
     Args:
         target: Timezone-aware moment to wait for.
         tz: Timezone used to re-read the current time.
+        provider: Optional settings provider, checked between steps so an
+            edit made in the dashboard is noticed while waiting.
+        baseline: The settings the target was derived from.
+
+    Returns:
+        True if the target was reached, False if the schedule changed first.
     """
     while True:
         remaining = (target - datetime.now(tz)).total_seconds()
         if remaining <= 0:
-            return
+            return True
         time_module.sleep(min(remaining, _MAX_SLEEP_SECONDS))
+        if provider is not None and baseline is not None and provider() != baseline:
+            logger.info("Schedule changed while waiting; recomputing")
+            return False

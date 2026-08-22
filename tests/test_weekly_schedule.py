@@ -8,7 +8,12 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from job_scout import weekly_schedule as scheduler
-from job_scout.weekly_schedule import ScheduleSlot, next_run_after, parse_slots
+from job_scout.weekly_schedule import (
+    ScheduleSettings,
+    ScheduleSlot,
+    next_run_after,
+    parse_slots,
+)
 
 AMS = ZoneInfo("Europe/Amsterdam")
 
@@ -130,15 +135,18 @@ class TestNextRunAfter:
         assert after.utcoffset() != before.utcoffset()
 
 
+SETTINGS = ScheduleSettings(slots=tuple(DEPLOYED))
+
+
 class TestRunScheduler:
     """The loop itself: bounded via max_runs so it terminates in tests."""
 
     def test_runs_immediately_when_asked(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """--run-now triggers one run before any waiting."""
-        monkeypatch.setattr(scheduler, "_sleep_until", lambda *_a, **_kw: None)
+        monkeypatch.setattr(scheduler, "_sleep_until", lambda *_a, **_kw: True)
         calls: list[int] = []
         scheduler.run_scheduler(
-            DEPLOYED, lambda: calls.append(1), run_immediately=True, max_runs=1
+            SETTINGS, lambda: calls.append(1), run_immediately=True, max_runs=1
         )
         assert calls == [1]
 
@@ -146,7 +154,7 @@ class TestRunScheduler:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """One bad run must not silently end the deployment."""
-        monkeypatch.setattr(scheduler, "_sleep_until", lambda *_a, **_kw: None)
+        monkeypatch.setattr(scheduler, "_sleep_until", lambda *_a, **_kw: True)
         calls: list[int] = []
 
         def flaky() -> None:
@@ -154,5 +162,58 @@ class TestRunScheduler:
             if len(calls) == 1:
                 raise RuntimeError("scrape exploded")
 
-        scheduler.run_scheduler(DEPLOYED, flaky, max_runs=2)
+        scheduler.run_scheduler(SETTINGS, flaky, max_runs=2)
         assert len(calls) == 2
+
+    def test_settings_are_re_read_every_cycle(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A provider is re-invoked, so dashboard edits apply without a restart."""
+        monkeypatch.setattr(scheduler, "_sleep_until", lambda *_a, **_kw: True)
+        reads = {"n": 0}
+
+        def provider() -> ScheduleSettings:
+            reads["n"] += 1
+            return SETTINGS
+
+        scheduler.run_scheduler(provider, lambda: None, max_runs=2)
+        assert reads["n"] >= 2
+
+    def test_disabled_schedule_does_not_run(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Pausing from the dashboard stops runs but keeps the loop alive."""
+        monkeypatch.setattr(scheduler, "_sleep_until", lambda *_a, **_kw: True)
+        polls = {"n": 0}
+        calls: list[int] = []
+
+        def fake_sleep(_seconds: float) -> None:
+            polls["n"] += 1
+            if polls["n"] > 3:
+                raise KeyboardInterrupt  # break out of the paused loop
+
+        monkeypatch.setattr(scheduler.time_module, "sleep", fake_sleep)
+        paused = ScheduleSettings(slots=tuple(DEPLOYED), enabled=False)
+        with pytest.raises(KeyboardInterrupt):
+            scheduler.run_scheduler(paused, lambda: calls.append(1), max_runs=1)
+        assert calls == []
+
+    def test_empty_slots_do_not_run(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A schedule with no times must not fire, and must not crash."""
+        monkeypatch.setattr(scheduler, "_sleep_until", lambda *_a, **_kw: True)
+        calls: list[int] = []
+
+        def fake_sleep(_seconds: float) -> None:
+            raise KeyboardInterrupt
+
+        monkeypatch.setattr(scheduler.time_module, "sleep", fake_sleep)
+        with pytest.raises(KeyboardInterrupt):
+            scheduler.run_scheduler(
+                ScheduleSettings(slots=()), lambda: calls.append(1), max_runs=1
+            )
+        assert calls == []
+
+    def test_describe_reports_pause(self) -> None:
+        """The log line makes a paused schedule obvious."""
+        assert ScheduleSettings(slots=(), enabled=False).describe() == "paused"
+        assert "tue 17:00" in SETTINGS.describe()

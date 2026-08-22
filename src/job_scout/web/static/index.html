@@ -658,9 +658,65 @@
             <!-- Schedule Section -->
             <section id="schedule-section" class="section hidden tab-content" data-tab="schedule">
                 <h2>Schedule</h2>
-                <p class="info-text">Select a user above to configure their schedule. Each user's job search runs on their configured schedule.</p>
-                <div id="schedule-status"></div>
-                <form id="schedule-form">
+
+                <div class="enrichment-panel">
+                    <h3>Automatic runs</h3>
+                    <p class="info-text">
+                        Runs every user's search on the days and times below. Applies
+                        within a minute &mdash; no restart needed.
+                    </p>
+                    <form id="auto-schedule-form">
+                        <div class="form-group">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="auto-schedule-enabled" checked>
+                                Enable automatic runs
+                            </label>
+                        </div>
+                        <div class="form-group">
+                            <label for="auto-schedule-slots">Run at:</label>
+                            <div id="slot-rows"></div>
+                            <button type="button" id="add-slot-btn" class="btn btn-secondary">+ Add a time</button>
+                            <input type="hidden" id="auto-schedule-slots">
+                        </div>
+                        <div class="form-group">
+                            <label for="auto-schedule-timezone">Timezone:</label>
+                            <input type="text" id="auto-schedule-timezone" placeholder="Europe/Amsterdam">
+                        </div>
+
+                        <h4>Waking the LLM machine</h4>
+                        <p class="info-text">
+                            If the machine running the model sleeps, job-scout wakes it
+                            before each run and waits for it to answer. Leave the MAC
+                            empty if that machine is always on.
+                        </p>
+                        <div class="form-group">
+                            <label for="auto-wake-mac">MAC address:</label>
+                            <input type="text" id="auto-wake-mac" placeholder="2c:f0:5d:0e:b1:ef">
+                        </div>
+                        <div class="form-group">
+                            <label for="auto-wake-broadcast">Broadcast address:</label>
+                            <input type="text" id="auto-wake-broadcast" placeholder="192.168.1.255">
+                        </div>
+                        <div class="form-group">
+                            <label for="auto-llm-health-url">Model server readiness URL:</label>
+                            <input type="text" id="auto-llm-health-url" placeholder="http://host:8080/v1/models">
+                        </div>
+                        <div class="form-group">
+                            <label for="auto-wake-timeout">Seconds to wait after waking:</label>
+                            <input type="number" id="auto-wake-timeout" min="0" max="3600" value="300">
+                        </div>
+
+                        <button type="submit" class="btn btn-primary">Save</button>
+                        <button type="button" id="test-wake-btn" class="btn btn-secondary">Test wake now</button>
+                    </form>
+                    <div id="auto-schedule-result"></div>
+                </div>
+
+                <details class="enrichment-panel">
+                    <summary>Host cron (only for non-container installs)</summary>
+                    <p class="info-text">Select a user above to configure their schedule. Each user's job search runs on their configured schedule.</p>
+                    <div id="schedule-status"></div>
+                    <form id="schedule-form">
                     <div class="form-group">
                         <label for="schedule-hour">Hour (0-23):</label>
                         <input type="number" id="schedule-hour" min="0" max="23" value="8">
@@ -692,7 +748,8 @@
                     </div>
                     <button type="submit" class="btn btn-primary">Save Schedule</button>
                     <button type="button" id="remove-schedule-btn" class="btn btn-secondary">Remove Schedule</button>
-                </form>
+                    </form>
+                </details>
             </section>
 
             <!-- Analytics Section -->

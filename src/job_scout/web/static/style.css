@@ -813,3 +813,25 @@ footer {
         opacity: 0.4;
     }
 }
+
+/* Schedule editor: one row per run time. */
+.slot-row {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    margin-bottom: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.slot-row .slot-day {
+    min-width: 9rem;
+}
+
+.slot-row .slot-time {
+    width: 8rem;
+}
+
+.slot-row .slot-remove {
+    padding: 0.25rem 0.6rem;
+    font-size: 0.85rem;
+}

@@ -69,7 +69,7 @@ from job_scout.tracks import (
 )
 from job_scout.travel import calculate_travel_times, is_within_travel_limits
 from job_scout.weekly_schedule import (
-    DEFAULT_TIMEZONE,
+    ScheduleSettings,
     parse_slots,
     run_scheduler,
 )
@@ -1238,26 +1238,57 @@ def wake(mac: str | None, broadcast: str, url: str | None, timeout: float) -> No
     sys.exit(1)
 
 
+def schedule_settings_from_config(
+    *, slots: str | None = None, timezone: str | None = None
+) -> ScheduleSettings:
+    """Read the container schedule from config, applying any overrides.
+
+    Re-read on every scheduler cycle, so editing the schedule in the
+    dashboard takes effect without restarting the container.
+
+    Args:
+        slots: Overrides the configured slot specification when given.
+        timezone: Overrides the configured timezone when given.
+
+    Returns:
+        The current schedule. An unparseable specification yields a disabled
+        schedule rather than raising, so a typo pauses the loop instead of
+        crashing the container into a restart cycle.
+    """
+    config = load_config()
+    spec = slots or config.schedule_slots
+    zone = timezone or config.schedule_timezone
+    try:
+        parsed = tuple(parse_slots(spec))
+    except ValueError as exc:
+        logger.error(f"Invalid schedule {spec!r}: {exc}. Schedule is paused.")
+        return ScheduleSettings(slots=(), timezone=zone, enabled=False)
+    return ScheduleSettings(
+        slots=parsed, timezone=zone, enabled=config.schedule_enabled
+    )
+
+
 def _build_scheduled_action(
     ctx: click.Context,
     *,
     user_name: str | None,
     all_users: bool,
     mac: str | None,
-    broadcast: str,
+    broadcast: str | None,
     url: str | None,
-    wake_timeout: float,
 ) -> Callable[[], None]:
     """Build the callable the scheduler invokes on each occurrence.
+
+    Wake settings are read from config at call time rather than captured, so
+    changing them in the dashboard applies to the next run.
 
     Args:
         ctx: Click context, used to invoke the existing ``run`` command.
         user_name: Specific user to run for, or None.
         all_users: Whether to run for every user.
-        mac: MAC of the LLM host, or None to skip waking.
-        broadcast: Broadcast address for the magic packet.
-        url: Readiness URL for the LLM, or None to skip waiting.
-        wake_timeout: Seconds to wait for the LLM after waking.
+        mac: Overrides the configured MAC when given.
+        broadcast: Overrides the configured broadcast address when given.
+        url: Overrides the configured readiness URL when given.
 
     Returns:
         A zero-argument callable that wakes the LLM host then runs the pipeline.
@@ -1265,12 +1296,18 @@ def _build_scheduled_action(
 
     def action() -> None:
         """Wake the LLM host if configured, then run the pipeline once."""
-        if (
-            mac
-            and url
-            and not wake_and_wait(mac, url, broadcast=broadcast, timeout=wake_timeout)
-        ):
-            logger.warning("LLM host did not come up; running anyway")
+        config = load_config()
+        target_mac = mac or config.wake_mac
+        target_url = url or config.llm_health_url
+        if target_mac and target_url:
+            reachable = wake_and_wait(
+                target_mac,
+                target_url,
+                broadcast=broadcast or config.wake_broadcast,
+                timeout=config.wake_timeout_seconds,
+            )
+            if not reachable:
+                logger.warning("LLM host did not come up; running anyway")
         ctx.invoke(
             run, dry_run=False, user_name=user_name, all_users=all_users, full=False
         )
@@ -1281,56 +1318,50 @@ def _build_scheduled_action(
 @click.command("loop")
 @click.option(
     "--slots",
-    default=DEFAULT_SCHEDULE,
+    default=None,
     envvar="JOB_SCOUT_SCHEDULE",
-    show_default=True,
-    help="Comma-separated day:HH:MM entries",
+    help="Override the configured day:HH:MM entries",
 )
 @click.option(
     "--timezone",
-    default=DEFAULT_TIMEZONE,
+    default=None,
     envvar="JOB_SCOUT_TIMEZONE",
-    show_default=True,
-    help="IANA timezone the schedule is expressed in",
+    help="Override the configured timezone",
 )
 @click.option("--user", "user_name", default=None, help="Run for a specific user")
 @click.option("--all", "all_users", is_flag=True, help="Run for all users")
-@click.option("--wake-mac", envvar="JOB_SCOUT_WAKE_MAC", help="MAC of the LLM host")
+@click.option(
+    "--wake-mac", envvar="JOB_SCOUT_WAKE_MAC", help="Override the configured MAC"
+)
 @click.option(
     "--wake-broadcast",
-    default="255.255.255.255",
+    default=None,
     envvar="JOB_SCOUT_WAKE_BROADCAST",
-    help="Broadcast address for the magic packet",
+    help="Override the configured broadcast address",
 )
 @click.option(
-    "--llm-health-url", envvar="JOB_SCOUT_LLM_HEALTH_URL", help="LLM readiness URL"
-)
-@click.option(
-    "--wake-timeout",
-    default=300.0,
-    show_default=True,
-    help="Seconds to wait for the LLM after waking",
+    "--llm-health-url",
+    envvar="JOB_SCOUT_LLM_HEALTH_URL",
+    help="Override the configured LLM readiness URL",
 )
 @click.option("--run-now", is_flag=True, help="Run once at start-up, then follow it")
 @click.pass_context
 def schedule_loop(  # noqa: PLR0913 - each option maps to one deployment knob
     ctx: click.Context,
-    slots: str,
-    timezone: str,
+    slots: str | None,
+    timezone: str | None,
     user_name: str | None,
     all_users: bool,
     wake_mac: str | None,
-    wake_broadcast: str,
+    wake_broadcast: str | None,
     llm_health_url: str | None,
-    wake_timeout: float,
     run_now: bool,
 ) -> None:
-    """Run the pipeline on a recurring weekly schedule (container entrypoint)."""
-    try:
-        parsed = parse_slots(slots)
-    except ValueError as exc:
-        click.echo(f"Invalid --slots: {exc}", err=True)
-        sys.exit(1)
+    """Run the pipeline on a recurring weekly schedule (container entrypoint).
+
+    Settings come from config, which the dashboard writes, and are re-read
+    every cycle. Command-line flags override the stored values.
+    """
     action = _build_scheduled_action(
         ctx,
         user_name=user_name,
@@ -1338,9 +1369,12 @@ def schedule_loop(  # noqa: PLR0913 - each option maps to one deployment knob
         mac=wake_mac,
         broadcast=wake_broadcast,
         url=llm_health_url,
-        wake_timeout=wake_timeout,
     )
-    run_scheduler(parsed, action, timezone=timezone, run_immediately=run_now)
+    run_scheduler(
+        lambda: schedule_settings_from_config(slots=slots, timezone=timezone),
+        action,
+        run_immediately=run_now,
+    )
 
 
 def _collect_active_jobs(db: Database) -> list[JobListing]:

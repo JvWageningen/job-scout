@@ -48,6 +48,15 @@ GLOBAL_FIELDS: frozenset[str] = frozenset(
         "llm_max_attempts",
         "llm_retry_base_delay",
         "searxng_url",
+        # The container scheduler is one process for the whole deployment,
+        # so its settings are global rather than per-user.
+        "schedule_enabled",
+        "schedule_slots",
+        "schedule_timezone",
+        "wake_mac",
+        "wake_broadcast",
+        "llm_health_url",
+        "wake_timeout_seconds",
     }
 )
 

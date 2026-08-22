@@ -289,6 +289,19 @@ class Config(BaseModel):
     schedule_minute: int = 0
     schedule_days: str = "1-5"
     schedule_paused: bool = False
+    # Container scheduler ('job-scout schedule loop'). Distinct from the
+    # schedule_hour/minute/days fields above, which drive the host crontab:
+    # these allow a different time per day and are re-read on every cycle so
+    # the dashboard can change them without restarting the container.
+    schedule_enabled: bool = True
+    schedule_slots: str = "tue:17:00,sat:03:00"
+    schedule_timezone: str = "Europe/Amsterdam"
+    # Waking the machine that hosts the model server, done before each run.
+    # An empty MAC disables waking, which is correct when it is always on.
+    wake_mac: str | None = None
+    wake_broadcast: str = "255.255.255.255"
+    llm_health_url: str | None = None
+    wake_timeout_seconds: float = 300.0
     mcp_enabled: bool = False
     mcp_port: int = 5000
 

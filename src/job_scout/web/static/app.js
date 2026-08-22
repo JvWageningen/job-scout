@@ -228,6 +228,7 @@ function setupEventListeners() {
     // Profile enrichment (LinkedIn import + web person search)
     initEnrichmentUI();
     initCoachUI();
+    initAutoScheduleUI();
 
     // Coach suggestion chips are rendered dynamically, so delegate.
     document.addEventListener('click', handleCoachOptionClick);
@@ -2737,3 +2738,149 @@ window.switchTab = function(tab) {
         loadApprovalQueue();
     }
 };
+
+// --- Automatic runs (container scheduler) -----------------------------------
+
+const WEEKDAYS = [
+    ['mon', 'Monday'], ['tue', 'Tuesday'], ['wed', 'Wednesday'],
+    ['thu', 'Thursday'], ['fri', 'Friday'], ['sat', 'Saturday'], ['sun', 'Sunday'],
+];
+
+function initAutoScheduleUI() {
+    const form = document.getElementById('auto-schedule-form');
+    if (!form) return;
+    form.addEventListener('submit', (e) => { e.preventDefault(); saveAutoSchedule(); });
+    document.getElementById('add-slot-btn')?.addEventListener('click', () => addSlotRow());
+    document.getElementById('test-wake-btn')?.addEventListener('click', testWake);
+    loadAutoSchedule();
+}
+
+// Slots are stored as one "day:HH:MM" string, but editing raw text is a poor
+// interface, so the string is exploded into rows and rebuilt on save.
+function renderSlotRows(spec) {
+    const container = document.getElementById('slot-rows');
+    container.innerHTML = '';
+    (spec || '').split(',').map(s => s.trim()).filter(Boolean).forEach(entry => {
+        const [day, hh, mm] = entry.split(':');
+        addSlotRow(day, `${hh}:${mm}`);
+    });
+    if (!container.children.length) addSlotRow();
+}
+
+function addSlotRow(day = 'tue', time = '17:00') {
+    const container = document.getElementById('slot-rows');
+    const row = document.createElement('div');
+    row.className = 'slot-row';
+    const options = WEEKDAYS
+        .map(([v, label]) => `<option value="${v}"${v === day ? ' selected' : ''}>${label}</option>`)
+        .join('');
+    row.innerHTML =
+        `<select class="slot-day">${options}</select>` +
+        `<input type="time" class="slot-time" value="${time}">` +
+        `<button type="button" class="btn btn-secondary slot-remove">Remove</button>`;
+    row.querySelector('.slot-remove').addEventListener('click', () => {
+        row.remove();
+        if (!container.children.length) addSlotRow();
+    });
+    container.appendChild(row);
+}
+
+function collectSlots() {
+    return Array.from(document.querySelectorAll('#slot-rows .slot-row'))
+        .map(row => {
+            const day = row.querySelector('.slot-day').value;
+            const time = row.querySelector('.slot-time').value || '00:00';
+            return `${day}:${time}`;
+        })
+        .join(',');
+}
+
+async function loadAutoSchedule() {
+    try {
+        const response = await fetchWithAuth(`${API_BASE}/auto-schedule`);
+        if (!response.ok) return;
+        const data = await response.json();
+        document.getElementById('auto-schedule-enabled').checked = data.enabled;
+        document.getElementById('auto-schedule-timezone').value = data.timezone || '';
+        document.getElementById('auto-wake-mac').value = data.wake_mac || '';
+        document.getElementById('auto-wake-broadcast').value = data.wake_broadcast || '';
+        document.getElementById('auto-llm-health-url').value = data.llm_health_url || '';
+        document.getElementById('auto-wake-timeout').value = data.wake_timeout_seconds ?? 300;
+        renderSlotRows(data.slots);
+        renderNextRuns(data);
+    } catch (err) {
+        console.error('Failed to load schedule', err);
+    }
+}
+
+function renderNextRuns(data) {
+    const box = document.getElementById('auto-schedule-result');
+    if (!box) return;
+    if (!data.valid) {
+        box.innerHTML = `<p class="error-text">${escapeHtml(data.error || 'Invalid schedule')}</p>`;
+        return;
+    }
+    if (!data.enabled) {
+        box.innerHTML = '<p class="info-text">Automatic runs are turned off.</p>';
+        return;
+    }
+    const items = (data.next_runs || [])
+        .map(iso => `<li>${escapeHtml(formatRunTime(iso))}</li>`)
+        .join('');
+    box.innerHTML = items
+        ? `<p class="info-text">Next runs:</p><ul>${items}</ul>`
+        : '<p class="info-text">No upcoming runs.</p>';
+}
+
+function formatRunTime(iso) {
+    const d = new Date(iso);
+    return d.toLocaleString(undefined, {
+        weekday: 'long', day: 'numeric', month: 'short',
+        hour: '2-digit', minute: '2-digit',
+    });
+}
+
+async function saveAutoSchedule() {
+    const box = document.getElementById('auto-schedule-result');
+    const payload = {
+        enabled: document.getElementById('auto-schedule-enabled').checked,
+        slots: collectSlots(),
+        timezone: document.getElementById('auto-schedule-timezone').value.trim(),
+        wake_mac: document.getElementById('auto-wake-mac').value.trim(),
+        wake_broadcast: document.getElementById('auto-wake-broadcast').value.trim(),
+        llm_health_url: document.getElementById('auto-llm-health-url').value.trim(),
+        wake_timeout_seconds: document.getElementById('auto-wake-timeout').value,
+    };
+    box.innerHTML = '<p class="info-text">Saving...</p>';
+    try {
+        const response = await fetchWithAuth(`${API_BASE}/auto-schedule`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+        const data = await response.json();
+        if (!response.ok) {
+            box.innerHTML = `<p class="error-text">${escapeHtml(data.detail || 'Save failed')}</p>`;
+            return;
+        }
+        renderNextRuns({ ...data, enabled: payload.enabled });
+    } catch (err) {
+        box.innerHTML = `<p class="error-text">${escapeHtml(err.message)}</p>`;
+    }
+}
+
+async function testWake() {
+    const box = document.getElementById('auto-schedule-result');
+    box.innerHTML = '<p class="info-text">Sending magic packet and waiting for the model server...</p>';
+    try {
+        const response = await fetchWithAuth(`${API_BASE}/auto-schedule/test-wake`, { method: 'POST' });
+        const data = await response.json();
+        if (!response.ok) {
+            box.innerHTML = `<p class="error-text">${escapeHtml(data.detail || 'Wake test failed')}</p>`;
+            return;
+        }
+        box.innerHTML = `<p class="${data.reachable ? 'info-text' : 'error-text'}">${escapeHtml(data.message)}</p>`;
+    } catch (err) {
+        box.innerHTML = `<p class="error-text">${escapeHtml(err.message)}</p>`;
+    }
+}
