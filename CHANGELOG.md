@@ -4,6 +4,29 @@ Format: [Keep a Changelog](https://keepachangelog.com)
 
 <!-- version list -->
 
+## v1.13.0 (2026-08-22)
+
+### Bug Fixes
+
+- **deploy**: Let the dashboard own the schedule instead of the environment
+  ([`51da87e`](https://github.com/JvWageningen/job-scout/commit/51da87e71dcfffcdcad1e105fb59864a2d9fe945))
+
+### Chores
+
+- Sync uv.lock to 1.12.0 [skip ci]
+  ([`7a1f516`](https://github.com/JvWageningen/job-scout/commit/7a1f516cf3a44ae169b9dc275d956c0f7e5c8231))
+
+### Documentation
+
+- **deploy**: Document container deployment and fix the update hint
+  ([`8ccddff`](https://github.com/JvWageningen/job-scout/commit/8ccddff443b94667f83aec214d611512d72db514))
+
+### Features
+
+- **schedule**: Manage automatic runs from the dashboard
+  ([`4694aa5`](https://github.com/JvWageningen/job-scout/commit/4694aa58b96d4c39aebb844ae1866ad5ae4c76b1))
+
+
 ## v1.12.0 (2026-08-22)
 
 ### Continuous Integration
