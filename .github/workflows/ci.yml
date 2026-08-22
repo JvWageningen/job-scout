@@ -68,3 +68,23 @@ jobs:
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           tag: ${{ steps.release.outputs.tag }}
+
+      # semantic-release bumps pyproject.toml but never re-locks, so uv.lock's
+      # recorded project version drifts further behind on every release. Any
+      # later `uv` command then rewrites that line, leaving a permanently dirty
+      # working tree that has to be stashed around on every push. Re-lock here,
+      # on the runner, where uv is on PATH (it is not inside the release
+      # container). Runs last so a failure cannot block publishing the release.
+      - name: Sync uv.lock to the released version
+        if: steps.release.outputs.released == 'true'
+        run: |
+          uv lock
+          if git diff --quiet -- uv.lock; then
+            echo "uv.lock already in sync"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add uv.lock
+          git commit -m "chore: sync uv.lock to ${{ steps.release.outputs.version }} [skip ci]"
+          git push
