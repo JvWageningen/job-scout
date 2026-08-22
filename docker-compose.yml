@@ -32,13 +32,10 @@ services:
     <<: *common
     container_name: job-scout-scheduler
     network_mode: host
-    environment:
-      <<: *common-env
-      JOB_SCOUT_SCHEDULE: ${JOB_SCOUT_SCHEDULE:-tue:17:00,sat:03:00}
-      JOB_SCOUT_TIMEZONE: ${JOB_SCOUT_TZ:-Europe/Amsterdam}
-      JOB_SCOUT_WAKE_MAC: ${JOB_SCOUT_WAKE_MAC:-}
-      JOB_SCOUT_WAKE_BROADCAST: ${JOB_SCOUT_WAKE_BROADCAST:-255.255.255.255}
-      JOB_SCOUT_LLM_HEALTH_URL: ${JOB_SCOUT_LLM_HEALTH_URL:-}
+    # The schedule and wake settings deliberately are NOT passed as
+    # environment variables: they are managed from the dashboard and stored
+    # in data/config.yaml, and an env var here would silently override
+    # whatever the dashboard saves. Set them under Schedule in the UI.
     command: ["schedule", "loop", "--all"]
     # A run in progress can take well over an hour; let it finish the job it
     # is on and save state rather than being SIGKILLed mid-evaluation.
