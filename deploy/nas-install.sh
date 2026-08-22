@@ -125,7 +125,7 @@ while [ "$i" -lt 30 ]; do
         printf '\n  Logs:    %s logs -f\n' "$COMPOSE"
         printf '  Run now: %s exec scheduler job-scout run --all\n' "$COMPOSE"
         printf '  Stop:    %s down\n' "$COMPOSE"
-        printf '  Update:  git pull, then re-run this script\n\n'
+        printf '  Update:  re-sync this directory, then re-run this script\n\n'
         exit 0
     fi
     i=$((i + 1))
