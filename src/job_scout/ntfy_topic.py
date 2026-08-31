@@ -105,6 +105,29 @@ def subscribe_url(topic: str, server: str = "https://ntfy.sh") -> str:
     return f"{server.rstrip('/')}/{topic}"
 
 
+def app_subscribe_url(topic: str, server: str = "https://ntfy.sh") -> str:
+    """Return the deep link that opens the ntfy app straight at the topic.
+
+    ntfy documents ``ntfy://<host>/<topic>`` for this and recommends it over
+    an https link, because Android's http/https deep linking is unreliable --
+    an https URL usually just opens the browser instead of the app.
+
+    Args:
+        topic: The ntfy topic.
+        server: Base URL of the ntfy server.
+
+    Returns:
+        An ``ntfy://`` deep link. Self-hosted servers reached over plain HTTP
+        get ``?secure=false`` appended, which is how the app is told not to
+        upgrade the connection.
+    """
+    trimmed = server.rstrip("/")
+    insecure = trimmed.startswith("http://")
+    host = trimmed.removeprefix("https://").removeprefix("http://")
+    url = f"ntfy://{host}/{topic}"
+    return f"{url}?secure=false" if insecure else url
+
+
 def qr_svg(url: str, *, scale: int = 5, dark: str = "#1f2d3d") -> str:
     """Render a URL as an inline SVG QR code.
 

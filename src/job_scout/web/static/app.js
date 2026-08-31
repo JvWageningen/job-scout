@@ -2891,9 +2891,37 @@ async function testWake() {
 
 // --- ntfy subscription (QR + tap-to-subscribe) ------------------------------
 
+// 'app' encodes the ntfy:// deep link, which opens the app straight at the
+// topic. ntfy recommends this over an https link because Android's http deep
+// linking is unreliable and lands in the browser instead.
+let ntfyQrKind = 'app';
+
+const NTFY_QR_HINTS = {
+    app: 'Opens the ntfy app straight at this topic. If your camera refuses the link, switch to "Opens the web".',
+    web: 'Works with any scanner, but lands on the ntfy website rather than in the app.',
+};
+
 function initNtfyUI() {
     document.getElementById('ntfy-generate-btn')?.addEventListener('click', generateNtfyTopic);
     document.getElementById('ntfy-copy-btn')?.addEventListener('click', copyNtfyLink);
+    document.getElementById('ntfy-qr-toggle')?.addEventListener('click', (e) => {
+        const btn = e.target.closest('.qr-mode');
+        if (!btn) return;
+        ntfyQrKind = btn.dataset.kind;
+        document.querySelectorAll('#ntfy-qr-toggle .qr-mode')
+            .forEach(b => b.classList.toggle('active', b === btn));
+        refreshNtfyQr();
+    });
+}
+
+function refreshNtfyQr() {
+    const img = document.getElementById('ntfy-qr');
+    const hint = document.getElementById('ntfy-qr-hint');
+    if (!img || !currentUser) return;
+    // Cache-bust so regenerating the topic never leaves the old code showing.
+    img.src = `${API_BASE}/ntfy/qr?user=${encodeURIComponent(currentUser)}`
+        + `&kind=${ntfyQrKind}&t=${Date.now()}`;
+    if (hint) hint.textContent = NTFY_QR_HINTS[ntfyQrKind] || '';
 }
 
 async function loadNtfySubscription() {
@@ -2920,7 +2948,6 @@ function renderNtfySubscription(data) {
     const link = document.getElementById('ntfy-open-link');
     const urlEl = document.getElementById('ntfy-url');
     const warn = document.getElementById('ntfy-warning');
-    const img = document.getElementById('ntfy-qr');
     if (!panel) return;
 
     if (!data.topic) {
@@ -2944,8 +2971,7 @@ function renderNtfySubscription(data) {
             'job alerts. Generate a secure one below.</p>';
     }
 
-    // Cache-bust so regenerating the topic never leaves the old code showing.
-    img.src = `${API_BASE}/ntfy/qr?user=${encodeURIComponent(currentUser)}&t=${Date.now()}`;
+    refreshNtfyQr();
 }
 
 async function generateNtfyTopic() {

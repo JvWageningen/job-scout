@@ -101,6 +101,41 @@ class TestSubscribeUrl:
         )
 
 
+class TestAppSubscribeUrl:
+    """The deep link is what makes a scan open the app, not the browser."""
+
+    def test_uses_the_ntfy_scheme(self) -> None:
+        """An https link opens the browser instead, which is the whole bug."""
+        assert (
+            ntfy_topic.app_subscribe_url("job-scout-x", "https://ntfy.sh")
+            == "ntfy://ntfy.sh/job-scout-x"
+        )
+
+    def test_does_not_leave_the_https_scheme_in_the_host(self) -> None:
+        """A naive replace would produce ntfy://https://ntfy.sh/..."""
+        url = ntfy_topic.app_subscribe_url("t", "https://ntfy.sh")
+        assert "https" not in url
+        assert url.count("://") == 1
+
+    def test_self_hosted_http_server_is_marked_insecure(self) -> None:
+        """Without this the app tries HTTPS against a plain-HTTP server."""
+        assert (
+            ntfy_topic.app_subscribe_url("t", "http://nas.local:8080")
+            == "ntfy://nas.local:8080/t?secure=false"
+        )
+
+    def test_self_hosted_https_server_needs_no_flag(self) -> None:
+        """secure=false must not be added when HTTPS is in use."""
+        url = ntfy_topic.app_subscribe_url("t", "https://ntfy.example.com")
+        assert url == "ntfy://ntfy.example.com/t"
+
+    def test_tolerates_a_trailing_slash(self) -> None:
+        """A configured server may end in a slash."""
+        assert (
+            ntfy_topic.app_subscribe_url("t", "https://ntfy.sh/") == "ntfy://ntfy.sh/t"
+        )
+
+
 class TestQrSvg:
     """The QR is rendered server-side so no JS library is needed."""
 

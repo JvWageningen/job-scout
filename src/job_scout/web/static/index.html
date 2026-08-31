@@ -522,9 +522,9 @@
                             <div class="subscribe-copy">
                                 <h4>Get these on your phone</h4>
                                 <p class="info-text">
-                                    Install the <strong>ntfy</strong> app, then scan this
-                                    code &mdash; or tap the button if you are reading this
-                                    on your phone.
+                                    Install the <strong>ntfy</strong> app first, then scan
+                                    the code &mdash; or tap the button if you are reading
+                                    this on your phone.
                                 </p>
                                 <div id="ntfy-warning" class="hidden"></div>
                                 <div class="subscribe-actions">
@@ -536,6 +536,11 @@
                             </div>
                             <div class="subscribe-qr">
                                 <img id="ntfy-qr" alt="QR code to subscribe to this ntfy topic">
+                                <div class="qr-toggle" id="ntfy-qr-toggle">
+                                    <button type="button" class="qr-mode active" data-kind="app">Opens app</button>
+                                    <button type="button" class="qr-mode" data-kind="web">Opens web</button>
+                                </div>
+                                <p class="qr-hint" id="ntfy-qr-hint"></p>
                             </div>
                         </div>
                     </div>

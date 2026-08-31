@@ -1023,9 +1023,10 @@ def create_app() -> FastAPI:
             "topic": topic,
             "server": server,
             "subscribe_url": url,
-            # The app registers for its own scheme, so this opens the ntfy app
-            # directly on a phone rather than going via the browser.
-            "app_url": url.replace("https://", "ntfy://", 1) if url else "",
+            # ntfy documents its own scheme for this: an https link opens the
+            # browser rather than the app, because Android's http deep
+            # linking is unreliable.
+            "app_url": ntfy_topic.app_subscribe_url(topic, server) if topic else "",
             "secure": ntfy_topic.is_secure_topic(topic),
         }
 
@@ -1058,11 +1059,14 @@ def create_app() -> FastAPI:
         return _topic_payload(name)
 
     @app.get("/api/ntfy/qr")
-    def get_ntfy_qr(user: str | None = None) -> Response:
-        """Return the subscription URL as a scannable SVG QR code.
+    def get_ntfy_qr(user: str | None = None, kind: str = "app") -> Response:
+        """Return the subscription link as a scannable SVG QR code.
 
         Args:
             user: User name.
+            kind: 'app' encodes the ntfy:// deep link, which opens the app
+                straight at the topic. 'web' encodes the https URL, which any
+                scanner will follow but which lands in the browser.
 
         Returns:
             An SVG response.
@@ -1073,7 +1077,8 @@ def create_app() -> FastAPI:
         payload = _topic_payload(_require_user(user))
         if not payload["subscribe_url"]:
             raise HTTPException(status_code=400, detail="No ntfy topic configured.")
-        svg = ntfy_topic.qr_svg(cast(str, payload["subscribe_url"]))
+        key = "subscribe_url" if kind == "web" else "app_url"
+        svg = ntfy_topic.qr_svg(cast(str, payload[key]))
         # Never cached: regenerating the topic must not leave a stale code on
         # screen that subscribes someone to the previous topic.
         return Response(
