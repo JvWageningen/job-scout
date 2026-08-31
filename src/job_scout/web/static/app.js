@@ -229,6 +229,8 @@ function setupEventListeners() {
     initEnrichmentUI();
     initCoachUI();
     initAutoScheduleUI();
+    initNtfyUI();
+    initFeedbackUI();
 
     // Coach suggestion chips are rendered dynamically, so delegate.
     document.addEventListener('click', handleCoachOptionClick);
@@ -900,6 +902,8 @@ async function loadAllUserData() {
         loadScheduleStatus(),
         loadKeywords(),
         loadAnalytics(),
+        loadNtfySubscription(),
+        loadFeedbackJobs(),
     ]);
 }
 
@@ -2883,4 +2887,229 @@ async function testWake() {
     } catch (err) {
         box.innerHTML = `<p class="error-text">${escapeHtml(err.message)}</p>`;
     }
+}
+
+// --- ntfy subscription (QR + tap-to-subscribe) ------------------------------
+
+function initNtfyUI() {
+    document.getElementById('ntfy-generate-btn')?.addEventListener('click', generateNtfyTopic);
+    document.getElementById('ntfy-copy-btn')?.addEventListener('click', copyNtfyLink);
+}
+
+async function loadNtfySubscription() {
+    const panel = document.getElementById('ntfy-subscribe');
+    if (!panel) return;
+    // Without a user there is no topic, and an <img> with no src renders as a
+    // broken-image box. Keep the whole panel hidden instead.
+    if (!currentUser) {
+        panel.classList.add('hidden');
+        return;
+    }
+    try {
+        const response = await fetchWithAuth(
+            `${API_BASE}/ntfy/topic?user=${encodeURIComponent(currentUser)}`);
+        if (!response.ok) return;
+        renderNtfySubscription(await response.json());
+    } catch (err) {
+        console.error('Failed to load ntfy topic', err);
+    }
+}
+
+function renderNtfySubscription(data) {
+    const panel = document.getElementById('ntfy-subscribe');
+    const link = document.getElementById('ntfy-open-link');
+    const urlEl = document.getElementById('ntfy-url');
+    const warn = document.getElementById('ntfy-warning');
+    const img = document.getElementById('ntfy-qr');
+    if (!panel) return;
+
+    if (!data.topic) {
+        panel.classList.add('hidden');
+        return;
+    }
+    panel.classList.remove('hidden');
+
+    // The app registers for its own scheme; fall back to https for anyone
+    // opening this on a desktop without the app installed.
+    link.href = data.app_url || data.subscribe_url;
+    urlEl.textContent = data.subscribe_url;
+
+    if (data.secure) {
+        warn.classList.add('hidden');
+        warn.innerHTML = '';
+    } else {
+        warn.classList.remove('hidden');
+        warn.innerHTML =
+            '<p class="warning-text">Anyone who guesses this topic name receives your ' +
+            'job alerts. Generate a secure one below.</p>';
+    }
+
+    // Cache-bust so regenerating the topic never leaves the old code showing.
+    img.src = `${API_BASE}/ntfy/qr?user=${encodeURIComponent(currentUser)}&t=${Date.now()}`;
+}
+
+async function generateNtfyTopic() {
+    if (!currentUser) return;
+    if (!confirm(
+        'Generate a new topic?\n\nYou will need to re-subscribe on your phone; ' +
+        'notifications sent to the old topic will no longer reach you.')) return;
+    try {
+        const response = await fetchWithAuth(`${API_BASE}/ntfy/topic/generate`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ user: currentUser }),
+        });
+        if (!response.ok) return;
+        const data = await response.json();
+        const field = document.getElementById('ntfy-topic');
+        if (field) field.value = data.topic;
+        renderNtfySubscription(data);
+    } catch (err) {
+        console.error('Failed to generate topic', err);
+    }
+}
+
+async function copyNtfyLink() {
+    const url = document.getElementById('ntfy-url')?.textContent;
+    if (!url) return;
+    const btn = document.getElementById('ntfy-copy-btn');
+    try {
+        await navigator.clipboard.writeText(url);
+        const original = btn.textContent;
+        btn.textContent = 'Copied';
+        setTimeout(() => { btn.textContent = original; }, 1500);
+    } catch {
+        // Clipboard needs a secure context; the URL is on screen either way.
+        btn.textContent = 'Copy failed';
+    }
+}
+
+// --- Document review (CV + motivational letter) -----------------------------
+
+function initFeedbackUI() {
+    document.getElementById('cv-feedback-btn')?.addEventListener('click', reviewCv);
+    document.getElementById('letter-feedback-btn')?.addEventListener('click', reviewLetter);
+}
+
+async function loadFeedbackJobs() {
+    const cvSelect = document.getElementById('cv-feedback-job');
+    const letterSelect = document.getElementById('letter-feedback-job');
+    if (!cvSelect || !currentUser) return;
+    try {
+        const response = await fetchWithAuth(
+            `${API_BASE}/feedback/jobs?user=${encodeURIComponent(currentUser)}`);
+        if (!response.ok) return;
+        const jobs = await response.json();
+        const options = jobs
+            .map(j => `<option value="${j.id}">${escapeHtml(j.title)} — ${escapeHtml(j.company)}</option>`)
+            .join('');
+        cvSelect.innerHTML =
+            '<option value="">General review (no specific job)</option>' + options;
+        letterSelect.innerHTML =
+            '<option value="">-- Choose a vacancy --</option>' + options;
+    } catch (err) {
+        console.error('Failed to load jobs for review', err);
+    }
+}
+
+async function reviewCv() {
+    const jobId = document.getElementById('cv-feedback-job').value;
+    const body = { user: currentUser };
+    if (jobId) body.job_id = Number(jobId);
+    await runReview('/feedback/cv', body, 'cv-feedback-result', 'cv-feedback-btn');
+}
+
+async function reviewLetter() {
+    const jobId = document.getElementById('letter-feedback-job').value;
+    const text = document.getElementById('letter-feedback-text').value.trim();
+    const box = document.getElementById('letter-feedback-result');
+    if (!jobId) {
+        box.innerHTML = '<p class="error-text">Choose the vacancy this letter is for.</p>';
+        return;
+    }
+    if (!text) {
+        box.innerHTML = '<p class="error-text">Paste the letter first.</p>';
+        return;
+    }
+    await runReview('/feedback/cover-letter',
+        { user: currentUser, job_id: Number(jobId), text },
+        'letter-feedback-result', 'letter-feedback-btn');
+}
+
+async function runReview(path, body, resultId, buttonId) {
+    const box = document.getElementById(resultId);
+    const btn = document.getElementById(buttonId);
+    if (!currentUser) {
+        box.innerHTML = '<p class="error-text">Select a user first.</p>';
+        return;
+    }
+    btn.disabled = true;
+    box.innerHTML = '<p class="info-text">Reading it through... this takes a moment.</p>';
+    try {
+        const response = await fetchWithAuth(`${API_BASE}${path}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        });
+        const data = await response.json();
+        if (!response.ok) {
+            box.innerHTML = `<p class="error-text">${escapeHtml(data.detail || 'Review failed')}</p>`;
+            return;
+        }
+        box.innerHTML = renderFeedback(data);
+    } catch (err) {
+        box.innerHTML = `<p class="error-text">${escapeHtml(err.message)}</p>`;
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+function renderFeedback(data) {
+    if (!data.points?.length && !data.summary) {
+        return '<p class="info-text">No feedback came back. Check the LLM settings.</p>';
+    }
+    const parts = [];
+
+    const scoreClass = data.score == null ? 'score-none'
+        : data.score >= 75 ? 'score-good'
+        : data.score >= 50 ? 'score-mixed' : 'score-poor';
+    parts.push('<div class="feedback-header">');
+    if (data.score != null) {
+        parts.push(`<span class="feedback-score ${scoreClass}">${data.score}</span>`);
+    }
+    parts.push('<div>');
+    if (data.target) parts.push(`<p class="feedback-target">${escapeHtml(data.target)}</p>`);
+    if (data.summary) parts.push(`<p class="feedback-summary">${escapeHtml(data.summary)}</p>`);
+    parts.push('</div></div>');
+
+    if (data.strengths?.length) {
+        parts.push('<h4>What works</h4><ul class="feedback-strengths">');
+        data.strengths.forEach(s => parts.push(`<li>${escapeHtml(s)}</li>`));
+        parts.push('</ul>');
+    }
+
+    if (data.points?.length) {
+        parts.push('<h4>What to change</h4><ul class="feedback-points">');
+        data.points.forEach(p => {
+            const sev = (p.severity || 'suggestion').toLowerCase();
+            parts.push(`<li class="sev-${escapeHtml(sev)}">`);
+            parts.push(`<span class="feedback-sev">${escapeHtml(sev)}</span>`);
+            if (p.section) parts.push(`<span class="feedback-section">${escapeHtml(p.section)}</span>`);
+            parts.push(`<p class="feedback-issue">${escapeHtml(p.issue)}</p>`);
+            if (p.suggestion) parts.push(`<p class="feedback-suggestion">${escapeHtml(p.suggestion)}</p>`);
+            if (p.example) parts.push(`<blockquote class="feedback-example">${escapeHtml(p.example)}</blockquote>`);
+            parts.push('</li>');
+        });
+        parts.push('</ul>');
+    }
+
+    if (data.missing_keywords?.length) {
+        parts.push('<h4>Terms the vacancy uses that your document does not</h4>');
+        parts.push('<p class="feedback-keywords">');
+        data.missing_keywords.forEach(k =>
+            parts.push(`<span class="keyword-chip">${escapeHtml(k)}</span>`));
+        parts.push('</p>');
+    }
+
+    return parts.join('');
 }

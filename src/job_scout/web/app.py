@@ -15,9 +15,9 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from loguru import logger
 from pydantic import ValidationError
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.responses import FileResponse, JSONResponse
+from starlette.responses import FileResponse, JSONResponse, Response
 
-from job_scout import progress
+from job_scout import feedback, ntfy_topic, progress
 from job_scout.config import (
     GLOBAL_FIELDS,
     apply_user_init,
@@ -127,6 +127,62 @@ def _load_cv_profile_quietly(user: str) -> CvProfile | None:
     except (FileNotFoundError, LLMError, ValueError) as exc:
         logger.debug(f"CV profile unavailable for {user}: {exc}")
         return None
+
+
+def _load_cv_text(user: str) -> str:
+    """Return the raw extracted text of a user's CV.
+
+    Args:
+        user: User name.
+
+    Returns:
+        The extracted CV text.
+
+    Raises:
+        HTTPException: If no CV is configured or it cannot be read.
+    """
+    from job_scout.cv_parser import parse_cv  # noqa: PLC0415
+
+    config = build_effective_config(user)
+    if not config.cv_path:
+        raise HTTPException(
+            status_code=400,
+            detail="No CV configured for this user. Set a CV path under Profile.",
+        )
+    try:
+        text = parse_cv(config.cv_path)
+    except (FileNotFoundError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not text or not text.strip():
+        raise HTTPException(
+            status_code=400, detail=f"No readable text in {config.cv_path}"
+        )
+    return text
+
+
+def _require_job(user: str, job_id: object) -> JobListing:
+    """Load a job by id for a user.
+
+    Args:
+        user: User name.
+        job_id: The job's database id.
+
+    Returns:
+        The job listing.
+
+    Raises:
+        HTTPException: If the id is missing or no such job exists.
+    """
+    if job_id in (None, ""):
+        raise HTTPException(status_code=400, detail="A job must be selected.")
+    try:
+        ident = int(cast(int, job_id))
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="Invalid job id.") from exc
+    job = Database(user_db_path(user)).get_job(ident)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"No job with id {ident}")
+    return job
 
 
 def _resolve_linkedin_data(
@@ -949,6 +1005,175 @@ def create_app() -> FastAPI:
             )
         )
         return {"reachable": reachable, "message": message}
+
+    def _topic_payload(user: str) -> dict[str, Any]:
+        """Describe a user's ntfy topic and how to subscribe to it.
+
+        Args:
+            user: User name.
+
+        Returns:
+            The topic, the URLs to reach it, and whether it looks guessable.
+        """
+        cfg = build_effective_config(user)
+        topic = cfg.ntfy_topic or ""
+        server = cfg.ntfy_server or "https://ntfy.sh"
+        url = ntfy_topic.subscribe_url(topic, server) if topic else ""
+        return {
+            "topic": topic,
+            "server": server,
+            "subscribe_url": url,
+            # The app registers for its own scheme, so this opens the ntfy app
+            # directly on a phone rather than going via the browser.
+            "app_url": url.replace("https://", "ntfy://", 1) if url else "",
+            "secure": ntfy_topic.is_secure_topic(topic),
+        }
+
+    @app.get("/api/ntfy/topic")
+    def get_ntfy_topic(user: str | None = None) -> dict[str, Any]:
+        """Return the user's ntfy topic and subscription links.
+
+        Args:
+            user: User name.
+
+        Returns:
+            Topic details for the notifications panel.
+        """
+        return _topic_payload(_require_user(user))
+
+    @app.post("/api/ntfy/topic/generate")
+    def generate_ntfy_topic(body: dict[str, Any]) -> dict[str, Any]:
+        """Generate and save a new hard-to-guess topic for the user.
+
+        Args:
+            body: Request body with 'user'.
+
+        Returns:
+            The new topic details.
+        """
+        name = _require_user(body.get("user"))
+        topic = ntfy_topic.generate_topic(name)
+        set_config_value("ntfy_topic", topic, user=name)
+        logger.info(f"Generated a new ntfy topic for {name}")
+        return _topic_payload(name)
+
+    @app.get("/api/ntfy/qr")
+    def get_ntfy_qr(user: str | None = None) -> Response:
+        """Return the subscription URL as a scannable SVG QR code.
+
+        Args:
+            user: User name.
+
+        Returns:
+            An SVG response.
+
+        Raises:
+            HTTPException: If no topic is configured yet.
+        """
+        payload = _topic_payload(_require_user(user))
+        if not payload["subscribe_url"]:
+            raise HTTPException(status_code=400, detail="No ntfy topic configured.")
+        svg = ntfy_topic.qr_svg(cast(str, payload["subscribe_url"]))
+        # Never cached: regenerating the topic must not leave a stale code on
+        # screen that subscribes someone to the previous topic.
+        return Response(
+            content=svg,
+            media_type="image/svg+xml",
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @app.post("/api/feedback/cv")
+    def feedback_cv(body: dict[str, Any]) -> dict[str, Any]:
+        """Review the user's CV, generally or against one vacancy.
+
+        Args:
+            body: Request body with 'user' and an optional 'job_id'.
+
+        Returns:
+            The review as a dictionary.
+
+        Raises:
+            HTTPException: If the CV is unavailable or the review fails.
+        """
+        user = _require_user(body.get("user"))
+        job = _require_job(user, body["job_id"]) if body.get("job_id") else None
+        cv_text = _load_cv_text(user)
+        client = get_llm_client(build_effective_config(user))
+        try:
+            review = feedback.review_cv(
+                cv_text,
+                profile=_load_cv_profile_quietly(user),
+                job=job,
+                client=client,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return review.model_dump()
+
+    @app.post("/api/feedback/cover-letter")
+    def feedback_cover_letter(body: dict[str, Any]) -> dict[str, Any]:
+        """Review a motivational letter against the vacancy it targets.
+
+        Args:
+            body: Request body with 'user', 'job_id' and 'text'.
+
+        Returns:
+            The review as a dictionary.
+
+        Raises:
+            HTTPException: If the job or letter is missing, or review fails.
+        """
+        user = _require_user(body.get("user"))
+        job = _require_job(user, body.get("job_id"))
+        client = get_llm_client(build_effective_config(user))
+        try:
+            review = feedback.review_cover_letter(
+                str(body.get("text") or ""),
+                job,
+                profile=_load_cv_profile_quietly(user),
+                client=client,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return review.model_dump()
+
+    @app.get("/api/feedback/jobs")
+    def feedback_jobs(user: str | None = None) -> list[dict[str, Any]]:
+        """List the user's jobs, for the 'which vacancy' pickers.
+
+        Args:
+            user: User name.
+
+        Returns:
+            Id, title and company for each job still under consideration,
+            newest first.
+        """
+        name = _require_user(user)
+        db = Database(user_db_path(name))
+        seen: set[int] = set()
+        options: list[dict[str, Any]] = []
+        for status in (
+            JobStatus.MATCHED,
+            JobStatus.VIEWED,
+            JobStatus.APPROVED,
+            JobStatus.READY,
+            JobStatus.SUBMITTED,
+            JobStatus.INTERVIEWING,
+        ):
+            for job in db.get_jobs_by_status(status):
+                if job.id is None or job.id in seen:
+                    continue
+                seen.add(job.id)
+                options.append(
+                    {
+                        "id": job.id,
+                        "title": job.title,
+                        "company": job.company,
+                        "status": job.status.value,
+                    }
+                )
+        options.sort(key=lambda o: cast(int, o["id"]), reverse=True)
+        return options
 
     @app.post("/api/secrets")
     def update_secrets_endpoint(body: dict[str, Any]) -> dict[str, str]:

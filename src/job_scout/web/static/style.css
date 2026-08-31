@@ -1,5 +1,40 @@
 /* job-scout Dashboard Stylesheet */
 
+:root {
+    /* Cool neutrals with a slight blue bias, so they read as chosen rather
+       than as default grey. */
+    --bg: #eef1f5;
+    --surface: #ffffff;
+    --surface-sunken: #f7f9fb;
+    --line: #dde3ea;
+
+    --ink: #1b2733;
+    --ink-soft: #55636f;
+    --ink-faint: #808c99;
+
+    /* One action colour, one attention colour. The amber does the flair and
+       is deliberately rationed: active tab, scores, focus accents. */
+    --accent: #2f5d8a;
+    --accent-strong: #24486b;
+    --accent-wash: rgba(47, 93, 138, 0.08);
+    --highlight: #c9761f;
+    --highlight-wash: rgba(201, 118, 31, 0.12);
+
+    --good: #2f7a54;
+    --warn: #b4791c;
+    --bad: #b23b32;
+
+    --radius: 10px;
+    --radius-sm: 6px;
+
+    /* Layered rather than a single blur, so cards lift without looking foggy. */
+    --shadow: 0 1px 2px rgba(27, 39, 51, 0.06), 0 4px 12px rgba(27, 39, 51, 0.06);
+    --shadow-lift: 0 2px 4px rgba(27, 39, 51, 0.08), 0 10px 24px rgba(27, 39, 51, 0.10);
+
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
+
 * {
     margin: 0;
     padding: 0;
@@ -7,10 +42,15 @@
 }
 
 body {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-    background-color: #f5f5f5;
-    color: #333;
+    font-family: var(--sans);
+    background-color: var(--bg);
+    color: var(--ink);
     line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+    background: var(--highlight-wash);
 }
 
 .container {
@@ -20,21 +60,28 @@ body {
 }
 
 header {
-    background-color: #2c3e50;
+    /* A quiet gradient and a warm hairline: the one place the page raises
+       its voice. */
+    background: linear-gradient(135deg, #223142 0%, #1b2733 55%, #202c3a 100%);
     color: white;
-    padding: 40px 0;
-    margin-bottom: 40px;
+    padding: 44px 0 40px;
+    margin-bottom: 36px;
     text-align: center;
+    border-bottom: 3px solid var(--highlight);
 }
 
 header h1 {
-    font-size: 2.5em;
-    margin-bottom: 10px;
+    font-size: 2.4em;
+    margin-bottom: 8px;
+    letter-spacing: -0.02em;
+    font-weight: 650;
+    text-wrap: balance;
 }
 
 header .subtitle {
-    font-size: 1.1em;
-    opacity: 0.9;
+    font-size: 1.05em;
+    opacity: 0.72;
+    letter-spacing: 0.01em;
 }
 
 main {
@@ -44,32 +91,36 @@ main {
 /* Tab Navigation */
 .tabs {
     display: flex;
-    gap: 5px;
-    margin-bottom: 20px;
+    gap: 4px;
+    margin-bottom: 22px;
     flex-wrap: wrap;
-    border-bottom: 2px solid #ddd;
+    border-bottom: 1px solid var(--line);
 }
 
 .tab-btn {
-    background-color: #ecf0f1;
+    background-color: transparent;
     border: none;
-    padding: 12px 20px;
+    padding: 11px 18px;
     cursor: pointer;
-    font-weight: 500;
-    color: #555;
-    border-bottom: 3px solid transparent;
-    transition: all 0.2s;
-    border-radius: 4px 4px 0 0;
+    font-weight: 550;
+    font-size: 0.95em;
+    color: var(--ink-soft);
+    border-bottom: 2px solid transparent;
+    transition: color 0.18s ease, background-color 0.18s ease, border-color 0.18s ease;
+    border-radius: var(--radius-sm) var(--radius-sm) 0 0;
 }
 
 .tab-btn:hover {
-    background-color: #d5dbdd;
+    background-color: var(--accent-wash);
+    color: var(--accent-strong);
 }
 
 .tab-btn.active {
-    background-color: #3498db;
-    color: white;
-    border-bottom-color: #3498db;
+    background-color: transparent;
+    color: var(--ink);
+    /* Underline rather than a filled block: the tab row stays calm and the
+       amber marks position without shouting. */
+    border-bottom-color: var(--highlight);
 }
 
 .tab-content {
@@ -81,25 +132,29 @@ main {
 }
 
 .section {
-    background: white;
-    border-radius: 8px;
-    padding: 30px;
-    margin-bottom: 30px;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 28px 30px;
+    margin-bottom: 26px;
+    box-shadow: var(--shadow);
 }
 
 .section h2 {
-    font-size: 1.8em;
+    font-size: 1.55em;
     margin-bottom: 20px;
-    color: #2c3e50;
-    border-bottom: 2px solid #3498db;
-    padding-bottom: 10px;
+    color: var(--ink);
+    letter-spacing: -0.015em;
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 12px;
+    text-wrap: balance;
 }
 
 .section h3 {
-    font-size: 1.3em;
-    margin: 25px 0 15px 0;
-    color: #2c3e50;
+    font-size: 1.15em;
+    margin: 24px 0 14px 0;
+    color: var(--ink);
+    letter-spacing: -0.01em;
 }
 
 .hidden {
@@ -113,24 +168,32 @@ main {
 
 label {
     display: block;
-    margin-bottom: 8px;
-    font-weight: 500;
-    color: #2c3e50;
+    margin-bottom: 7px;
+    font-weight: 550;
+    font-size: 0.92em;
+    color: var(--ink-soft);
 }
 
-select, input[type="text"], input[type="email"], input[type="password"], input[type="number"], input[type="url"], textarea {
+select, input[type="text"], input[type="email"], input[type="password"], input[type="number"], input[type="url"], input[type="time"], textarea {
     width: 100%;
-    padding: 10px;
-    border: 1px solid #ddd;
-    border-radius: 4px;
-    font-size: 1em;
+    padding: 10px 12px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    font-size: 0.98em;
     font-family: inherit;
+    color: var(--ink);
+    background: var(--surface);
+    transition: border-color 0.16s ease, box-shadow 0.16s ease;
+}
+
+select:hover, input:hover, textarea:hover {
+    border-color: #c6d0da;
 }
 
 select:focus, input:focus, textarea:focus {
     outline: none;
-    border-color: #3498db;
-    box-shadow: 0 0 0 2px rgba(52, 152, 219, 0.1);
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-wash);
 }
 
 .checkbox-label {
@@ -148,47 +211,63 @@ select:focus, input:focus, textarea:focus {
 
 /* Button Styles */
 .btn {
-    padding: 10px 20px;
-    border: none;
-    border-radius: 4px;
-    font-size: 1em;
+    padding: 10px 18px;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    font-size: 0.95em;
     cursor: pointer;
-    transition: background-color 0.2s;
-    font-weight: 500;
+    transition: background-color 0.16s ease, border-color 0.16s ease, transform 0.16s ease, box-shadow 0.16s ease;
+    font-weight: 550;
+    font-family: inherit;
+}
+
+.btn:active {
+    transform: translateY(1px);
+}
+
+.btn:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px var(--highlight-wash);
 }
 
 .btn-primary {
-    background-color: #3498db;
+    background-color: var(--accent);
     color: white;
-    margin-right: 15px;
+    margin-right: 12px;
 }
 
 .btn-primary:hover {
-    background-color: #2980b9;
+    background-color: var(--accent-strong);
+    box-shadow: 0 2px 8px rgba(47, 93, 138, 0.28);
 }
 
 .btn-secondary {
-    background-color: #95a5a6;
-    color: white;
-    margin-right: 15px;
+    background-color: var(--surface);
+    border-color: var(--line);
+    color: var(--ink-soft);
+    margin-right: 12px;
 }
 
 .btn-secondary:hover {
-    background-color: #7f8c8d;
+    background-color: var(--surface-sunken);
+    border-color: #c6d0da;
+    color: var(--ink);
 }
 
 .btn-danger {
-    background-color: #e74c3c;
+    background-color: var(--bad);
     color: white;
 }
 
 .btn-danger:hover {
-    background-color: #c0392b;
+    background-color: #97322a;
 }
 
 .btn:disabled {
-    opacity: 0.5;
+    opacity: 0.45;
     cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
 }
 
 /* Run Controls */
@@ -839,4 +918,235 @@ footer {
 .slot-row .slot-remove {
     padding: 0.25rem 0.6rem;
     font-size: 0.85rem;
+}
+
+/* --- ntfy subscription panel ---------------------------------------------- */
+
+.subscribe-panel {
+    display: flex;
+    gap: 24px;
+    align-items: flex-start;
+    flex-wrap: wrap;
+    margin-top: 18px;
+    padding: 20px;
+    background: var(--surface-sunken);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+}
+
+.subscribe-copy {
+    flex: 1 1 18rem;
+    min-width: 0;
+}
+
+.subscribe-copy h4 {
+    font-size: 1.02em;
+    margin-bottom: 6px;
+    color: var(--ink);
+}
+
+.subscribe-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin: 14px 0 10px;
+}
+
+/* The link is an action, not prose: strip the underline the anchor would
+   otherwise inherit and let .btn do the work. */
+.subscribe-actions a.btn {
+    text-decoration: none;
+    display: inline-block;
+}
+
+.subscribe-url {
+    font-family: var(--mono);
+    font-size: 0.82em;
+    color: var(--ink-faint);
+    word-break: break-all;
+}
+
+.subscribe-qr {
+    flex: 0 0 auto;
+    background: var(--surface);
+    padding: 10px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    line-height: 0;
+}
+
+.subscribe-qr img {
+    width: 160px;
+    height: 160px;
+    display: block;
+}
+
+.warning-text {
+    color: var(--warn);
+    background: var(--highlight-wash);
+    border-left: 3px solid var(--highlight);
+    padding: 8px 12px;
+    border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+    font-size: 0.9em;
+    margin-bottom: 4px;
+}
+
+/* --- Document review ------------------------------------------------------ */
+
+.feedback-result:not(:empty) {
+    margin-top: 18px;
+    padding-top: 18px;
+    border-top: 1px solid var(--line);
+}
+
+.feedback-header {
+    display: flex;
+    gap: 16px;
+    align-items: flex-start;
+    margin-bottom: 18px;
+}
+
+/* Tabular figures so scores line up if several reviews are on screen. */
+.feedback-score {
+    flex: 0 0 auto;
+    display: grid;
+    place-items: center;
+    width: 58px;
+    height: 58px;
+    border-radius: 50%;
+    font-size: 1.35em;
+    font-weight: 650;
+    font-variant-numeric: tabular-nums;
+    color: white;
+}
+
+.score-good { background: var(--good); }
+.score-mixed { background: var(--warn); }
+.score-poor { background: var(--bad); }
+.score-none { background: var(--ink-faint); }
+
+.feedback-target {
+    font-size: 0.82em;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--ink-faint);
+    margin-bottom: 2px;
+}
+
+.feedback-summary {
+    color: var(--ink);
+}
+
+.feedback-result h4 {
+    font-size: 0.86em;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--ink-faint);
+    margin: 20px 0 10px;
+}
+
+.feedback-strengths {
+    list-style: none;
+    padding-left: 0;
+}
+
+.feedback-strengths li {
+    padding: 4px 0 4px 22px;
+    position: relative;
+    color: var(--ink-soft);
+}
+
+.feedback-strengths li::before {
+    content: "✓";
+    position: absolute;
+    left: 0;
+    color: var(--good);
+    font-weight: 700;
+}
+
+.feedback-points {
+    list-style: none;
+    padding-left: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+/* Severity is encoded in the stripe as well as the label, so the list can be
+   triaged at a glance without reading every line. */
+.feedback-points li {
+    padding: 12px 14px;
+    background: var(--surface-sunken);
+    border-left: 3px solid var(--ink-faint);
+    border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+
+.feedback-points li.sev-blocker { border-left-color: var(--bad); }
+.feedback-points li.sev-important { border-left-color: var(--warn); }
+.feedback-points li.sev-suggestion { border-left-color: var(--accent); }
+
+.feedback-sev {
+    display: inline-block;
+    font-size: 0.7em;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-weight: 700;
+    padding: 2px 7px;
+    border-radius: 3px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    color: var(--ink-soft);
+    margin-right: 8px;
+    vertical-align: middle;
+}
+
+.feedback-section {
+    font-size: 0.85em;
+    color: var(--ink-faint);
+}
+
+.feedback-issue {
+    margin-top: 6px;
+    color: var(--ink);
+}
+
+.feedback-suggestion {
+    margin-top: 5px;
+    color: var(--ink-soft);
+    font-size: 0.95em;
+}
+
+.feedback-example {
+    margin-top: 8px;
+    padding: 8px 12px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    font-family: var(--mono);
+    font-size: 0.85em;
+    color: var(--ink-soft);
+    white-space: pre-wrap;
+}
+
+.feedback-keywords {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.keyword-chip {
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 999px;
+    background: var(--highlight-wash);
+    color: var(--highlight);
+    font-size: 0.84em;
+    font-weight: 550;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    * {
+        transition-duration: 0.01ms !important;
+        animation-duration: 0.01ms !important;
+    }
 }
