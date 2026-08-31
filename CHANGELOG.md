@@ -4,6 +4,19 @@ Format: [Keep a Changelog](https://keepachangelog.com)
 
 <!-- version list -->
 
+## v1.14.2 (2026-08-31)
+
+### Bug Fixes
+
+- **notifications**: Actually send when testing a channel, and add CV upload
+  ([`7a89cc0`](https://github.com/JvWageningen/job-scout/commit/7a89cc042a10f83930b2f8ecfb0a4b519cfc27c0))
+
+### Chores
+
+- Sync uv.lock to 1.14.1 [skip ci]
+  ([`6a5f834`](https://github.com/JvWageningen/job-scout/commit/6a5f8342420466efe4b5067aa52db79beed47d5c))
+
+
 ## v1.14.1 (2026-08-31)
 
 ### Bug Fixes
