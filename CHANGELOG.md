@@ -4,6 +4,19 @@ Format: [Keep a Changelog](https://keepachangelog.com)
 
 <!-- version list -->
 
+## v1.14.0 (2026-08-31)
+
+### Chores
+
+- Sync uv.lock to 1.13.1 [skip ci]
+  ([`94079db`](https://github.com/JvWageningen/job-scout/commit/94079db0569d87b84f6370db813e113cf9e4ccaf))
+
+### Features
+
+- **dashboard**: Secure ntfy topics with a QR code, and document review
+  ([`68ec5bc`](https://github.com/JvWageningen/job-scout/commit/68ec5bce91120f4daf8df5938d996d4436f3dad2))
+
+
 ## v1.13.1 (2026-08-22)
 
 ### Bug Fixes
