@@ -4,6 +4,19 @@ Format: [Keep a Changelog](https://keepachangelog.com)
 
 <!-- version list -->
 
+## v1.14.1 (2026-08-31)
+
+### Bug Fixes
+
+- **notifications**: Make the QR open the ntfy app instead of a web page
+  ([`1541d87`](https://github.com/JvWageningen/job-scout/commit/1541d876320517e6ed8c3b03ea982046c0a59df8))
+
+### Chores
+
+- Sync uv.lock to 1.14.0 [skip ci]
+  ([`61a587b`](https://github.com/JvWageningen/job-scout/commit/61a587b7875c89949ff2b03ac20f679204f56677))
+
+
 ## v1.14.0 (2026-08-31)
 
 ### Chores
