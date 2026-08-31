@@ -231,6 +231,7 @@ function setupEventListeners() {
     initAutoScheduleUI();
     initNtfyUI();
     initFeedbackUI();
+    initCvUploadUI();
 
     // Coach suggestion chips are rendered dynamically, so delegate.
     document.addEventListener('click', handleCoachOptionClick);
@@ -3138,4 +3139,56 @@ function renderFeedback(data) {
     }
 
     return parts.join('');
+}
+
+// --- CV upload --------------------------------------------------------------
+
+function initCvUploadUI() {
+    document.getElementById('cv-upload-btn')?.addEventListener('click', uploadCv);
+}
+
+async function uploadCv() {
+    const input = document.getElementById('cv-file');
+    const box = document.getElementById('cv-upload-result');
+    const btn = document.getElementById('cv-upload-btn');
+    if (!currentUser || currentUser === 'all') {
+        box.innerHTML = '<p class="error-text">Select a user first.</p>';
+        return;
+    }
+    const file = input.files?.[0];
+    if (!file) {
+        box.innerHTML = '<p class="error-text">Choose a PDF first.</p>';
+        return;
+    }
+
+    const form = new FormData();
+    form.append('user', currentUser);
+    form.append('file', file);
+
+    btn.disabled = true;
+    box.innerHTML = '<p class="info-text">Uploading and reading the PDF...</p>';
+    try {
+        // No Content-Type header: the browser sets the multipart boundary.
+        const response = await fetchWithAuth(`${API_BASE}/profile/cv-upload`, {
+            method: 'POST',
+            body: form,
+        });
+        const data = await response.json();
+        if (!response.ok) {
+            box.innerHTML = `<p class="error-text">${escapeHtml(data.detail || 'Upload failed')}</p>`;
+            return;
+        }
+        // The server decides where it landed, so reflect that back rather than
+        // guessing the path client-side.
+        document.getElementById('cv-path').value = data.cv_path;
+        box.innerHTML =
+            `<p class="success-text">Saved ${escapeHtml(data.filename)} — ` +
+            `${data.characters.toLocaleString()} characters read.</p>`;
+        input.value = '';
+        loadCVProfile?.();
+    } catch (err) {
+        box.innerHTML = `<p class="error-text">${escapeHtml(err.message)}</p>`;
+    } finally {
+        btn.disabled = false;
+    }
 }

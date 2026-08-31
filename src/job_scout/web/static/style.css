@@ -1192,3 +1192,52 @@ footer {
     line-height: 1.45;
     color: var(--ink-faint);
 }
+
+/* --- CV upload ------------------------------------------------------------ */
+
+.cv-upload {
+    margin-top: 10px;
+    padding: 14px;
+    background: var(--surface-sunken);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+}
+
+.cv-upload-row {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-top: 10px;
+}
+
+/* The file input must not stretch to 100% the way other inputs do. */
+.cv-upload-row input[type="file"] {
+    flex: 1 1 16rem;
+    width: auto;
+    padding: 8px;
+    font-size: 0.88em;
+    background: var(--surface);
+    border: 1px dashed var(--line);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+}
+
+.cv-upload-row .btn {
+    margin-right: 0;
+}
+
+.success-text {
+    color: var(--good);
+    font-size: 0.92em;
+    margin-top: 8px;
+}
+
+/* Both were used by the JS but never defined, so failures rendered as plain
+   body text with nothing to distinguish them from normal output. */
+.error-text,
+.error {
+    color: var(--bad);
+    font-size: 0.92em;
+    margin-top: 8px;
+}

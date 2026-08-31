@@ -182,6 +182,17 @@
                     <div class="form-group">
                         <label for="cv-path">CV Path:</label>
                         <input type="text" id="cv-path">
+                        <div class="cv-upload">
+                            <p class="info-text">
+                                Running on a NAS? Upload the PDF instead &mdash; it is
+                                stored with your data and the path above is set for you.
+                            </p>
+                            <div class="cv-upload-row">
+                                <input type="file" id="cv-file" accept="application/pdf,.pdf">
+                                <button type="button" id="cv-upload-btn" class="btn btn-secondary">Upload CV</button>
+                            </div>
+                            <div id="cv-upload-result"></div>
+                        </div>
                     </div>
                     <div class="form-group">
                         <label for="cv-notes">CV Notes:</label>

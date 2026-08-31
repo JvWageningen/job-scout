@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from loguru import logger
 from pydantic import ValidationError
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -31,6 +31,7 @@ from job_scout.config import (
     set_config_value,
     update_secrets,
     user_db_path,
+    user_dir,
     user_logs_dir,
 )
 from job_scout.database import Database
@@ -50,6 +51,27 @@ from job_scout.wol import normalise_mac, wake_and_wait
 # How many upcoming runs the schedule panel previews, so a change can be
 # sanity-checked before it fires.
 _SCHEDULE_PREVIEW_COUNT = 3
+
+# Upload cap. A text-based CV is a few hundred KB; anything far past that is
+# a scan or a mistake, and is rejected before it is written to disk.
+_MAX_CV_BYTES = 10_000_000
+
+# Sent by the "Test Notification" button. Deliberately a real JobListing put
+# through the normal send path, so the test exercises what an actual match
+# would do rather than a parallel code path that could quietly diverge.
+_TEST_NOTIFICATION_JOB = JobListing(
+    title="Test notification",
+    company="job-scout",
+    location="Nieuw-Vennep",
+    url="https://github.com/JvWageningen/job-scout",
+    source="test",
+    description=(
+        "If this arrived on your phone, notifications are working. "
+        "Real matches will look like this."
+    ),
+    fit_score=100,
+    fit_reasoning="This is a test message, not a real vacancy.",
+)
 
 if TYPE_CHECKING:
     from job_scout.llm.base import LLMClient
@@ -1180,6 +1202,87 @@ def create_app() -> FastAPI:
         options.sort(key=lambda o: cast(int, o["id"]), reverse=True)
         return options
 
+    @app.post("/api/profile/cv-upload")
+    # FastAPI reads Form/File from the argument defaults; that is its
+    # documented idiom, and moving the calls into the body breaks parsing.
+    async def upload_cv(
+        user: str = Form(...),  # noqa: B008
+        file: UploadFile = File(...),  # noqa: B008
+    ) -> dict[str, Any]:
+        """Store an uploaded CV in the user's data directory and point at it.
+
+        Running in a container means the CV is rarely already on the machine,
+        and typing a path into a box does not help when the file is on the
+        laptop you are browsing from.
+
+        Args:
+            user: User the CV belongs to.
+            file: The uploaded PDF.
+
+        Returns:
+            The stored path and how much text was extracted from it.
+
+        Raises:
+            HTTPException: If the upload is not a readable PDF.
+        """
+        name = _require_user(user)
+        # Path components in the supplied filename are stripped: it is
+        # attacker-controlled and must never escape the user's directory.
+        filename = Path(file.filename or "cv.pdf").name
+        if not filename.lower().endswith(".pdf"):
+            raise HTTPException(status_code=400, detail="Only PDF files are supported.")
+
+        payload = await file.read()
+        if not payload:
+            raise HTTPException(status_code=400, detail="The uploaded file is empty.")
+        if len(payload) > _MAX_CV_BYTES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"CV is larger than {_MAX_CV_BYTES // 1_000_000} MB.",
+            )
+        if not payload.startswith(b"%PDF"):
+            raise HTTPException(status_code=400, detail="That file is not a PDF.")
+
+        target_dir = user_dir(name)
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target = target_dir / filename
+
+        # Write beside the target and rename, so a failed upload cannot leave
+        # a half-written file where the previous working CV used to be.
+        staging = target_dir / f".{filename}.part"
+        staging.write_bytes(payload)
+
+        from job_scout.cv_parser import parse_cv  # noqa: PLC0415
+
+        try:
+            text = parse_cv(staging)
+        except (FileNotFoundError, ValueError) as exc:
+            staging.unlink(missing_ok=True)
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if not text.strip():
+            staging.unlink(missing_ok=True)
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "No text could be extracted. If this is a scanned CV, "
+                    "export a text-based PDF instead."
+                ),
+            )
+
+        staging.replace(target)
+        # Absolute: a relative path would resolve against whatever the working
+        # directory happens to be, which differs between the CLI and the
+        # container.
+        stored = target.resolve()
+        set_config_value("cv_path", str(stored), user=name)
+        logger.info(f"Stored CV for {name}: {stored} ({len(text)} chars)")
+        return {
+            "status": "success",
+            "cv_path": str(stored),
+            "filename": filename,
+            "characters": len(text),
+        }
+
     @app.post("/api/secrets")
     def update_secrets_endpoint(body: dict[str, Any]) -> dict[str, str]:
         """Update secret API keys.
@@ -1858,7 +1961,12 @@ def create_app() -> FastAPI:
             available, err = notifier.check_available()
             if not available:
                 return {"ok": False, "message": err or "Channel not available"}
-            return {"ok": True, "message": "Channel configuration valid"}
+            # check_available only inspects the settings -- for ntfy it just
+            # confirms the strings are non-empty -- so on its own it reports
+            # success for a channel that never delivers. Actually send, down
+            # the same path a real match uses, so the test proves delivery.
+            notifier.send(_TEST_NOTIFICATION_JOB)
+            return {"ok": True, "message": "Test notification sent."}
         except NotificationError as e:
             return {"ok": False, "message": str(e)}
         except Exception as exc:

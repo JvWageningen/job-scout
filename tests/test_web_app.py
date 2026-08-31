@@ -1169,6 +1169,205 @@ class TestSites:
         assert response.status_code == 404
 
 
+def _tiny_pdf(text: str = "Jeroen van Wageningen - Quality Engineer") -> bytes:
+    """Build a minimal one-page PDF that PyPDF2 can extract text from.
+
+    Args:
+        text: The text to embed.
+
+    Returns:
+        PDF file bytes.
+    """
+    import io
+
+    from PyPDF2 import PdfWriter
+
+    # A blank page carries no text, so draw one via a content stream.
+    from PyPDF2.generic import DecodedStreamObject, NameObject
+
+    writer = PdfWriter()
+    writer.add_blank_page(width=200, height=200)
+    stream = DecodedStreamObject()
+    stream.set_data(f"BT /F1 12 Tf 10 100 Td ({text}) Tj ET".encode())
+    page = writer.pages[0]
+    page[NameObject("/Contents")] = stream
+    buf = io.BytesIO()
+    writer.write(buf)
+    return buf.getvalue()
+
+
+class TestNotificationTestChannel:
+    """The test button must prove delivery, not just that fields are filled.
+
+    It previously only called check_available(), which for ntfy just checks
+    the topic and server strings are non-empty -- so it reported success for
+    a channel that never delivered anything.
+    """
+
+    def test_actually_sends_through_the_normal_path(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A passing test must have put a message on the wire."""
+        sent: list[object] = []
+
+        class SpyNotifier:
+            def check_available(self) -> tuple[bool, str | None]:
+                return True, None
+
+            def send(self, job: object) -> None:
+                sent.append(job)
+
+        monkeypatch.setattr(
+            "job_scout.web.app.build_raw_notifier_for_test",
+            lambda *_a, **_kw: SpyNotifier(),
+        )
+        response = client.post(
+            "/api/notification/test-channel",
+            json={"channel": "ntfy", "ntfy_topic": "job-scout-x"},
+        )
+        assert response.status_code == 200
+        assert response.json()["ok"] is True
+        assert len(sent) == 1, "check_available passed but nothing was sent"
+
+    def test_reports_failure_when_sending_raises(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A server that rejects the publish must surface as a failure."""
+        from job_scout.notify.base import NotificationError
+
+        class BrokenNotifier:
+            def check_available(self) -> tuple[bool, str | None]:
+                return True, None
+
+            def send(self, job: object) -> None:
+                raise NotificationError("ntfy returned 403")
+
+        monkeypatch.setattr(
+            "job_scout.web.app.build_raw_notifier_for_test",
+            lambda *_a, **_kw: BrokenNotifier(),
+        )
+        response = client.post(
+            "/api/notification/test-channel",
+            json={"channel": "ntfy", "ntfy_topic": "job-scout-x"},
+        )
+        assert response.json()["ok"] is False
+        assert "403" in response.json()["message"]
+
+    def test_unconfigured_channel_does_not_send(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """No point publishing when the settings are incomplete."""
+        sent: list[object] = []
+
+        class Unconfigured:
+            def check_available(self) -> tuple[bool, str | None]:
+                return False, "ntfy_topic is not configured"
+
+            def send(self, job: object) -> None:
+                sent.append(job)
+
+        monkeypatch.setattr(
+            "job_scout.web.app.build_raw_notifier_for_test",
+            lambda *_a, **_kw: Unconfigured(),
+        )
+        response = client.post(
+            "/api/notification/test-channel", json={"channel": "ntfy"}
+        )
+        assert response.json()["ok"] is False
+        assert sent == []
+
+
+class TestCvUpload:
+    """Uploading a CV, which is how it gets in when running on a NAS."""
+
+    def test_rejects_non_pdf_extension(
+        self, client: TestClient, test_user: str
+    ) -> None:
+        """Only PDFs are parseable, so reject anything else up front."""
+        response = client.post(
+            "/api/profile/cv-upload",
+            data={"user": test_user},
+            files={"file": ("cv.docx", b"not a pdf", "application/msword")},
+        )
+        assert response.status_code == 400
+        assert "PDF" in response.json()["detail"]
+
+    def test_rejects_a_file_that_only_claims_to_be_pdf(
+        self, client: TestClient, test_user: str
+    ) -> None:
+        """The extension is attacker-controlled; check the magic bytes."""
+        response = client.post(
+            "/api/profile/cv-upload",
+            data={"user": test_user},
+            files={"file": ("cv.pdf", b"still not a pdf", "application/pdf")},
+        )
+        assert response.status_code == 400
+        assert "not a PDF" in response.json()["detail"]
+
+    def test_rejects_empty_upload(self, client: TestClient, test_user: str) -> None:
+        """An empty file would silently blank the configured CV."""
+        response = client.post(
+            "/api/profile/cv-upload",
+            data={"user": test_user},
+            files={"file": ("cv.pdf", b"", "application/pdf")},
+        )
+        assert response.status_code == 400
+
+    def test_rejects_unknown_user(self, client: TestClient) -> None:
+        """The user determines where the file is written."""
+        response = client.post(
+            "/api/profile/cv-upload",
+            data={"user": "nobody"},
+            files={"file": ("cv.pdf", _tiny_pdf(), "application/pdf")},
+        )
+        assert response.status_code == 404
+
+    def test_filename_cannot_escape_the_user_directory(
+        self, client: TestClient, test_user: str, temp_data_dir: Path
+    ) -> None:
+        """A traversing filename must land inside the user's own directory."""
+        client.post(
+            "/api/profile/cv-upload",
+            data={"user": test_user},
+            files={"file": ("../../evil.pdf", _tiny_pdf(), "application/pdf")},
+        )
+        assert not (temp_data_dir / "evil.pdf").exists()
+        assert not (temp_data_dir.parent / "evil.pdf").exists()
+
+    def test_successful_upload_stores_and_points_config_at_it(
+        self, client: TestClient, test_user: str
+    ) -> None:
+        """The happy path writes the file and updates cv_path."""
+        response = client.post(
+            "/api/profile/cv-upload",
+            data={"user": test_user},
+            files={"file": ("my cv.pdf", _tiny_pdf(), "application/pdf")},
+        )
+        assert response.status_code == 200, response.json()
+        data = response.json()
+        assert data["filename"] == "my cv.pdf"
+        assert data["characters"] > 0
+        stored = Path(data["cv_path"])
+        assert stored.exists()
+
+        config = client.get(f"/api/config?user={test_user}").json()
+        assert config["cv_path"] == str(stored)
+
+    def test_a_failed_upload_leaves_no_partial_file(
+        self, client: TestClient, test_user: str
+    ) -> None:
+        """A rejected PDF must not leave a .part file lying around."""
+        from job_scout.config import user_dir
+
+        client.post(
+            "/api/profile/cv-upload",
+            data={"user": test_user},
+            files={"file": ("broken.pdf", b"%PDF-1.4 truncated", "application/pdf")},
+        )
+        leftovers = list(user_dir(test_user).glob(".*.part"))
+        assert leftovers == []
+
+
 class TestAutoSchedule:
     """Tests for /api/auto-schedule, the container scheduler's settings."""
 
