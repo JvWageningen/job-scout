@@ -1,0 +1,29 @@
+# Overrides for desktop installs (Windows, macOS, ordinary Linux PCs).
+#
+# The base compose file uses host networking because the NAS deployment sends
+# wake-on-LAN magic packets, which are layer-2 broadcasts that do not survive
+# Docker's bridge NAT. Docker Desktop on Windows and macOS does not support
+# host networking out of the box, so a beginner following the defaults would
+# get containers that run but a dashboard nothing can reach.
+#
+# This override switches both services to ordinary bridge networking and
+# publishes the dashboard port instead. Consequence: waking a sleeping LLM
+# machine over the network does NOT work from a desktop install -- leave the
+# MAC address empty under Schedule and keep the model server awake, or run
+# the model on the same machine.
+#
+# The installers wire this up by writing COMPOSE_FILE into .env, so a plain
+# `docker compose up -d` keeps using both files afterwards:
+#
+#     COMPOSE_FILE=docker-compose.yml:docker-compose.desktop.yml
+#
+# (On Windows the separator is ';' and COMPOSE_PATH_SEPARATOR is set to match.)
+
+services:
+  scheduler:
+    network_mode: bridge
+
+  web:
+    network_mode: bridge
+    ports:
+      - "${JOB_SCOUT_PORT:-24817}:${JOB_SCOUT_PORT:-24817}"

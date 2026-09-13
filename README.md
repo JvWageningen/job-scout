@@ -7,6 +7,11 @@ An automated daily job search tool for the Dutch job market. It scrapes position
 
 ## Prerequisites
 
+### For easy installation (Docker)
+- Windows 10/11, macOS, or Linux
+- Docker: [Docker Desktop](https://www.docker.com/products/docker-desktop/) on Windows/macOS, [Docker Engine](https://docs.docker.com/engine/install/) on Linux -- on both platforms the installer offers to set it up for you
+
+### For developer installation (CLI)
 - Python 3.12+
 - [uv](https://docs.astral.sh/uv/) package manager
 - One of the supported LLM backends (see [Configure LLM provider](#configure-llm-provider))
@@ -16,13 +21,72 @@ An automated daily job search tool for the Dutch job market. It scrapes position
 
 ## Installation
 
+Choose your installation path below. **Easy install** is for users who want job-scout running with minimal setup—no CLI or Python knowledge required. **Developer install** is for contributors or those who prefer command-line workflows.
+
+### Easy install (Windows)
+
+**Requirements:** Windows 10 or 11, and [Docker Desktop](https://www.docker.com/products/docker-desktop/).
+
+Run this one command in PowerShell:
+
+```powershell
+powershell -ExecutionPolicy Bypass -Command "iwr -useb https://raw.githubusercontent.com/JvWageningen/job-scout/main/deploy/install.ps1 | iex"
+```
+
+The installer will:
+- Check for Docker Desktop and offer to install it via winget if missing
+- Create a `job-scout` folder in your user profile (`%USERPROFILE%\job-scout`)
+- Download the latest release and set up Docker containers
+- Open the dashboard automatically at http://localhost:24817
+
+To update job-scout later, run the same command again.
+
+### Easy install (Linux)
+
+**Requirements:** Linux (most distributions), and [Docker](https://docs.docker.com/engine/install/).
+
+Run this command in your terminal:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/JvWageningen/job-scout/main/deploy/install.sh | bash
+```
+
+The installer will:
+- Check for Docker and offer to install it if missing
+- Create a `job-scout` folder in your home directory (`~/job-scout`)
+- Download the latest release and set up the containers
+- Print the dashboard address (http://localhost:24817) when it is up
+
+To update job-scout later, run the same command again.
+
+### After installing
+
+Once the dashboard opens:
+
+1. **Create a user** — click *Create New User* at the top and pick a name
+2. **Describe what you want** — fill in your profile under *Profile & Filters*, and upload your CV as a PDF right there
+3. **Set the schedule** — under *Schedule → Automatic runs*, pick the days and times to search
+4. **Get notified** — under *Notifications*, scan the QR code with the [ntfy](https://ntfy.sh) app to receive matches on your phone
+
+No command line needed. The dashboard handles everything.
+
+**If your network is shared:** To add a password, set `JOB_SCOUT_DASHBOARD_TOKEN` in the `.env` file inside your job-scout folder.
+
+**Wake-on-LAN note:** The Schedule tab can wake a sleeping model server before each run. This works on Linux installs with Docker Engine (host networking) and on NAS installs — but not under Docker Desktop (Windows, macOS, or WSL2), where the installer switches to bridge networking. There, leave the MAC field empty and keep the model server awake, or run the model on the same machine.
+
+### Developer install (CLI)
+
+For developers, contributors, or those who prefer the command line.
+
+#### Getting started
+
 ```bash
 git clone https://github.com/JvWageningen/job-scout
 cd job-scout
 uv sync
 ```
 
-## Quick Start
+#### Quick start
 
 ```bash
 # 1. Interactive setup — prompts for profile, CV path, salary, vacation, API keys
@@ -38,7 +102,11 @@ uv run job-scout run --user alex
 uv run job-scout run --user alex --dry-run
 ```
 
-Or skip the CLI entirely and use the [web dashboard](#web-dashboard) once a user is set up.
+Or skip the CLI and use the [web dashboard](#web-dashboard) once a user is set up.
+
+### NAS / server install
+
+For always-on NAS or server deployments, see [docs/DEPLOY.md](docs/DEPLOY.md) and [deploy/nas-install.sh](deploy/nas-install.sh). The NAS installer configures job-scout to run on a schedule and wake your model server before each search.
 
 ## How It Works
 
