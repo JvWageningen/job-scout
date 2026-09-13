@@ -4,6 +4,19 @@ Format: [Keep a Changelog](https://keepachangelog.com)
 
 <!-- version list -->
 
+## v1.15.1 (2026-09-13)
+
+### Bug Fixes
+
+- **deploy**: Make the nas-update sudo fallback match the sudoers rule
+  ([`79f82f1`](https://github.com/JvWageningen/job-scout/commit/79f82f1c0feaf775d8dd262b4b93d9b848df3b7a))
+
+### Chores
+
+- Sync uv.lock to 1.15.0 [skip ci]
+  ([`e647356`](https://github.com/JvWageningen/job-scout/commit/e64735681af1a2f4f8cd3f813af6146515299296))
+
+
 ## v1.15.0 (2026-09-13)
 
 ### Chores
