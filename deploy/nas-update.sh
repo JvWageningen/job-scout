@@ -22,8 +22,14 @@ log() { printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" | tee -a "$LOG"; }
 
 command -v git >/dev/null 2>&1 || { log "ERROR: git not found on PATH"; exit 1; }
 
-DOCKER="docker"
-docker info >/dev/null 2>&1 || DOCKER="sudo -n docker"
+# Run as-is when the daemon is reachable (root cron, or a docker-group user).
+# Otherwise fall back to sudo -- but by the docker binary's FULL path, because
+# the NOPASSWD rule nas-install.sh writes is path-specific and a bare "sudo
+# docker" is resolved via sudo's secure_path, which does not include ADM's
+# AppCentral bin, so the rule would never match and -n would fail.
+DOCKER_BIN=$(command -v docker 2>/dev/null || echo docker)
+DOCKER="$DOCKER_BIN"
+"$DOCKER_BIN" info >/dev/null 2>&1 || DOCKER="sudo -n $DOCKER_BIN"
 $DOCKER info >/dev/null 2>&1 || { log "ERROR: cannot reach the Docker daemon"; exit 1; }
 
 if $DOCKER compose version >/dev/null 2>&1; then
