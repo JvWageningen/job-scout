@@ -32,3 +32,6 @@ data/
 
 # The template is meant to be committed; the real .env is not.
 !.env.example
+
+# Internal dev handoff (IPs, MAC, host paths) -- never publish.
+DEV_HANDOFF.md
