@@ -4,6 +4,19 @@ Format: [Keep a Changelog](https://keepachangelog.com)
 
 <!-- version list -->
 
+## v1.15.0 (2026-09-13)
+
+### Chores
+
+- Sync uv.lock to 1.14.2 [skip ci]
+  ([`b19b2d5`](https://github.com/JvWageningen/job-scout/commit/b19b2d5666863fc2f336e926f5b7519f8378a06e))
+
+### Features
+
+- **deploy**: One-command installers for Windows and Linux
+  ([`80054ad`](https://github.com/JvWageningen/job-scout/commit/80054adb4f4142e1e69c758f5e6dd9ce2cbb1615))
+
+
 ## v1.14.2 (2026-08-31)
 
 ### Bug Fixes
