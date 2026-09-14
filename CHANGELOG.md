@@ -4,6 +4,30 @@ Format: [Keep a Changelog](https://keepachangelog.com)
 
 <!-- version list -->
 
+## v1.16.0 (2026-09-14)
+
+### Bug Fixes
+
+- **matching**: Stop discarding the jobs the candidate actually wants
+  ([`7b166d9`](https://github.com/JvWageningen/job-scout/commit/7b166d9804a51e946efcceea968e6ccd93bbcc77))
+
+- **notifications**: Stop generating ntfy topics that fail our own secure check
+  ([`db0088f`](https://github.com/JvWageningen/job-scout/commit/db0088f69e622b308950487feab9a77ff098456b))
+
+### Chores
+
+- Gitignore the local DEV_HANDOFF.md
+  ([`e36cd95`](https://github.com/JvWageningen/job-scout/commit/e36cd95d23b1cd636f8dcbc447a3ac695ebc03a4))
+
+- Sync uv.lock to 1.15.1 [skip ci]
+  ([`49e5397`](https://github.com/JvWageningen/job-scout/commit/49e539760201400601e2719af8180aa4fdff322b))
+
+### Features
+
+- **llm**: Fail over across local endpoints and report why detection failed
+  ([`be11b49`](https://github.com/JvWageningen/job-scout/commit/be11b49ae4801dfa4f318b6e1579fcd73845a346))
+
+
 ## v1.15.1 (2026-09-13)
 
 ### Bug Fixes
