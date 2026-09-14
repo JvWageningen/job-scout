@@ -4,6 +4,19 @@ Format: [Keep a Changelog](https://keepachangelog.com)
 
 <!-- version list -->
 
+## v1.16.1 (2026-09-14)
+
+### Bug Fixes
+
+- **travel**: Stop exempting jobs whose location cannot be checked
+  ([`6370fa6`](https://github.com/JvWageningen/job-scout/commit/6370fa66fe635997ae52b52752b23872c20208c9))
+
+### Chores
+
+- Sync uv.lock to 1.16.0 [skip ci]
+  ([`6fb29ae`](https://github.com/JvWageningen/job-scout/commit/6fb29ae74371faef1b321645e8de265608b6d9be))
+
+
 ## v1.16.0 (2026-09-14)
 
 ### Bug Fixes
