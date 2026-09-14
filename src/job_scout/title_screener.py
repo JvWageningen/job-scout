@@ -60,8 +60,12 @@ def _build_screening_prompt(
         'Respond with ONLY this JSON, nothing else: {"keep": [1, 3, ...]}\n\n'
         "Rules:\n"
         "- KEEP jobs that COULD match the profile based on title alone\n"
-        "- REMOVE only CLEARLY irrelevant titles\n"
-        "- When in doubt, KEEP the job"
+        "- REMOVE titles whose words match the profile but which clearly "
+        "belong to a DIFFERENT industry or discipline than the candidate's. "
+        "The same title words are used by unrelated fields, and a look-alike "
+        "from the wrong field is never wanted however well the words match\n"
+        "- REMOVE titles matching the reject criteria above\n"
+        "- Otherwise, when in doubt, KEEP the job"
     )
 
 

@@ -286,6 +286,16 @@ class Database:
                     searched_at TEXT NOT NULL
                 )
             """)
+            # Small key/value store. Currently holds the fingerprint of the
+            # evaluation inputs, so cached fit scores can be invalidated when
+            # the profile, tracks, model or prompts they were produced from
+            # change underneath them.
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS meta (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                )
+            """)
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS star_stories (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -337,6 +347,49 @@ class Database:
                 "SELECT id FROM jobs WHERE dedup_key = ?", (key,)
             ).fetchone()
             return row is not None
+
+    def get_meta(self, key: str) -> str | None:
+        """Read a value from the small key/value store.
+
+        Args:
+            key: Meta key.
+
+        Returns:
+            The stored value, or None when absent.
+        """
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT value FROM meta WHERE key = ?", (key,)
+            ).fetchone()
+        return str(row[0]) if row else None
+
+    def set_meta(self, key: str, value: str) -> None:
+        """Write a value into the small key/value store.
+
+        Args:
+            key: Meta key.
+            value: Value to store.
+        """
+        with self._conn() as conn:
+            conn.execute(
+                "INSERT INTO meta (key, value) VALUES (?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (key, value),
+            )
+
+    def invalidate_cached_evaluations(self) -> int:
+        """Clear cached fit scores so every job is judged again.
+
+        Returns:
+            Number of rows invalidated.
+        """
+        with self._conn() as conn:
+            cur = conn.execute(
+                "UPDATE jobs SET fit_score = NULL, "
+                "fit_reasoning = 'Re-evaluating: search profile changed' "
+                "WHERE fit_score IS NOT NULL"
+            )
+            return int(cur.rowcount or 0)
 
     def get_cached_evaluation(
         self, job: JobListing

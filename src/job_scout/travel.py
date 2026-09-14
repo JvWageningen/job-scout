@@ -532,8 +532,19 @@ def is_within_travel_limits(
 ) -> bool:
     """Check whether a job passes the configured travel-time filters.
 
-    A job passes if at least one transport mode is within its limit,
-    or if the straight-line distance is within max_distance_km.
+    A job passes if at least one transport mode is within its limit, **or** if
+    the straight-line distance is within ``max_distance_km``. The two are
+    alternatives, not a sequence: ``max_distance_km`` is the outer bound the
+    user is willing to travel at all, while the per-mode limits can additionally
+    rescue a distant job that happens to be well connected.
+
+    Treating the distance bound as a mere fallback -- only consulted when no
+    routing data existed -- silently discarded jobs the user had explicitly said
+    they would travel to. With a 30-minute car limit and a 60 km distance bound,
+    a 20 km job that routes at 37 minutes by car was rejected outright, and
+    because public transport needs an NS API key that is often absent, the
+    generous ``max_travel_pt`` limit never applied either.
+
     Jobs with unknown locations always pass.
 
     Args:
@@ -549,7 +560,6 @@ def is_within_travel_limits(
     if location_unknown or not job_location:
         return True
 
-    # Check travel time APIs first
     limits = {
         TravelMode.CAR: config.max_travel_car,
         TravelMode.PUBLIC_TRANSPORT: config.max_travel_pt,
@@ -565,18 +575,16 @@ def is_within_travel_limits(
         if limit is not None and tt.minutes <= limit:
             return True
 
-    if has_time_data:
-        return False
-
-    # Fallback: straight-line distance when no travel time APIs available
-    if (
-        distance_km is not None
-        and config.max_distance_km is not None
-        and distance_km > config.max_distance_km
-    ):
+    # No mode was within its limit. The job still passes when it is inside the
+    # distance the user said they would travel.
+    if config.max_distance_km is not None and distance_km is not None:
+        if distance_km <= config.max_distance_km:
+            return True
         logger.info(
             f"Too far ({distance_km} km > {config.max_distance_km} km): {job_location}"
         )
         return False
 
-    return True
+    # Routing data exists, nothing was within limits, and no distance bound is
+    # configured to override it.
+    return not has_time_data

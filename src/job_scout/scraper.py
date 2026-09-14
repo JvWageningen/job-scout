@@ -20,6 +20,25 @@ if TYPE_CHECKING:
     from job_scout.llm.base import LLMClient
 
 
+def _interleave_languages(dutch: list[str], english: list[str]) -> list[str]:
+    """Alternate Dutch and English keywords so a truncated prefix covers both.
+
+    Args:
+        dutch: Dutch search keywords.
+        english: English search keywords.
+
+    Returns:
+        Interleaved keywords, Dutch first.
+    """
+    out: list[str] = []
+    for index in range(max(len(dutch), len(english))):
+        if index < len(dutch):
+            out.append(dutch[index])
+        if index < len(english):
+            out.append(english[index])
+    return out
+
+
 def scrape_all_jobs(
     config: Config, client: LLMClient | None = None
 ) -> list[JobListing]:
@@ -37,7 +56,10 @@ def scrape_all_jobs(
     # With several career tracks, keywords are unioned and interleaved so the
     # per-source keyword limits still cover every track.
     kw_dutch, kw_english = merged_keywords(config)
-    keywords = kw_dutch + kw_english
+    # Interleaved, not concatenated: the list is truncated to
+    # jobspy_keyword_limit below, so concatenating let the Dutch keywords
+    # consume the whole budget and the English ones were never searched.
+    keywords = _interleave_languages(kw_dutch, kw_english)
     if not keywords:
         logger.warning("No keywords configured. Run 'job-scout keywords refresh'.")
         keywords = ["software developer", "data analyst"]
@@ -449,6 +471,12 @@ def _scrape_jobspy(keyword: str, config: Config) -> list[JobListing]:
             location="Netherlands",
             results_wanted=min(config.max_jobs_per_source, 50),
             country_indeed="Netherlands",
+            # LinkedIn omits the description from search results, so without
+            # this every LinkedIn job is evaluated on its title alone -- which
+            # is exactly when the LLM guesses, and guesses towards whatever the
+            # title's words mean in the largest industry. It costs one extra
+            # request per job, hence the config switch.
+            linkedin_fetch_description=config.linkedin_fetch_description,
         )
 
         jobs: list[JobListing] = []

@@ -35,6 +35,7 @@ from job_scout.database import Database, _dedup_key
 from job_scout.evaluator import (
     check_llm_available,
     evaluate_fit,
+    evaluation_fingerprint,
     generate_keywords,
     quick_evaluate_fit,
     quick_evaluate_tracks,
@@ -212,15 +213,26 @@ def _evaluate_job(
     """
     track = _track_for_job(job, config)
     blends = blend_tracks(config)
-    fit, neg, comp = evaluate_fit(
-        job,
-        effective_description(track, blends),
-        cv_text,
-        effective_negative(track, config),
-        client=client,
-    )
     job.primary_track_id = track.id
     job.primary_track_name = track.name
+
+    try:
+        fit, neg, comp = evaluate_fit(
+            job,
+            effective_description(track, blends),
+            cv_text,
+            effective_negative(track, config),
+            client=client,
+        )
+    except LLMError as exc:
+        # Leave fit_score as None so the evaluation cache treats the job as
+        # unevaluated and retries it next run, rather than remembering a
+        # score the model never actually produced.
+        logger.warning(f"LLM unreachable while evaluating {job.title!r}: {exc}")
+        job.fit_score = None
+        job.fit_reasoning = "LLM unreachable - will retry"
+        return False
+
     job.fit_score = fit.fit_score
     job.fit_reasoning = fit.reasoning
     job.negative_match = neg.matches_negative
@@ -468,7 +480,11 @@ def _eval_job_quick_parallel(
     blends = blend_tracks(config)
     if len(tracks) == 1 and not blends:
         score = quick_evaluate_fit(
-            job, tracks[0].description, cv_text, client=llm_client
+            job,
+            tracks[0].description,
+            cv_text,
+            effective_negative(tracks[0], config),
+            client=llm_client,
         )
         return job, score
 
@@ -478,6 +494,7 @@ def _eval_job_quick_parallel(
         job,
         [(t.id, effective_description(t, blends)) for t in tracks],
         cv_text,
+        config.negative_description,
         client=llm_client,
     )
     by_id = {t.id: t for t in tracks}
@@ -943,6 +960,7 @@ def _run_pipeline(
     started_at = datetime.now()
     if full:
         logger.info("Full rerun: dedup bypassed, upsert enabled")
+    _invalidate_stale_evaluations(db, config)
     if getattr(config, "prune_enabled", False):
         _auto_prune(db, config, dry_run=dry_run, llm_client=llm_client)
     click.echo("Scraping job listings…")
@@ -976,6 +994,29 @@ def _run_pipeline(
     _print_run_summary(stats)
     duration = (datetime.now() - started_at).total_seconds()
     return stats, started_at, duration
+
+
+def _invalidate_stale_evaluations(db: Database, config: Config) -> None:
+    """Drop cached fit scores when the question they answered has changed.
+
+    Cached evaluations are keyed on title+company alone, so retuning the
+    profile, tracks, reject criteria or model would otherwise keep serving
+    verdicts produced under the old settings, and the new configuration would
+    appear to do nothing for every job already seen.
+
+    Args:
+        db: Database for the current user.
+        config: Effective user configuration.
+    """
+    fingerprint = evaluation_fingerprint(config)
+    if db.get_meta("eval_fingerprint") == fingerprint:
+        return
+    cleared = db.invalidate_cached_evaluations()
+    db.set_meta("eval_fingerprint", fingerprint)
+    if cleared:
+        logger.info(
+            f"Search profile changed: re-evaluating {cleared} previously scored job(s)"
+        )
 
 
 def _execute_run(name: str, *, dry_run: bool = False, full: bool = False) -> None:

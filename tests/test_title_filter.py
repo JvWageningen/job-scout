@@ -113,3 +113,99 @@ def test_filter_empty_list() -> None:
     passed, filtered = filter_jobs_by_title([], config)
     assert passed == []
     assert filtered == 0
+
+
+# ---------------------------------------------------------------------------
+# morpheme-aware matching
+#
+# Regression tests for the Dutch-market matching rules. Naive substring
+# matching let "AI" mean *Maintenance* and let the exclude keyword "bouw" kill
+# *werktuigbouwkunde*; strict word boundaries instead lost *Optical* (matched
+# by the stem "optica") and *Testingenieur* (a compound head).
+# ---------------------------------------------------------------------------
+
+
+def test_acronym_include_requires_standalone_token() -> None:
+    """Short upper-case acronyms must not match inside a longer word."""
+    config = _config_with_keywords(include=["AI"])
+    assert passes_title_filter(_make_job("AI Engineer"), config)
+    assert passes_title_filter(_make_job("AI/ML Research Engineer"), config)
+    assert not passes_title_filter(
+        _make_job("Electrical Maintenance Technicians"), config
+    )
+    assert not passes_title_filter(_make_job("Technician Repair"), config)
+    assert not passes_title_filter(
+        _make_job("Vacature Trainee Procestechnoloog"), config
+    )
+
+
+def test_acronym_matching_stays_case_insensitive() -> None:
+    """Acronym matching is bounded, not case-sensitive."""
+    config = _config_with_keywords(include=["CRO"])
+    assert passes_title_filter(_make_job("CRO Specialist"), config)
+    assert passes_title_filter(_make_job("cro manager"), config)
+    assert not passes_title_filter(_make_job("Microcredential Advisor"), config)
+
+
+def test_include_keyword_matches_inflected_forms() -> None:
+    """Include stems still match suffixed forms (the substring behaviour)."""
+    config = _config_with_keywords(
+        include=["engineer", "optica", "kwaliteit", "research", "system"]
+    )
+    assert passes_title_filter(_make_job("Optical Designer"), config)
+    assert passes_title_filter(_make_job("Stage Controls Engineering"), config)
+    assert passes_title_filter(_make_job("Kwaliteitscontroleur"), config)
+    assert passes_title_filter(_make_job("Medior Researcher"), config)
+    assert passes_title_filter(_make_job("Systemen Specialist"), config)
+
+
+def test_include_keyword_matches_compound_head() -> None:
+    """Dutch/German compounds put the head noun last; it must still match."""
+    config = _config_with_keywords(include=["engineer", "ingenieur", "photonics"])
+    assert passes_title_filter(_make_job("Testingenieur"), config)
+    assert passes_title_filter(_make_job("Projectengineer"), config)
+    assert passes_title_filter(_make_job("Kwaliteitsingenieur"), config)
+    assert passes_title_filter(_make_job("Prozessingenieur Validierung"), config)
+    assert passes_title_filter(_make_job("PhD Position Nanophotonics"), config)
+
+
+def test_exclude_keyword_anchors_to_word_start_only() -> None:
+    """Exclude keywords must not veto on a mid-word collision."""
+    config = _config_with_keywords(
+        include=["engineer", "ingenieur", "kwaliteit", "meet"],
+        exclude=["bouw", "zorg", "HR", "SAP"],
+    )
+    # Previously killed by a mid-word exclude match, all squarely in scope.
+    assert passes_title_filter(_make_job("Werktuigbouwkundig Engineer"), config)
+    assert passes_title_filter(_make_job("Machinebouw Engineer"), config)
+    assert passes_title_filter(_make_job("Specialist Kwaliteitszorg"), config)
+    assert passes_title_filter(_make_job("Vliegtuigbouwkundige Ingenieur"), config)
+    # "SAP" hides inside hoogspanning-SAP-paratuur.
+    assert passes_title_filter(
+        _make_job("Meettechnicus Hoogspanningsapparatuur"), config
+    )
+
+
+def test_exclude_keyword_still_rejects_genuine_matches() -> None:
+    """Word-initial exclude matches must keep working."""
+    config = _config_with_keywords(
+        include=["engineer", "manager", "specialist", "opzichter"],
+        exclude=["bouw", "zorg", "HR", "SAP", "retail"],
+    )
+    assert not passes_title_filter(_make_job("Bouwkundig Opzichter"), config)
+    assert not passes_title_filter(_make_job("Zorgmanager"), config)
+    assert not passes_title_filter(_make_job("HR Manager"), config)
+    assert not passes_title_filter(_make_job("SAP Specialist"), config)
+    assert not passes_title_filter(_make_job("Retail Manager"), config)
+
+
+def test_exclude_veto_beats_include_hits() -> None:
+    """An exclude match rejects the job even when include keywords hit."""
+    config = _config_with_keywords(include=["engineer"], exclude=["docent"])
+    assert not passes_title_filter(_make_job("Docent Engineering"), config)
+
+
+def test_blank_keywords_are_ignored() -> None:
+    """Empty or whitespace-only keywords never match."""
+    config = _config_with_keywords(include=["engineer"], exclude=["   ", ""])
+    assert passes_title_filter(_make_job("Test Engineer"), config)

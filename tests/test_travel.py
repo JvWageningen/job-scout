@@ -483,3 +483,68 @@ def test_throttle_enforces_minimum_interval(monkeypatch: pytest.MonkeyPatch) -> 
     elapsed = time.monotonic() - start
 
     assert elapsed >= 0.2
+
+
+# ---------------------------------------------------------------------------
+# max_distance_km as an alternative to the per-mode limits
+#
+# Regression: max_distance_km used to be consulted only when no routing data
+# existed at all, so a nearby job that simply routed slowly was rejected even
+# though the user had said they would travel that far. With a 30-minute car
+# limit and no NS API key (public transport permanently unavailable), that
+# silently discarded most of the good matches.
+# ---------------------------------------------------------------------------
+
+
+def test_slow_but_near_job_passes_on_distance(base_config: Config) -> None:
+    """A job inside max_distance_km passes even when every mode is too slow."""
+    base_config.max_distance_km = 60
+    travel_times = [
+        TravelTime(mode=TravelMode.CAR, minutes=37.2),
+        TravelTime(mode=TravelMode.BIKE, minutes=61.8),
+        TravelTime(
+            mode=TravelMode.PUBLIC_TRANSPORT,
+            minutes=None,
+            available=False,
+            error="No NS API key",
+        ),
+    ]
+    result = is_within_travel_limits(
+        "Marknesse", travel_times, base_config, False, distance_km=20.6
+    )
+    assert result is True
+
+
+def test_far_job_still_rejected_on_distance(base_config: Config) -> None:
+    """A job beyond max_distance_km is rejected even with routing data."""
+    base_config.max_distance_km = 60
+    travel_times = [
+        TravelTime(mode=TravelMode.CAR, minutes=91.0),
+        TravelTime(mode=TravelMode.BIKE, minutes=234.9),
+    ]
+    result = is_within_travel_limits(
+        "Wageningen", travel_times, base_config, False, distance_km=78.3
+    )
+    assert result is False
+
+
+def test_fast_mode_wins_even_when_far(base_config: Config) -> None:
+    """A well-connected distant job still passes on its travel time."""
+    base_config.max_distance_km = 60
+    travel_times = [TravelTime(mode=TravelMode.PUBLIC_TRANSPORT, minutes=55.0)]
+    result = is_within_travel_limits(
+        "Eindhoven", travel_times, base_config, False, distance_km=110.0
+    )
+    assert result is True
+
+
+def test_no_distance_bound_keeps_travel_times_authoritative(
+    base_config: Config,
+) -> None:
+    """Without max_distance_km the per-mode limits remain the only gate."""
+    base_config.max_distance_km = None
+    travel_times = [TravelTime(mode=TravelMode.CAR, minutes=45.0)]
+    result = is_within_travel_limits(
+        "Utrecht", travel_times, base_config, False, distance_km=30.0
+    )
+    assert result is False

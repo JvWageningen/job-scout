@@ -18,6 +18,87 @@ from job_scout.models import (
     NegativeEvaluation,
 )
 
+# The cheap scorers used to see only the first 600 characters of the CV, which
+# on a typical one-page CV is the header and the skills list -- it stops before
+# the work history, so the candidate's actual domain never reached the model.
+_CV_EXCERPT_CHARS = 1800
+
+
+# The same job-title words describe completely different jobs in different
+# industries ("test engineer", "quality", "automation", "validation" all mean
+# one thing in software and another in physical engineering). Every scoring
+# stage gets this instruction so the cheap passes stop admitting look-alikes
+# from the wrong industry. It is phrased generically because the user's actual
+# domain comes from their profile and negative criteria, not from here.
+_DISCIPLINE_CHECK = (
+    "Before scoring, decide which INDUSTRY and DISCIPLINE the listing actually "
+    "belongs to, and check it against the candidate's own field. Job titles "
+    "reuse the same words across unrelated disciplines, so a title that looks "
+    "like a match is not one when the underlying work belongs to a different "
+    "field. Score on the work described, not on the words in the title."
+)
+
+# Deliberately NOT a numeric cap. Capping below the user's fit_score_threshold
+# turns any failure to fetch descriptions into a silent total blackout -- no
+# matches at all, with no obvious cause. This instead tells the model to stop
+# inventing responsibilities it cannot see, and to say so, which is the actual
+# failure mode: title-only jobs used to score far higher than described ones
+# because the model filled the gap with the most common meaning of the title.
+_TITLE_ONLY_CAP = (
+    "If the Description is empty or very short, you are judging on a title "
+    "alone. Score only what the title itself supports, do NOT infer what the "
+    "role involves from the company name, and be sceptical rather than "
+    "generous -- an ambiguous title is weak evidence, not good news. Begin "
+    "fit_reasoning with 'Title-only:' so the judgement is traceable."
+)
+
+
+# Bumped whenever the scoring prompts change meaning. It feeds the evaluation
+# fingerprint below, so a prompt change re-judges previously cached jobs
+# instead of silently serving scores produced by the old wording.
+PROMPT_VERSION = "2"
+
+
+def evaluation_fingerprint(config: Config) -> str:
+    """Fingerprint everything a cached fit score depends on.
+
+    Cached evaluations are keyed only on title+company, so a job seen before
+    keeps its old verdict forever. That is right while the question stays the
+    same and wrong as soon as it changes -- retuning the profile, the tracks,
+    the reject criteria or the model means every stored score answers a
+    question no longer being asked.
+
+    Args:
+        config: Effective user configuration.
+
+    Returns:
+        A short stable hash of the evaluation inputs.
+    """
+    import hashlib  # noqa: PLC0415
+
+    parts: list[str] = [
+        PROMPT_VERSION,
+        config.llm_provider,
+        config.local_model,
+        config.zai_model,
+        config.profile_description.strip(),
+        config.negative_description.strip(),
+    ]
+    for track in config.career_tracks:
+        if not track.enabled:
+            continue
+        parts.extend(
+            [
+                track.id,
+                track.mode,
+                str(track.required),
+                track.description.strip(),
+                track.negative_description.strip(),
+            ]
+        )
+    digest = hashlib.sha256("\x1f".join(parts).encode("utf-8")).hexdigest()
+    return digest[:16]
+
 
 def check_llm_available(config: Config) -> tuple[bool, str | None]:
     """Check whether the configured LLM provider is ready to use.
@@ -104,6 +185,9 @@ NEGATIVE CRITERIA (roles to reject):
 JOB LISTING:
 {job_text}
 
+{_DISCIPLINE_CHECK}
+{_TITLE_ONLY_CAP}
+
 Evaluate this job. Respond with this exact JSON structure:
 {{
   "fit_score": <integer 0-100>,
@@ -151,13 +235,34 @@ The Dutch legal minimum is 20 days. If the listing says \
 "marktconform" or similar, estimate based on industry norms."""
 
 
-def _build_quick_eval_prompt(job: JobListing, profile: str, cv_text: str) -> str:
+def _negative_block(negative_desc: str) -> str:
+    """Render the reject criteria for a prompt, or nothing when unset.
+
+    Args:
+        negative_desc: Description of roles/criteria to reject.
+
+    Returns:
+        A prompt fragment, empty when there are no criteria.
+    """
+    text = (negative_desc or "").strip()
+    if not text:
+        return ""
+    return (
+        f"\nROLES TO REJECT:\n{text[:800]}\n"
+        "If the job matches these reject criteria, score it 0-15.\n"
+    )
+
+
+def _build_quick_eval_prompt(
+    job: JobListing, profile: str, cv_text: str, negative_desc: str = ""
+) -> str:
     """Build a short prompt for the quick first-pass fit score.
 
     Args:
         job: The job listing to evaluate.
         profile: Candidate's profile description.
         cv_text: Extracted text from the candidate's CV.
+        negative_desc: Description of roles/criteria to reject.
 
     Returns:
         Complete prompt string.
@@ -175,17 +280,23 @@ CANDIDATE PROFILE:
 {profile[:800]}
 
 CV (excerpt):
-{cv_text[:600]}
-
+{cv_text[:_CV_EXCERPT_CHARS]}
+{_negative_block(negative_desc)}
 JOB:
 {job_text}
+
+{_DISCIPLINE_CHECK}
+{_TITLE_ONLY_CAP}
 
 Respond with: {{"fit_score": <integer 0-100>}}
 fit_score: 0=irrelevant, 40-59=partial match, 60-79=good fit, 80-100=strong match."""
 
 
 def _build_multi_track_prompt(
-    job: JobListing, tracks: list[tuple[str, str]], cv_text: str
+    job: JobListing,
+    tracks: list[tuple[str, str]],
+    cv_text: str,
+    negative_desc: str = "",
 ) -> str:
     """Build one prompt scoring a job against every track at once.
 
@@ -198,6 +309,7 @@ def _build_multi_track_prompt(
         job: The job listing to evaluate.
         tracks: (track_id, description) pairs to score against.
         cv_text: Extracted text from the candidate's CV.
+        negative_desc: Description of roles/criteria to reject.
 
     Returns:
         Complete prompt string.
@@ -219,14 +331,17 @@ DIRECTIONS THE CANDIDATE IS CONSIDERING:
 {listed}
 
 CV (excerpt):
-{cv_text[:600]}
-
+{cv_text[:_CV_EXCERPT_CHARS]}
+{_negative_block(negative_desc)}
 JOB:
 {job_text}
 
 Score each direction independently -- a job that fits one direction well \
 should score high for it even if it is irrelevant to the others.
 0=irrelevant, 40-59=partial match, 60-79=good fit, 80-100=strong match.
+
+{_DISCIPLINE_CHECK}
+{_TITLE_ONLY_CAP}
 
 Respond with: {{"scores": {{{keys}}}}}"""
 
@@ -235,6 +350,7 @@ def quick_evaluate_tracks(
     job: JobListing,
     tracks: list[tuple[str, str]],
     cv_text: str,
+    negative_desc: str = "",
     *,
     client: LLMClient | None = None,
 ) -> dict[str, int | None]:
@@ -259,7 +375,7 @@ def quick_evaluate_tracks(
     if client is None:
         client = get_llm_client(load_llm_config())
 
-    prompt = _build_multi_track_prompt(job, tracks, cv_text)
+    prompt = _build_multi_track_prompt(job, tracks, cv_text, negative_desc)
     try:
         data = _extract_json(client.complete(prompt, purpose="quick_eval"))
         raw = data.get("scores")
@@ -294,6 +410,7 @@ def quick_evaluate_fit(
     job: JobListing,
     profile: str,
     cv_text: str,
+    negative_desc: str = "",
     *,
     client: LLMClient | None = None,
 ) -> int | None:
@@ -320,7 +437,7 @@ def quick_evaluate_fit(
     if client is None:
         client = get_llm_client(load_llm_config())
 
-    prompt = _build_quick_eval_prompt(job, profile, cv_text)
+    prompt = _build_quick_eval_prompt(job, profile, cv_text, negative_desc)
     try:
         output = client.complete(prompt, purpose="quick_eval")
         data = _extract_json(output)
@@ -354,7 +471,11 @@ def evaluate_fit(
         Tuple of (FitEvaluation, NegativeEvaluation, CompensationEvaluation).
 
     Raises:
-        LLMError: If the LLM provider is not available.
+        LLMError: If the LLM provider is unreachable. This deliberately
+            propagates rather than degrading to ``fit_score=0``: a zero is
+            indistinguishable from a real verdict, and the evaluation cache
+            keys on ``fit_score IS NOT NULL``, so a swallowed outage poisoned
+            the job permanently and it was never re-evaluated.
     """
     from job_scout.config import load_llm_config  # noqa: PLC0415
 
@@ -384,17 +505,12 @@ def evaluate_fit(
         )
         return fit, neg, comp
     except json.JSONDecodeError as e:
+        # The model did answer, it just answered badly. A zero here is a real
+        # verdict about a real response, so caching it is correct.
         logger.warning(f"Failed to parse LLM JSON: {e}")
         return (
             FitEvaluation(fit_score=0, reasoning="Evaluation parse error"),
             NegativeEvaluation(matches_negative=False, reasoning="Parse error"),
-            default_comp,
-        )
-    except LLMError as e:
-        logger.warning(f"LLM call failed during job evaluation: {e}")
-        return (
-            FitEvaluation(fit_score=0, reasoning="Evaluation failed"),
-            NegativeEvaluation(matches_negative=False, reasoning="LLM error"),
             default_comp,
         )
 

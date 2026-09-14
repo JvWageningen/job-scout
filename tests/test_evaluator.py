@@ -67,16 +67,19 @@ def test_evaluate_fit_success_with_fake_client(sample_job: JobListing) -> None:
     assert comp.vacation_days == 25
 
 
-def test_evaluate_fit_llm_error_returns_zero_score(sample_job: JobListing) -> None:
-    """evaluate_fit returns fit_score=0 and no-negative when LLM raises LLMError."""
+def test_evaluate_fit_llm_error_propagates(sample_job: JobListing) -> None:
+    """evaluate_fit raises LLMError rather than inventing a zero score.
+
+    A zero is indistinguishable from a real verdict and the evaluation cache
+    keys on ``fit_score IS NOT NULL``, so swallowing an outage used to pin the
+    job at 0 forever.
+    """
     from job_scout.evaluator import evaluate_fit
+    from job_scout.llm.base import LLMError
 
     client = FakeLLMClient([], repeat_last=False)
-    fit, neg, comp = evaluate_fit(sample_job, "Python developer", "", "", client=client)
-
-    assert fit.fit_score == 0
-    assert neg.matches_negative is False
-    assert comp.salary_min is None
+    with pytest.raises(LLMError):
+        evaluate_fit(sample_job, "Python developer", "", "", client=client)
 
 
 def test_evaluate_fit_invalid_json_returns_zero_score(sample_job: JobListing) -> None:
