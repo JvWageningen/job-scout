@@ -4,6 +4,19 @@ Format: [Keep a Changelog](https://keepachangelog.com)
 
 <!-- version list -->
 
+## v1.16.3 (2026-09-14)
+
+### Bug Fixes
+
+- **dashboard**: Stop masking the keyword settings as if they were secrets
+  ([`58cd261`](https://github.com/JvWageningen/job-scout/commit/58cd261d0b1e6eb87270ce6334aac3dbf002aca9))
+
+### Chores
+
+- Sync uv.lock to 1.16.2 [skip ci]
+  ([`96b4afd`](https://github.com/JvWageningen/job-scout/commit/96b4afd8a99fa376078e493eab9403837afbf500))
+
+
 ## v1.16.2 (2026-09-14)
 
 ### Bug Fixes
