@@ -20,6 +20,7 @@ from starlette.responses import FileResponse, JSONResponse, Response
 from job_scout import feedback, ntfy_topic, progress
 from job_scout.config import (
     GLOBAL_FIELDS,
+    SECRET_FIELDS,
     apply_user_init,
     build_effective_config,
     list_users,
@@ -439,10 +440,15 @@ def create_app() -> FastAPI:
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc  # noqa: B904
 
-        # Mask secret fields (show only last 4 chars)
+        # Mask secret fields (show only last 4 chars). Matched against the
+        # canonical SECRET_FIELDS set rather than by looking for "key" in the
+        # name: that substring also matches every *keyword* field, so the
+        # dashboard replaced keywords_dutch with "***st']" and turned
+        # jobspy_keyword_limit into "***5" -- which the settings form then
+        # posted straight back, failing validation on save.
         config_dict = config.model_dump()
         for key in config_dict:
-            if "key" in key.lower() and config_dict[key]:
+            if key in SECRET_FIELDS and config_dict[key]:
                 config_dict[key] = f"***{str(config_dict[key])[-4:]}"
 
         if not user:

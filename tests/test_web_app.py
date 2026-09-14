@@ -10,7 +10,13 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from job_scout.config import user_db_path, user_logs_dir
+from job_scout.config import (
+    SECRET_FIELDS,
+    set_config_value,
+    update_secrets,
+    user_db_path,
+    user_logs_dir,
+)
 from job_scout.database import Database
 from job_scout.llm.base import LLMClient
 from job_scout.models import JobListing, JobStatus
@@ -124,6 +130,33 @@ class TestGetConfig:
         """Test getting config for nonexistent user."""
         response = client.get("/api/config?user=nonexistent")
         assert response.status_code == 404
+
+    def test_keyword_fields_are_not_masked_as_secrets(
+        self, client: TestClient, test_user: str
+    ) -> None:
+        """Keyword settings must survive the secret masking untouched.
+
+        Masking used to match any field whose name contained "key", which
+        also caught every *keyword* field: the dashboard received
+        ``"***st']"`` for the keyword lists and ``"***5"`` for the limits,
+        and the settings form posted those straight back.
+        """
+        set_config_value("jobspy_keyword_limit", "7", user=test_user)
+        set_config_value("keywords_dutch", '["data analist"]', user=test_user)
+
+        config = client.get(f"/api/config?user={test_user}").json()
+
+        assert config["jobspy_keyword_limit"] == 7
+        assert config["keywords_dutch"] == ["data analist"]
+        assert config["nvb_keyword_limit"] == 3
+
+    def test_real_secrets_are_still_masked(self, client: TestClient) -> None:
+        """An actual API key is never returned in full."""
+        update_secrets({"ors_api_key": "abcdefghij1234"})
+
+        config = client.get("/api/config").json()
+
+        assert config["ors_api_key"] == "***1234"
 
     def test_global_initialized_false_before_setup(self, monkeypatch) -> None:  # noqa: ANN001
         """global_initialized must be false before any global config is written.
@@ -1049,17 +1082,23 @@ class TestPostConfig:
     def test_update_config_get_config_never_returns_raw_secret(
         self, client: TestClient, test_user: str
     ) -> None:
-        """Test that GET /api/config never returns raw secret values."""
-        # Try to update a secret (which should fail in POST)
-        # but verify GET never returns it unmasked
+        """Test that GET /api/config never returns raw secret values.
+
+        Checked against SECRET_FIELDS rather than any field whose name
+        contains "key": that heuristic also swept in the keyword settings,
+        which are not secret and must come back intact.
+        """
+        update_secrets({"zai_api_key": "supersecretvalue9876"})
+
         response = client.get(f"/api/config?user={test_user}")
         assert response.status_code == 200
         config = response.json()
-        # If any secrets are present, they should be masked
-        for key, value in config.items():
-            if "key" in key.lower() and value:
-                # Should be masked like ****last4chars
-                assert value.startswith("***") or not value.startswith("actual_")
+
+        assert config["zai_api_key"] == "***9876"
+        for key in SECRET_FIELDS:
+            value = config.get(key)
+            if value:
+                assert str(value).startswith("***"), f"{key} came back unmasked"
 
 
 class TestPostSecrets:
