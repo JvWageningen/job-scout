@@ -20,6 +20,7 @@ import segno
 # ntfy accepts [A-Za-z0-9_-] in topic names.
 _ALLOWED = re.compile(r"[^a-z0-9]+")
 _SUFFIX_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789"
+_DIGITS = "0123456789"
 
 # 16 chars from a 36-symbol alphabet is ~82 bits: far past guessable, while
 # still short enough to read off a screen if someone has to type it.
@@ -44,13 +45,22 @@ def slugify_name(name: str) -> str:
 def random_suffix(length: int = SUFFIX_LENGTH) -> str:
     """Return a cryptographically random lowercase-alphanumeric string.
 
+    Guarantees at least one digit. ``is_secure_topic`` uses "contains a digit"
+    to tell a generated topic from a hand-picked word, and roughly one suffix
+    in 180 is all-letters by chance -- which made the generator occasionally
+    produce a topic its own check called insecure, warning the user about a
+    topic that had just been generated for them.
+
     Args:
         length: Number of characters to generate.
 
     Returns:
         The random suffix.
     """
-    return "".join(secrets.choice(_SUFFIX_ALPHABET) for _ in range(length))
+    chars = [secrets.choice(_SUFFIX_ALPHABET) for _ in range(length)]
+    if not any(c.isdigit() for c in chars):
+        chars[secrets.randbelow(length)] = secrets.choice(_DIGITS)
+    return "".join(chars)
 
 
 def generate_topic(name: str) -> str:
@@ -86,8 +96,8 @@ def is_secure_topic(topic: str) -> bool:
     last = topic.rsplit("-", 1)[-1]
     if len(last) < SUFFIX_LENGTH:
         return False
-    # A real word of this length is possible but a digit somewhere is not,
-    # and the generator's alphabet makes one overwhelmingly likely.
+    # A real word of this length is possible but a digit somewhere is not, and
+    # random_suffix guarantees one -- so this cannot reject a topic we made.
     return bool(re.fullmatch(r"[a-z0-9]+", last)) and any(c.isdigit() for c in last)
 
 
