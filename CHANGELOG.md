@@ -4,6 +4,19 @@ Format: [Keep a Changelog](https://keepachangelog.com)
 
 <!-- version list -->
 
+## v1.16.2 (2026-09-14)
+
+### Bug Fixes
+
+- **scraper**: Stop spending a search slot on a keyword already searched
+  ([`8d15e8a`](https://github.com/JvWageningen/job-scout/commit/8d15e8abf53b52546d31209783ac2cbb68479593))
+
+### Chores
+
+- Sync uv.lock to 1.16.1 [skip ci]
+  ([`36f0199`](https://github.com/JvWageningen/job-scout/commit/36f01999f44f3c2c62ad2c01a74865915c41c8f7))
+
+
 ## v1.16.1 (2026-09-14)
 
 ### Bug Fixes
