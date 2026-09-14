@@ -316,13 +316,18 @@ def _calculate_travel_for_job(
     Returns:
         Job with travel_times, location_unknown, and distance_km populated.
     """
-    if job.location:
+    if job.location and job.location.strip():
         travel_times, location_unknown, distance = calculate_travel_times(
             job.location, config, db
         )
         job.travel_times = travel_times
         job.location_unknown = location_unknown
         job.distance_km = distance
+    else:
+        # A listing that never said where the work is. Flag it rather than
+        # leaving the job looking like an ordinary one with no commute, so the
+        # dashboard can show why it has no distance.
+        job.location_unknown = True
     return job
 
 

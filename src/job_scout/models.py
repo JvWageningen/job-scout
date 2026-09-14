@@ -232,6 +232,11 @@ class Config(BaseModel):
     title_include_keywords: list[str] = Field(default_factory=list)
     title_exclude_keywords: list[str] = Field(default_factory=list)
     max_distance_km: int | None = None
+    # Whether a job whose location cannot be resolved still passes the
+    # travel filter. False means the commute settings are honoured even
+    # when the listing does not say where the work is; genuinely remote or
+    # country-wide postings are unaffected either way.
+    allow_unknown_location: bool = False
     min_salary: int | None = None
     max_salary: int | None = None
     min_vacation_days: int | None = None

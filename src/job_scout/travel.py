@@ -43,7 +43,9 @@ BIKE_SPEED_KMH = 20.0
 _EXACT_VAGUE = frozenset(["remote", "netherlands", "nederland", "everywhere", "overal"])
 
 # Substring keywords: if the location *contains* one of these, it is vague.
-_SUBSTR_VAGUE = frozenset(["thuis", "thuiswerken"])
+# "Randstad" names the western conurbation rather than a place that can be
+# routed to, so it is vague in the same way "Netherlands" is.
+_SUBSTR_VAGUE = frozenset(["thuis", "thuiswerken", "randstad"])
 
 
 _EARTH_RADIUS_KM = 6371.0
@@ -545,7 +547,16 @@ def is_within_travel_limits(
     because public transport needs an NS API key that is often absent, the
     generous ``max_travel_pt`` limit never applied either.
 
-    Jobs with unknown locations always pass.
+    A location that cannot be resolved is *not* evidence that the job is
+    nearby. "Unknown location" used to mean three different things at once --
+    genuinely location-independent work, a real place that failed to geocode,
+    and no location string at all -- and all three passed unconditionally. The
+    last two are missing data, and letting them through silently exempted
+    far-away jobs from the commute settings entirely: a third of the matched
+    list had no distance, including a vacancy in Berlin.
+
+    Genuinely remote or country-wide postings still pass. The rest are held to
+    ``allow_unknown_location``, which defaults to False.
 
     Args:
         job_location: Job location string (may be None).
@@ -557,8 +568,19 @@ def is_within_travel_limits(
     Returns:
         True if the job passes the travel filter.
     """
-    if location_unknown or not job_location:
+    location = (job_location or "").strip()
+    if not location:
+        logger.info("No location on the listing — cannot check the commute")
+        return config.allow_unknown_location
+
+    # Deliberately re-checked here rather than trusting location_unknown, which
+    # cannot tell "works from anywhere" apart from "geocoding failed".
+    if is_remote_location(location):
         return True
+
+    if location_unknown:
+        logger.info(f"Could not resolve '{location}' — cannot check the commute")
+        return config.allow_unknown_location
 
     limits = {
         TravelMode.CAR: config.max_travel_car,

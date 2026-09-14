@@ -62,9 +62,23 @@ def test_exceeds_all_limits_rejected(base_config: Config) -> None:
     assert result is False
 
 
-def test_unknown_location_always_passes(base_config: Config) -> None:
-    """Jobs with unknown location pass the travel filter unconditionally."""
+def test_unresolvable_location_is_rejected(base_config: Config) -> None:
+    """A real place we could not geocode is missing data, not "nearby"."""
+    assert is_within_travel_limits("Somewhere", [], base_config, True) is False
+
+
+def test_unresolvable_location_passes_when_allowed(base_config: Config) -> None:
+    """allow_unknown_location restores the old permissive behaviour."""
+    base_config.allow_unknown_location = True
     assert is_within_travel_limits("Somewhere", [], base_config, True) is True
+
+
+def test_remote_location_still_passes(base_config: Config) -> None:
+    """Genuinely location-independent work is unaffected by the stricter rule."""
+    remote = ("Remote", "Netherlands", "Thuiswerken", "The Randstad, Netherlands")
+    for location in remote:
+        result = is_within_travel_limits(location, [], base_config, True)
+        assert result is True, location
 
 
 def test_no_travel_data_passes(base_config: Config) -> None:
@@ -82,8 +96,20 @@ def test_all_unavailable_travel_times_pass(base_config: Config) -> None:
     assert result is True
 
 
-def test_none_location_passes(base_config: Config) -> None:
-    """Job with no location passes the travel filter."""
+def test_missing_location_is_rejected(base_config: Config) -> None:
+    """A listing that never said where the work is cannot be commute-checked.
+
+    These used to pass unconditionally, which is how a third of the matched
+    list ended up with no distance at all -- including a vacancy in Berlin.
+    """
+    assert is_within_travel_limits(None, [], base_config, False) is False
+    assert is_within_travel_limits("", [], base_config, False) is False
+    assert is_within_travel_limits("   ", [], base_config, False) is False
+
+
+def test_missing_location_passes_when_allowed(base_config: Config) -> None:
+    """The permissive behaviour stays available behind the config flag."""
+    base_config.allow_unknown_location = True
     assert is_within_travel_limits(None, [], base_config, False) is True
 
 
