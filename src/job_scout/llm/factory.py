@@ -64,6 +64,9 @@ def _build_raw_client(
             api_key=config.local_api_key,
             evaluation_timeout=config.local_evaluation_timeout,
             screening_timeout=config.local_screening_timeout,
+            fallback_base_urls=config.local_fallback_base_urls,
+            connect_timeout=config.local_connect_timeout,
+            probe_timeout=config.local_probe_timeout,
         )
     else:
         return ClaudeCliClient(
@@ -218,6 +221,7 @@ def build_raw_client_for_test(
         config_dict.update(
             {
                 "local_base_url": kwargs.get("base_url", "http://localhost:11434/v1"),
+                "local_fallback_base_urls": kwargs.get("fallback_base_urls", []),
                 "local_api_key": kwargs.get("api_key"),
                 "local_model": kwargs.get("model", "llama3.1"),
                 "local_screening_model": kwargs.get("screening_model"),

@@ -2,9 +2,19 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Any
+
 from loguru import logger
 
 from job_scout.llm.base import CallPurpose, LLMError
+
+if TYPE_CHECKING:
+    import openai
+
+# A GET on the base URL itself 404s on llama-swap, llama.cpp-server, vLLM and
+# Ollama alike -- only the sub-routes exist -- so health is probed against the
+# model list, whose success also proves the server speaks the OpenAI API.
+_PROBE_PATH = "/models"
 
 
 class LocalLLMClient:
@@ -18,6 +28,11 @@ class LocalLLMClient:
     - llama.cpp server
     - text-generation-webui
     - LocalAI
+
+    Several base URLs may be supplied. They are tried in order and the first one
+    that answers becomes the active endpoint; a transport failure mid-run demotes
+    it and the next candidate is tried, so losing one route to the model host
+    (a dropped VPN link, say) no longer takes the whole pipeline down.
 
     The ``purpose`` parameter on :meth:`complete` drives model selection:
 
@@ -41,11 +56,14 @@ class LocalLLMClient:
         api_key: str | None = None,
         evaluation_timeout: float = 120,
         screening_timeout: float = 90,
+        fallback_base_urls: list[str] | None = None,
+        connect_timeout: float = 15.0,
+        probe_timeout: float = 10.0,
     ) -> None:
         """Initialise the local LLM client.
 
         Args:
-            base_url: Base URL for the OpenAI-compatible API endpoint.
+            base_url: Primary base URL for the OpenAI-compatible API endpoint.
             evaluation_model: Model id for evaluation and keyword calls.
             screening_model: Model id for title-screening batches; falls back to
                 ``evaluation_model``.
@@ -54,12 +72,15 @@ class LocalLLMClient:
             quick_eval_model: Model id for the cheap first-pass evaluation;
                 falls back to ``screening_model`` or ``evaluation_model``.
             api_key: Optional API key; if not provided, uses "not-needed".
-            evaluation_timeout: HTTP timeout in seconds for evaluation / keyword calls.
-            screening_timeout: HTTP timeout in seconds for screening calls.
+            evaluation_timeout: HTTP read timeout in seconds for evaluation /
+                keyword calls.
+            screening_timeout: HTTP read timeout in seconds for screening calls.
+            fallback_base_urls: Further endpoints to try, in order, when the
+                primary is unreachable.
+            connect_timeout: Seconds allowed to establish a TCP connection.
+            probe_timeout: Seconds allowed for a health probe.
         """
-        import openai
-
-        self._base_url = base_url
+        self._base_urls = _dedupe_urls([base_url, *(fallback_base_urls or [])])
         self._api_key = api_key or "not-needed"
         self._evaluation_model = evaluation_model
         self._screening_model = screening_model or evaluation_model
@@ -67,9 +88,44 @@ class LocalLLMClient:
         self._quick_eval_model = quick_eval_model or self._screening_model
         self._evaluation_timeout = evaluation_timeout
         self._screening_timeout = screening_timeout
-        self._client = openai.OpenAI(
-            api_key=self._api_key, base_url=base_url, max_retries=0
-        )
+        self._connect_timeout = connect_timeout
+        self._probe_timeout = probe_timeout
+        self._active_index = 0
+        self._clients: dict[str, Any] = {}
+
+    @property
+    def base_url(self) -> str:
+        """Return the endpoint currently being used.
+
+        Returns:
+            The active base URL.
+        """
+        return self._base_urls[self._active_index]
+
+    def _client_for(self, base_url: str, read_timeout: float) -> openai.OpenAI:
+        """Return a cached client for one endpoint.
+
+        Args:
+            base_url: Endpoint to build a client for.
+            read_timeout: Read timeout in seconds.
+
+        Returns:
+            A configured OpenAI client.
+        """
+        import httpx  # noqa: PLC0415
+        import openai  # noqa: PLC0415
+
+        key = f"{base_url}|{read_timeout}"
+        client = self._clients.get(key)
+        if client is None:
+            client = openai.OpenAI(
+                api_key=self._api_key,
+                base_url=base_url,
+                max_retries=0,
+                timeout=httpx.Timeout(read_timeout, connect=self._connect_timeout),
+            )
+            self._clients[key] = client
+        return client
 
     def complete(
         self,
@@ -80,10 +136,15 @@ class LocalLLMClient:
     ) -> str:
         """Send a prompt and return the model's text response.
 
+        Endpoints are tried in priority order. A connection-level failure moves
+        on to the next candidate; an error from a server that did answer (a bad
+        model id, a refusal) is raised immediately, since retrying it elsewhere
+        would only repeat the same mistake.
+
         Args:
             prompt: The full prompt to send.
             purpose: Determines which model and timeout are used.
-            timeout: Override the default timeout for this call.
+            timeout: Override the default read timeout for this call.
 
         Returns:
             Stripped text content from the first choice.
@@ -91,70 +152,227 @@ class LocalLLMClient:
         Raises:
             LLMError: On any API or transport error.
         """
-        import openai
+        import openai  # noqa: PLC0415
 
-        if purpose == "screening":
-            model = self._screening_model
-            default_timeout = self._screening_timeout
-        elif purpose == "quick_eval":
-            model = self._quick_eval_model
-            default_timeout = self._screening_timeout
-        elif purpose == "keywords":
-            model = self._keywords_model
-            default_timeout = self._evaluation_timeout
-        else:
-            model = self._evaluation_model
-            default_timeout = self._evaluation_timeout
+        model, default_timeout = self._route(purpose)
+        read_timeout = timeout if timeout is not None else default_timeout
 
-        effective_timeout = timeout if timeout is not None else default_timeout
+        failures: list[str] = []
+        for offset in range(len(self._base_urls)):
+            index = (self._active_index + offset) % len(self._base_urls)
+            base_url = self._base_urls[index]
+            try:
+                response = self._clients_complete(base_url, read_timeout, model, prompt)
+            except openai.APIConnectionError as exc:
+                # Covers APITimeoutError, which subclasses it.
+                failures.append(f"{base_url}: {type(exc).__name__}: {exc}")
+                logger.warning(
+                    "Local LLM endpoint {} unreachable ({}); trying next",
+                    base_url,
+                    type(exc).__name__,
+                )
+                continue
+            except openai.OpenAIError as exc:
+                raise LLMError(f"Local LLM API error at {base_url}: {exc}") from exc
 
-        try:
-            response = self._client.chat.completions.create(
-                model=model,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": (
-                            "You must respond with valid JSON only. "
-                            "Do not include any explanation or text "
-                            "outside the JSON object."
-                        ),
-                    },
-                    {"role": "user", "content": prompt},
-                ],
-                timeout=effective_timeout,
-            )
-        except openai.OpenAIError as exc:
-            raise LLMError(f"Local LLM API error: {exc}") from exc
+            if index != self._active_index:
+                logger.info("Local LLM endpoint switched to {}", base_url)
+                self._active_index = index
+            return _content_of(response, model)
 
-        usage = response.usage
-        if usage:
-            logger.debug(
-                "Local LLM usage: prompt_tokens={}, completion_tokens={}, model={}",
-                usage.prompt_tokens,
-                usage.completion_tokens,
-                model,
-            )
+        raise LLMError("No local LLM endpoint reachable - " + "; ".join(failures))
 
-        content = response.choices[0].message.content
-        return (content or "").strip()
+    def _clients_complete(
+        self, base_url: str, read_timeout: float, model: str, prompt: str
+    ) -> Any:
+        """Issue one chat completion against a specific endpoint.
 
-    def check_available(self) -> tuple[bool, str | None]:
-        """Check whether the local LLM server is reachable.
-
-        Attempts a simple HTTP GET to the base URL to verify connectivity
-        without making a full API call.
+        Args:
+            base_url: Endpoint to call.
+            read_timeout: Read timeout in seconds.
+            model: Model id to request.
+            prompt: The user prompt.
 
         Returns:
-            (True, None) if the server is reachable, (False, error_message) otherwise.
+            The raw chat completion response.
         """
-        import requests
+        return self._client_for(base_url, read_timeout).chat.completions.create(
+            model=model,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You must respond with valid JSON only. "
+                        "Do not include any explanation or text "
+                        "outside the JSON object."
+                    ),
+                },
+                {"role": "user", "content": prompt},
+            ],
+            timeout=read_timeout,
+        )
 
-        try:
-            requests.get(self._base_url, timeout=5)
-            return True, None
-        except requests.RequestException as exc:
-            return (
-                False,
-                f"Cannot reach local LLM server at {self._base_url}: {exc}",
+    def _route(self, purpose: CallPurpose) -> tuple[str, float]:
+        """Select the model and default timeout for a call purpose.
+
+        Args:
+            purpose: The call purpose.
+
+        Returns:
+            Tuple of (model id, default read timeout).
+        """
+        if purpose == "screening":
+            return self._screening_model, self._screening_timeout
+        if purpose == "quick_eval":
+            return self._quick_eval_model, self._screening_timeout
+        if purpose == "keywords":
+            return self._keywords_model, self._evaluation_timeout
+        return self._evaluation_model, self._evaluation_timeout
+
+    def check_available(self) -> tuple[bool, str | None]:
+        """Check whether any configured local LLM endpoint is reachable.
+
+        Probes ``{base_url}/models`` on each endpoint in priority order and
+        makes the first healthy one active. The status code is checked: a 404
+        or an unrelated web server answering on the port is a failure, not a
+        success.
+
+        Returns:
+            (True, None) if an endpoint is reachable, (False, error_message)
+            otherwise. The message lists every endpoint tried and why it failed.
+        """
+        failures: list[str] = []
+        for index, base_url in enumerate(self._base_urls):
+            ok, error = probe_endpoint(
+                base_url, self._api_key, timeout=self._probe_timeout
             )
+            if ok:
+                if index != self._active_index:
+                    logger.info("Local LLM endpoint switched to {}", base_url)
+                    self._active_index = index
+                return True, None
+            failures.append(f"{base_url}: {error}")
+
+        return False, "Cannot reach local LLM server - " + "; ".join(failures)
+
+
+def _content_of(response: Any, model: str) -> str:
+    """Extract and log the text content of a completion response.
+
+    Args:
+        response: Raw chat completion response.
+        model: Model id that produced it, for logging.
+
+    Returns:
+        The stripped message content.
+    """
+    usage = getattr(response, "usage", None)
+    if usage:
+        logger.debug(
+            "Local LLM usage: prompt_tokens={}, completion_tokens={}, model={}",
+            usage.prompt_tokens,
+            usage.completion_tokens,
+            model,
+        )
+    content = response.choices[0].message.content
+    return (content or "").strip()
+
+
+def _dedupe_urls(urls: list[str]) -> list[str]:
+    """Normalise and de-duplicate endpoint URLs, preserving order.
+
+    Args:
+        urls: Candidate base URLs.
+
+    Returns:
+        Non-empty, de-duplicated URLs without trailing slashes.
+    """
+    seen: set[str] = set()
+    out: list[str] = []
+    for url in urls:
+        cleaned = (url or "").strip().rstrip("/")
+        if cleaned and cleaned not in seen:
+            seen.add(cleaned)
+            out.append(cleaned)
+    return out or ["http://localhost:11434/v1"]
+
+
+def probe_endpoint(
+    base_url: str,
+    api_key: str | None = None,
+    *,
+    timeout: float = 10.0,
+) -> tuple[bool, str | None]:
+    """Check one OpenAI-compatible endpoint by listing its models.
+
+    Args:
+        base_url: Base URL to probe (without a trailing slash).
+        api_key: Optional API key.
+        timeout: Read timeout in seconds; the connect timeout is half of it.
+
+    Returns:
+        (True, None) when the endpoint answers with a model list, otherwise
+        (False, a human-readable reason).
+    """
+    import requests  # noqa: PLC0415
+
+    url = base_url.rstrip("/") + _PROBE_PATH
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+    try:
+        response = requests.get(
+            url, timeout=(max(1.0, timeout / 2), timeout), headers=headers
+        )
+    except requests.Timeout:
+        return False, f"timed out after {timeout:g}s"
+    except requests.RequestException as exc:
+        return False, f"{type(exc).__name__}: {exc}"
+
+    if not response.ok:
+        return False, f"HTTP {response.status_code} from {url}"
+
+    try:
+        payload = response.json()
+    except ValueError:
+        return False, f"non-JSON response from {url}"
+
+    if not isinstance(payload, dict) or "data" not in payload:
+        return False, f"unexpected response shape from {url}"
+
+    return True, None
+
+
+def list_models(
+    base_url: str,
+    api_key: str | None = None,
+    *,
+    timeout: float = 10.0,
+) -> list[str]:
+    """List the model ids an endpoint advertises.
+
+    Args:
+        base_url: Base URL to query.
+        api_key: Optional API key.
+        timeout: Read timeout in seconds.
+
+    Returns:
+        Model ids, or an empty list when the response has none.
+
+    Raises:
+        requests.RequestException: If the endpoint cannot be reached.
+        ValueError: If the response is not usable JSON.
+    """
+    import requests  # noqa: PLC0415
+
+    url = base_url.rstrip("/") + _PROBE_PATH
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+    response = requests.get(
+        url, timeout=(max(1.0, timeout / 2), timeout), headers=headers
+    )
+    response.raise_for_status()
+    payload = response.json()
+    entries = payload.get("data", []) if isinstance(payload, dict) else []
+    return [
+        str(entry["id"])
+        for entry in entries
+        if isinstance(entry, dict) and "id" in entry
+    ]

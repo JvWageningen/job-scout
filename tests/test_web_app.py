@@ -2076,40 +2076,26 @@ class TestDetectLocalModels:
         assert "base_url is required" in result["message"]
 
     def test_detect_models_connection_error(self, client: TestClient) -> None:
-        """detect_models handles connection errors gracefully."""
+        """detect_models reports an unreachable endpoint actionably."""
         response = client.post(
             "/api/llm/detect-models", json={"base_url": "http://invalid.invalid"}
         )
         assert response.status_code == 200
         result = response.json()
         assert not result["ok"]
-        assert "Connection failed" in result["message"] or "Error" in result["message"]
         assert result["models"] == []
+        # The message must name the endpoint, not just say "Request timed out."
+        assert "invalid.invalid" in result["message"]
+        assert result["endpoints"][0]["ok"] is False
+        assert result["endpoints"][0]["error"]
 
     def test_detect_models_success_mock(
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """detect_models returns model list on success."""
-        from unittest.mock import MagicMock
-
-        # Mock the openai.OpenAI client
-        mock_model_1 = MagicMock()
-        mock_model_1.id = "llama3.1"
-        mock_model_2 = MagicMock()
-        mock_model_2.id = "llama2"
-
-        mock_models_list = MagicMock()
-        mock_models_list.data = [mock_model_1, mock_model_2]
-
-        mock_client = MagicMock()
-        mock_client.models.list.return_value = mock_models_list
-
-        def mock_openai_init(*args, **kwargs) -> MagicMock:
-            return mock_client
-
-        import openai
-
-        monkeypatch.setattr(openai, "OpenAI", mock_openai_init)
+        """detect_models returns the model list on success."""
+        monkeypatch.setattr(
+            "requests.get", lambda *a, **k: _models_ok("llama3.1", "llama2")
+        )
 
         response = client.post(
             "/api/llm/detect-models",
@@ -2120,40 +2106,69 @@ class TestDetectLocalModels:
         assert result["ok"]
         assert result["models"] == ["llama3.1", "llama2"]
         assert "Found 2" in result["message"]
+        assert result["endpoints"][0]["url"] == "http://localhost:11434/v1"
 
     def test_detect_models_with_api_key(
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """detect_models passes api_key to OpenAI client."""
-        from unittest.mock import MagicMock
+        """detect_models sends the api_key as a bearer token."""
+        seen: dict[str, object] = {}
 
-        mock_model = MagicMock()
-        mock_model.id = "test-model"
-        mock_models_list = MagicMock()
-        mock_models_list.data = [mock_model]
+        def fake_get(url: str, **kwargs: object) -> object:
+            seen["url"] = url
+            seen["headers"] = kwargs.get("headers")
+            return _models_ok("test-model")
 
-        mock_client = MagicMock()
-        mock_client.models.list.return_value = mock_models_list
-
-        mock_init = MagicMock(return_value=mock_client)
-
-        import openai
-
-        monkeypatch.setattr(openai, "OpenAI", mock_init)
+        monkeypatch.setattr("requests.get", fake_get)
 
         response = client.post(
             "/api/llm/detect-models",
             json={"base_url": "http://localhost:11434/v1", "api_key": "test-key"},
         )
         assert response.status_code == 200
+        assert response.json()["ok"]
+        assert seen["url"] == "http://localhost:11434/v1/models"
+        assert seen["headers"] == {"Authorization": "Bearer test-key"}
+
+    def test_detect_models_tries_every_candidate(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A dead primary does not hide models on a reachable fallback."""
+        import requests
+
+        def fake_get(url: str, **_: object) -> object:
+            if "dead" in url:
+                raise requests.ConnectionError("no route")
+            return _models_ok("qwen3.8-27b")
+
+        monkeypatch.setattr("requests.get", fake_get)
+
+        response = client.post(
+            "/api/llm/detect-models",
+            json={
+                "base_url": "http://dead:8080/v1",
+                "base_urls": ["http://alive:8080/v1"],
+            },
+        )
         result = response.json()
         assert result["ok"]
+        assert result["models"] == ["qwen3.8-27b"]
+        assert [e["ok"] for e in result["endpoints"]] == [False, True]
 
-        # Verify that the api_key was passed to the OpenAI constructor
-        mock_init.assert_called_once()
-        call_kwargs = mock_init.call_args[1]
-        assert call_kwargs["api_key"] == "test-key"
-        assert call_kwargs["base_url"] == "http://localhost:11434/v1"
+
+def _models_ok(*model_ids: str) -> object:
+    """Build a realistic GET /v1/models response mock."""
+    from unittest.mock import MagicMock
+
+    response = MagicMock()
+    response.ok = True
+    response.status_code = 200
+    response.raise_for_status.return_value = None
+    response.json.return_value = {
+        "object": "list",
+        "data": [{"id": mid, "object": "model"} for mid in model_ids],
+    }
+    return response
 
 
 class MockCVLLMClient(LLMClient):

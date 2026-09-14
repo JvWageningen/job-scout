@@ -23,8 +23,22 @@ def _make_client(
             evaluation_model=evaluation_model,
             screening_model=screening_model,
         )
-    client._client = mock_openai_instance
+    # The client builds one openai client per (endpoint, read timeout); short
+    # -circuit that cache so every endpoint resolves to the mock.
+    client._client_for = lambda base_url, read_timeout: mock_openai_instance  # type: ignore[method-assign]
     return client, mock_openai_instance
+
+
+def _models_response(*model_ids: str) -> MagicMock:
+    """Build a realistic GET /v1/models response mock."""
+    response = MagicMock()
+    response.ok = True
+    response.status_code = 200
+    response.json.return_value = {
+        "object": "list",
+        "data": [{"id": mid, "object": "model"} for mid in model_ids],
+    }
+    return response
 
 
 def _fake_response(
@@ -145,7 +159,20 @@ def test_timeout_override() -> None:
 
 
 def test_openai_error_raises_llm_error() -> None:
-    """complete() converts openai.OpenAIError to LLMError."""
+    """complete() converts a server-side openai.OpenAIError to LLMError."""
+    import openai
+
+    client, mock = _make_client()
+    mock.chat.completions.create.side_effect = openai.BadRequestError(
+        "unknown model", response=MagicMock(status_code=400), body=None
+    )
+
+    with pytest.raises(LLMError, match="Local LLM API error"):
+        client.complete("prompt", purpose="evaluation")
+
+
+def test_connection_error_raises_llm_error() -> None:
+    """A transport failure on the only endpoint still surfaces as LLMError."""
     import openai
 
     client, mock = _make_client()
@@ -153,7 +180,7 @@ def test_openai_error_raises_llm_error() -> None:
         request=MagicMock()
     )
 
-    with pytest.raises(LLMError, match="Local LLM API error"):
+    with pytest.raises(LLMError, match="No local LLM endpoint reachable"):
         client.complete("prompt", purpose="evaluation")
 
 
@@ -195,7 +222,7 @@ def test_check_available_success() -> None:
             evaluation_model="llama3.1",
         )
 
-    with patch("requests.get"):
+    with patch("requests.get", return_value=_models_response("llama3.1")):
         ok, err = client.check_available()
     assert ok is True
     assert err is None
@@ -215,3 +242,133 @@ def test_check_available_network_error() -> None:
         ok, err = client.check_available()
         assert ok is False
         assert "Cannot reach local LLM server" in err
+
+
+# ---------------------------------------------------------------------------
+# Multi-endpoint failover
+#
+# Regression: a single unreachable base_url used to take down every pipeline
+# stage. The model host is commonly reachable by more than one route, so the
+# client now walks a priority list.
+# ---------------------------------------------------------------------------
+
+
+def _multi_client() -> LocalLLMClient:
+    """Return a client with a primary and one fallback endpoint."""
+    with patch("openai.OpenAI"):
+        return LocalLLMClient(
+            base_url="http://primary:8080/v1",
+            evaluation_model="llama3.1",
+            fallback_base_urls=["http://fallback:8080/v1"],
+        )
+
+
+def test_complete_falls_back_when_primary_unreachable() -> None:
+    """A connection error on the primary transparently retries the fallback."""
+    import openai
+
+    client = _multi_client()
+    dead = MagicMock()
+    dead.chat.completions.create.side_effect = openai.APIConnectionError(
+        request=MagicMock()
+    )
+    alive = MagicMock()
+    alive.chat.completions.create.return_value = _fake_response('{"fit_score": 80}')
+
+    client._client_for = lambda base_url, read_timeout: (  # type: ignore[method-assign]
+        dead if "primary" in base_url else alive
+    )
+
+    assert client.complete("prompt", purpose="evaluation") == '{"fit_score": 80}'
+    # The healthy endpoint becomes the active one, so later calls start there.
+    assert client.base_url == "http://fallback:8080/v1"
+
+
+def test_complete_raises_when_every_endpoint_is_down() -> None:
+    """With no endpoint reachable the error names each one tried."""
+    import openai
+
+    client = _multi_client()
+    dead = MagicMock()
+    dead.chat.completions.create.side_effect = openai.APIConnectionError(
+        request=MagicMock()
+    )
+    client._client_for = lambda base_url, read_timeout: dead  # type: ignore[method-assign]
+
+    with pytest.raises(LLMError) as excinfo:
+        client.complete("prompt", purpose="evaluation")
+    assert "primary" in str(excinfo.value)
+    assert "fallback" in str(excinfo.value)
+
+
+def test_api_error_does_not_trigger_failover() -> None:
+    """A server that answered with an error is not retried elsewhere."""
+    import openai
+
+    client = _multi_client()
+    responder = MagicMock()
+    responder.chat.completions.create.side_effect = openai.BadRequestError(
+        "unknown model", response=MagicMock(status_code=400), body=None
+    )
+    client._client_for = lambda base_url, read_timeout: responder  # type: ignore[method-assign]
+
+    with pytest.raises(LLMError):
+        client.complete("prompt", purpose="evaluation")
+    # Only the primary was attempted.
+    assert responder.chat.completions.create.call_count == 1
+
+
+def test_check_available_prefers_first_healthy_endpoint() -> None:
+    """check_available promotes the first endpoint that answers."""
+    import requests
+
+    client = _multi_client()
+
+    def fake_get(url: str, **_: object) -> MagicMock:
+        if "primary" in url:
+            raise requests.ConnectionError("no route")
+        return _models_response("llama3.1")
+
+    with patch("requests.get", side_effect=fake_get):
+        ok, err = client.check_available()
+
+    assert ok is True
+    assert err is None
+    assert client.base_url == "http://fallback:8080/v1"
+
+
+def test_check_available_rejects_non_ok_status() -> None:
+    """A 404 on /v1/models is a failure, not a healthy server."""
+    with patch("openai.OpenAI"):
+        client = LocalLLMClient(
+            base_url="http://localhost:11434/v1", evaluation_model="llama3.1"
+        )
+
+    not_found = MagicMock()
+    not_found.ok = False
+    not_found.status_code = 404
+
+    with patch("requests.get", return_value=not_found):
+        ok, err = client.check_available()
+
+    assert ok is False
+    assert "404" in err
+
+
+def test_check_available_rejects_unexpected_payload() -> None:
+    """An HTTP 200 from an unrelated web server is not a healthy endpoint."""
+    with patch("openai.OpenAI"):
+        client = LocalLLMClient(
+            base_url="http://localhost:11434/v1", evaluation_model="llama3.1"
+        )
+
+    stray = MagicMock()
+    stray.ok = True
+    stray.status_code = 200
+    stray.json.return_value = {"hello": "world"}
+
+    with patch("requests.get", return_value=stray):
+        ok, err = client.check_available()
+
+    assert ok is False
+    assert "unexpected response shape" in err

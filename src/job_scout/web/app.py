@@ -1865,6 +1865,64 @@ def create_app() -> FastAPI:
         except Exception as exc:
             return {"ok": False, "message": str(exc)}
 
+    def _candidate_base_urls(body: dict[str, Any]) -> list[str]:
+        """Collect the endpoints a request wants probed, in priority order.
+
+        Accepts either the historical single ``base_url`` or a ``base_urls``
+        list, so older dashboards keep working.
+
+        Args:
+            body: Request body.
+
+        Returns:
+            De-duplicated, non-empty base URLs without trailing slashes.
+        """
+        raw = [body.get("base_url", "")]
+        listed = body.get("base_urls") or []
+        if isinstance(listed, list):
+            raw.extend(str(item) for item in listed)
+
+        seen: set[str] = set()
+        out: list[str] = []
+        for item in raw:
+            cleaned = str(item or "").strip().rstrip("/")
+            if cleaned and cleaned not in seen:
+                seen.add(cleaned)
+                out.append(cleaned)
+        return out
+
+    def _describe_probe_error(exc: Exception, url: str, timeout: float) -> str:
+        """Turn a probe exception into something a user can act on.
+
+        Args:
+            exc: The raised exception.
+            url: Endpoint that was probed.
+            timeout: Timeout that applied.
+
+        Returns:
+            A short, actionable description.
+        """
+        import requests  # noqa: PLC0415
+
+        host = url.split("//", 1)[-1].split("/", 1)[0]
+        if isinstance(exc, requests.Timeout):
+            return (
+                f"no answer within {timeout:g}s - {host} is unreachable "
+                "(check the VPN/network route or whether the host is asleep)"
+            )
+        if isinstance(exc, requests.ConnectionError):
+            return (
+                f"could not connect to {host} - nothing is listening there, "
+                "or a firewall is blocking it"
+            )
+        if isinstance(exc, requests.HTTPError):
+            status = getattr(exc.response, "status_code", "?")
+            return (
+                f"HTTP {status} - the server answered but not with a model "
+                "list; check that the URL ends in /v1"
+            )
+        return f"{type(exc).__name__}: {exc}"
+
     @app.post("/api/llm/detect-models")
     def detect_local_models(body: dict[str, Any]) -> dict[str, Any]:
         """Detect available models from an OpenAI-compatible local LLM server.
@@ -1873,45 +1931,75 @@ def create_app() -> FastAPI:
             body: Request body with 'base_url' (required) and optional 'api_key'.
 
         Returns:
-            Dict with 'ok' (bool), 'models' (list of model ids), 'message' (str).
+            Dict with 'ok' (bool), 'models' (list of model ids), 'message' (str)
+            and 'endpoints' (per-URL detail: url, ok, models, elapsed_ms, error).
         """
-        base_url = body.get("base_url", "").strip()
+        import time  # noqa: PLC0415
 
-        if not base_url:
-            return {"ok": False, "models": [], "message": "base_url is required"}
+        from job_scout.llm.local import list_models  # noqa: PLC0415
 
-        try:
-            import openai
+        candidates = _candidate_base_urls(body)
+        if not candidates:
+            return {
+                "ok": False,
+                "models": [],
+                "endpoints": [],
+                "message": "base_url is required",
+            }
 
-            api_key = body.get("api_key", "").strip() or "not-needed"
+        api_key = body.get("api_key", "").strip() or None
+        timeout = float(body.get("timeout", 10.0))
 
-            client = openai.OpenAI(api_key=api_key, base_url=base_url, max_retries=0)
-            models_response = client.models.list()
+        found: list[str] = []
+        endpoints: list[dict[str, Any]] = []
+        for url in candidates:
+            started = time.monotonic()
+            try:
+                ids = list_models(url, api_key, timeout=timeout)
+            except Exception as exc:  # noqa: BLE001 - reported per endpoint
+                endpoints.append(
+                    {
+                        "url": url,
+                        "ok": False,
+                        "models": [],
+                        "elapsed_ms": round((time.monotonic() - started) * 1000),
+                        "error": _describe_probe_error(exc, url, timeout),
+                    }
+                )
+                continue
 
-            model_ids = [model.id for model in models_response.data]
+            endpoints.append(
+                {
+                    "url": url,
+                    "ok": True,
+                    "models": ids,
+                    "elapsed_ms": round((time.monotonic() - started) * 1000),
+                    "error": None,
+                }
+            )
+            for model_id in ids:
+                if model_id not in found:
+                    found.append(model_id)
+
+        if found:
+            reachable = [e["url"] for e in endpoints if e["ok"]]
             return {
                 "ok": True,
-                "models": model_ids,
-                "message": f"Found {len(model_ids)} model(s)",
+                "models": found,
+                "endpoints": endpoints,
+                "message": (
+                    f"Found {len(found)} model(s) on {len(reachable)} of "
+                    f"{len(candidates)} endpoint(s)"
+                ),
             }
-        except openai.APIConnectionError as e:
-            return {
-                "ok": False,
-                "models": [],
-                "message": f"Connection failed: {str(e)}",
-            }
-        except openai.AuthenticationError as e:
-            return {
-                "ok": False,
-                "models": [],
-                "message": f"Authentication error: {str(e)}",
-            }
-        except Exception as exc:
-            return {
-                "ok": False,
-                "models": [],
-                "message": f"Error: {str(exc)}",
-            }
+
+        detail = "; ".join(f"{e['url']} - {e['error']}" for e in endpoints)
+        return {
+            "ok": False,
+            "models": [],
+            "endpoints": endpoints,
+            "message": f"No endpoint answered. {detail}",
+        }
 
     @app.post("/api/notification/test-channel")
     def test_notification_channel(body: dict[str, Any]) -> dict[str, Any]:

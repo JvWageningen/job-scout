@@ -251,6 +251,17 @@ class Config(BaseModel):
     kilo_quick_eval_model: str = "zai/glm-4.5-air"
     zai_quick_eval_model: str = "glm-4.5-air"
     local_base_url: str = "http://localhost:11434/v1"
+    # Endpoints tried, in order, when local_base_url is unreachable. The model
+    # host is often reachable by more than one route (a LAN address and a
+    # VPN/tailnet address); when one route dies the whole pipeline used to die
+    # with it. Empty by default, so a single-endpoint setup is unchanged.
+    local_fallback_base_urls: list[str] = Field(default_factory=list)
+    # Split out from the request timeouts below: establishing a TCP connection
+    # should fail fast, while generating a completion legitimately takes minutes.
+    # openai-python's default connect timeout is 5s, which is too tight for a
+    # VPN link that has to wake a peer.
+    local_connect_timeout: float = 15.0
+    local_probe_timeout: float = 10.0
     local_api_key: str | None = None
     local_model: str = "llama3.1"
     local_screening_model: str | None = None
@@ -269,6 +280,11 @@ class Config(BaseModel):
     max_parallel_evaluations: int = 5
     jobspy_keyword_limit: int = Field(default=5, ge=1, le=20)
     nvb_keyword_limit: int = Field(default=3, ge=1, le=20)
+    # LinkedIn search results carry no description, so every LinkedIn job would
+    # otherwise be judged on its title alone. Fetching it costs one extra
+    # request per job, which is slower and more visible to LinkedIn's rate
+    # limiting -- but title-only evaluation is where the LLM guesses worst.
+    linkedin_fetch_description: bool = True
     jobspy_sites: list[str] = Field(
         default_factory=lambda: ["indeed", "linkedin"],
         description="Job sources to scrape via jobspy",
