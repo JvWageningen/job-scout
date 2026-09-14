@@ -23,19 +23,31 @@ if TYPE_CHECKING:
 def _interleave_languages(dutch: list[str], english: list[str]) -> list[str]:
     """Alternate Dutch and English keywords so a truncated prefix covers both.
 
+    Duplicates are dropped, compared case-insensitively and ignoring
+    surrounding whitespace. A term that is spelled the same in both languages
+    is common -- "CRO specialist" sat in both of one user's lists -- and
+    searching it twice spent one of only five search slots on a query that had
+    already been run, costing real coverage rather than merely being untidy.
+
     Args:
         dutch: Dutch search keywords.
         english: English search keywords.
 
     Returns:
-        Interleaved keywords, Dutch first.
+        Interleaved keywords, Dutch first, without duplicates.
     """
     out: list[str] = []
+    seen: set[str] = set()
     for index in range(max(len(dutch), len(english))):
-        if index < len(dutch):
-            out.append(dutch[index])
-        if index < len(english):
-            out.append(english[index])
+        for source in (dutch, english):
+            if index >= len(source):
+                continue
+            keyword = source[index].strip()
+            fingerprint = keyword.casefold()
+            if not keyword or fingerprint in seen:
+                continue
+            seen.add(fingerprint)
+            out.append(keyword)
     return out
 
 

@@ -10,6 +10,7 @@ import pytest
 from job_scout.models import JobListing
 from job_scout.scraper import (
     _deduplicate,
+    _interleave_languages,
     _normalize_date,
     _parse_nvb_job,
     _scrape_nvb,
@@ -395,3 +396,37 @@ def test_scrape_jobspy_uses_default_sites(monkeypatch: pytest.MonkeyPatch) -> No
 
     # Verify that site_name was set to defaults
     assert captured_call.get("site_name") == ["indeed", "linkedin"]
+
+
+class TestInterleaveLanguages:
+    """Tests for building the search keyword order."""
+
+    def test_alternates_so_a_truncated_prefix_covers_both(self) -> None:
+        """Both languages appear within the first few keywords."""
+        out = _interleave_languages(["nl1", "nl2", "nl3"], ["en1", "en2", "en3"])
+        assert out == ["nl1", "en1", "nl2", "en2", "nl3", "en3"]
+
+    def test_keeps_the_longer_list_tail(self) -> None:
+        """Leftover keywords from the longer list are not lost."""
+        out = _interleave_languages(["nl1"], ["en1", "en2", "en3"])
+        assert out == ["nl1", "en1", "en2", "en3"]
+
+    def test_drops_terms_spelled_the_same_in_both_languages(self) -> None:
+        """A shared term is searched once, not twice."""
+        out = _interleave_languages(
+            ["CRO specialist", "webanalist"], ["CRO specialist", "web analyst"]
+        )
+        assert out == ["CRO specialist", "webanalist", "web analyst"]
+
+    def test_deduplicates_ignoring_case_and_padding(self) -> None:
+        """Casing and stray whitespace do not disguise a duplicate."""
+        out = _interleave_languages(["CRO Specialist"], ["  cro specialist "])
+        assert out == ["CRO Specialist"]
+
+    def test_drops_blank_keywords(self) -> None:
+        """Empty entries never become a search query."""
+        assert _interleave_languages(["", "   "], ["en1"]) == ["en1"]
+
+    def test_empty_input_gives_empty_output(self) -> None:
+        """No keywords configured yields nothing to search."""
+        assert _interleave_languages([], []) == []
