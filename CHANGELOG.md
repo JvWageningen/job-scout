@@ -4,6 +4,19 @@ Format: [Keep a Changelog](https://keepachangelog.com)
 
 <!-- version list -->
 
+## v1.17.0 (2026-09-15)
+
+### Chores
+
+- Sync uv.lock to 1.16.6 [skip ci]
+  ([`d9f0359`](https://github.com/JvWageningen/job-scout/commit/d9f03590b99b89ec765c6af8ee45515df3e8616f))
+
+### Features
+
+- **history**: Record how many jobs the commute filter dropped
+  ([`8dda224`](https://github.com/JvWageningen/job-scout/commit/8dda2247f0dfe508ea200a0924e94129a1ea887b))
+
+
 ## v1.16.6 (2026-09-15)
 
 ### Bug Fixes
