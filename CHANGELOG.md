@@ -4,6 +4,19 @@ Format: [Keep a Changelog](https://keepachangelog.com)
 
 <!-- version list -->
 
+## v1.17.1 (2026-09-15)
+
+### Bug Fixes
+
+- **llm**: Never read a cut-off answer as the model's verdict
+  ([`f105a14`](https://github.com/JvWageningen/job-scout/commit/f105a14f0c0d6c3b62ef718402aa2f0af40a9719))
+
+### Chores
+
+- Sync uv.lock to 1.17.0 [skip ci]
+  ([`a48902e`](https://github.com/JvWageningen/job-scout/commit/a48902e4e580ba68de565ac8d8abd037fd6c82ca))
+
+
 ## v1.17.0 (2026-09-15)
 
 ### Chores
