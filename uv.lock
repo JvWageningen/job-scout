@@ -579,7 +579,7 @@ wheels = [
 
 [[package]]
 name = "job-scout"
-version = "1.16.6"
+version = "1.17.0"
 source = { editable = "." }
 dependencies = [
     { name = "beautifulsoup4" },
