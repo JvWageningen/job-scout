@@ -4,6 +4,19 @@ Format: [Keep a Changelog](https://keepachangelog.com)
 
 <!-- version list -->
 
+## v1.17.3 (2026-09-15)
+
+### Bug Fixes
+
+- **progress**: Count the stage that is still running in the breakdown
+  ([`31b4358`](https://github.com/JvWageningen/job-scout/commit/31b43580b974aafffd2779e9cc0fa64d514d3073))
+
+### Chores
+
+- Sync uv.lock to 1.17.2 [skip ci]
+  ([`f5a8e02`](https://github.com/JvWageningen/job-scout/commit/f5a8e02361649211556b98313d37f7cf2090183c))
+
+
 ## v1.17.2 (2026-09-15)
 
 ### Bug Fixes
