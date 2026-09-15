@@ -1058,3 +1058,65 @@ def test_get_person_search_respects_max_age(tmp_db: Database) -> None:
         )
     assert tmp_db.get_person_search("Jane Doe", max_age_days=14) is None
     assert tmp_db.get_person_search("Jane Doe", max_age_days=60) is not None
+
+
+class TestCommuteFilteredStat:
+    """Tests for recording how many jobs the commute filter dropped."""
+
+    def test_the_count_survives_a_round_trip(self, tmp_path) -> None:  # noqa: ANN001
+        """A stage that drops half the candidates should be visible in history."""
+        from datetime import datetime
+
+        from job_scout.models import RunStats
+
+        db = Database(tmp_path / "jobs.db")
+        db.save_run_stats(
+            RunStats(scraped=468, title_screened=325, commute_filtered=68, matched=3),
+            datetime(2026, 9, 15, 9, 33),
+            410.0,
+        )
+
+        entry = db.get_run_history(limit=1)[0]
+        assert entry.commute_filtered == 68
+        assert entry.title_screened == 325
+        assert entry.matched == 3
+
+    def test_a_database_from_before_the_column_still_opens(self, tmp_path) -> None:  # noqa: ANN001
+        """Existing installs must not need their history wiped."""
+        import sqlite3
+
+        path = tmp_path / "old.db"
+        conn = sqlite3.connect(path)
+        conn.execute(
+            """
+            CREATE TABLE runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                started_at TEXT NOT NULL,
+                duration_seconds REAL NOT NULL,
+                scraped INTEGER DEFAULT 0,
+                deduplicated INTEGER DEFAULT 0,
+                title_filtered INTEGER DEFAULT 0,
+                title_screened INTEGER DEFAULT 0,
+                quick_filtered INTEGER DEFAULT 0,
+                evaluated INTEGER DEFAULT 0,
+                matched INTEGER DEFAULT 0,
+                rejected INTEGER DEFAULT 0,
+                notified INTEGER DEFAULT 0,
+                errors INTEGER DEFAULT 0
+            )
+            """
+        )
+        conn.execute(
+            "INSERT INTO runs (started_at, duration_seconds, scraped, matched) "
+            "VALUES ('2026-09-08T17:00:00', 905.0, 320, 3)"
+        )
+        conn.commit()
+        conn.close()
+
+        db = Database(path)
+        entry = db.get_run_history(limit=1)[0]
+
+        # The old row has no commute stage to report, and says so rather than
+        # failing to load.
+        assert entry.commute_filtered == 0
+        assert entry.scraped == 320

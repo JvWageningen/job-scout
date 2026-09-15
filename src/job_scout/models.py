@@ -461,6 +461,7 @@ class RunHistoryEntry(BaseModel):
     deduplicated: int
     title_filtered: int
     title_screened: int
+    commute_filtered: int = 0
     quick_filtered: int
     evaluated: int
     matched: int

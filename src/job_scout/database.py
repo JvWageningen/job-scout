@@ -175,6 +175,7 @@ class Database:
                     deduplicated INTEGER DEFAULT 0,
                     title_filtered INTEGER DEFAULT 0,
                     title_screened INTEGER DEFAULT 0,
+                    commute_filtered INTEGER DEFAULT 0,
                     quick_filtered INTEGER DEFAULT 0,
                     evaluated INTEGER DEFAULT 0,
                     matched INTEGER DEFAULT 0,
@@ -183,6 +184,10 @@ class Database:
                     errors INTEGER DEFAULT 0
                 )
             """)
+            with contextlib.suppress(sqlite3.OperationalError):
+                conn.execute(
+                    "ALTER TABLE runs ADD COLUMN commute_filtered INTEGER DEFAULT 0"
+                )
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_started_at ON runs(started_at DESC)"
             )
@@ -883,9 +888,10 @@ class Database:
                 """
                 INSERT INTO runs
                   (started_at, duration_seconds, scraped, deduplicated,
-                   title_filtered, title_screened, quick_filtered, evaluated,
-                   matched, rejected, notified, errors)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   title_filtered, title_screened, commute_filtered,
+                   quick_filtered, evaluated, matched, rejected, notified,
+                   errors)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     started_at.isoformat(),
@@ -894,6 +900,7 @@ class Database:
                     stats.deduplicated,
                     stats.title_filtered,
                     stats.title_screened,
+                    stats.commute_filtered,
                     stats.quick_filtered,
                     stats.evaluated,
                     stats.matched,
@@ -916,7 +923,8 @@ class Database:
             rows = conn.execute(
                 """
                 SELECT started_at, duration_seconds, scraped, deduplicated,
-                       title_filtered, title_screened, quick_filtered, evaluated,
+                       title_filtered, title_screened,
+                       COALESCE(commute_filtered, 0), quick_filtered, evaluated,
                        matched, rejected, notified, errors
                 FROM runs
                 ORDER BY started_at DESC
@@ -934,12 +942,13 @@ class Database:
                     deduplicated=row[3],
                     title_filtered=row[4],
                     title_screened=row[5],
-                    quick_filtered=row[6],
-                    evaluated=row[7],
-                    matched=row[8],
-                    rejected=row[9],
-                    notified=row[10],
-                    errors=row[11],
+                    commute_filtered=row[6],
+                    quick_filtered=row[7],
+                    evaluated=row[8],
+                    matched=row[9],
+                    rejected=row[10],
+                    notified=row[11],
+                    errors=row[12],
                 )
             )
         return entries
