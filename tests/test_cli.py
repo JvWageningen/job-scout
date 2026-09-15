@@ -975,8 +975,15 @@ class TestStoppingMidEvaluation:
                 pytest.raises(progress.RunStoppedError),
             ):
                 _evaluate_survivors(
-                    jobs, Config(name="test"), "", db, MagicMock(),
-                    RunStats(), [], [], 2,
+                    jobs,
+                    Config(name="test"),
+                    "",
+                    db,
+                    MagicMock(),
+                    RunStats(),
+                    [],
+                    [],
+                    2,
                 )
         finally:
             progress.end_run("stopper")
