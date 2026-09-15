@@ -67,7 +67,7 @@ class LocalLLMClient:
         connect_timeout: float = 15.0,
         probe_timeout: float = 10.0,
         reasoning_purposes: Sequence[str] | None = None,
-        max_tokens_reasoning: int = 3000,
+        max_tokens_reasoning: int = 8000,
         max_tokens_direct: int = 1200,
     ) -> None:
         """Initialise the local LLM client.
@@ -358,6 +358,10 @@ def _content_of(response: Any, model: str) -> str:
 
     Returns:
         The stripped message content.
+
+    Raises:
+        LLMError: If the model was cut off by the token ceiling before it
+            finished, so the answer is incomplete rather than wrong.
     """
     usage = getattr(response, "usage", None)
     if usage:
@@ -367,7 +371,17 @@ def _content_of(response: Any, model: str) -> str:
             usage.completion_tokens,
             model,
         )
-    content = response.choices[0].message.content
+    choice = response.choices[0]
+    if getattr(choice, "finish_reason", None) == "length":
+        # A cut-off answer is not an answer. Left to itself it arrives as
+        # unparseable JSON, and the caller reads that as the model having
+        # judged the job and scored it zero -- a verdict that then gets cached,
+        # rejecting the job for good because it was too long-winded.
+        raise LLMError(
+            f"{model} hit the token ceiling before finishing its answer "
+            f"(completion_tokens={getattr(usage, 'completion_tokens', '?')})"
+        )
+    content = choice.message.content
     return (content or "").strip()
 
 

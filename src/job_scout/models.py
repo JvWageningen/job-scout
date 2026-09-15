@@ -292,7 +292,7 @@ class Config(BaseModel):
     )
     # A hard ceiling per call. Without one, nothing stops a model from filling
     # the whole context window on a single job and blocking the queue.
-    local_max_tokens_reasoning: int = Field(default=3000, ge=256)
+    local_max_tokens_reasoning: int = Field(default=8000, ge=256)
     local_max_tokens_direct: int = Field(default=1200, ge=64)
     quick_eval_threshold: int = 40
     quick_eval_provider: Literal["claude_cli", "zai", "kilo_cli", "local"] | None = None

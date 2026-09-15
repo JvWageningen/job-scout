@@ -383,7 +383,7 @@ class TestReasoningPerPurpose:
             return LocalLLMClient(
                 base_url="http://local:8080/v1",
                 evaluation_model="qwen",
-                max_tokens_reasoning=3000,
+                max_tokens_reasoning=8000,
                 max_tokens_direct=1200,
             )
 
@@ -424,7 +424,35 @@ class TestReasoningPerPurpose:
 
         body = responder.chat.completions.create.call_args.kwargs["extra_body"]
         assert "chat_template_kwargs" not in body
-        assert body["max_tokens"] == 3000
+        assert body["max_tokens"] == 8000
+
+    def test_a_cut_off_answer_is_an_error_not_a_verdict(self) -> None:
+        """Truncation must not be read as the model scoring the job zero.
+
+        An incomplete answer parses as bad JSON, which the evaluator treats as
+        a real verdict of zero and caches -- rejecting a job for good because
+        the model was long-winded about it.
+        """
+        client = self._client()
+        response = _fake_response('{"fit_score": 8')
+        response.choices[0].finish_reason = "length"
+        responder = MagicMock()
+        responder.chat.completions.create.return_value = response
+        client._client_for = lambda base_url, read_timeout: responder  # type: ignore[method-assign]
+
+        with pytest.raises(LLMError, match="token ceiling"):
+            client.complete("prompt", purpose="evaluation")
+
+    def test_a_complete_answer_is_returned_normally(self) -> None:
+        """The usual path is untouched by the truncation check."""
+        client = self._client()
+        response = _fake_response('{"fit_score": 80}')
+        response.choices[0].finish_reason = "stop"
+        responder = MagicMock()
+        responder.chat.completions.create.return_value = response
+        client._client_for = lambda base_url, read_timeout: responder  # type: ignore[method-assign]
+
+        assert client.complete("prompt", purpose="evaluation") == '{"fit_score": 80}'
 
     def test_every_call_has_a_token_ceiling(self) -> None:
         """No call may run unbounded and block the queue."""
