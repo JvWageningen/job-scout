@@ -409,10 +409,25 @@ def _filter_by_commute(
         logger.info(
             f"Out of commuting range: {len(unreachable)} job(s) - not evaluated"
         )
-        # Saved rather than dropped, so they are recognised as already seen on
-        # the next run instead of being scraped and re-checked every time.
-        if not dry_run:
-            db.save_jobs_batch(unreachable, update_existing=full)
+        # Only a settled answer is worth recording. A job whose location we
+        # failed to resolve might geocode fine next time -- the geocoder is
+        # rate-limited and gives up after a few attempts -- and saving it now
+        # would mark it seen and quietly retire it on a transient failure.
+        # A listing with no location at all is a settled answer: re-asking
+        # cannot produce one.
+        settled = [
+            job
+            for job in unreachable
+            if not job.location_unknown or not (job.location or "").strip()
+        ]
+        retryable = len(unreachable) - len(settled)
+        if retryable:
+            logger.info(
+                f"{retryable} job(s) rejected on an unresolved location - "
+                f"left unsaved so the next run can try again"
+            )
+        if not dry_run and settled:
+            db.save_jobs_batch(settled, update_existing=full)
     return kept
 
 

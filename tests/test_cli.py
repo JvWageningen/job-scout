@@ -834,6 +834,43 @@ class TestCommutePreFilter:
 
         assert db.is_duplicate(far) is False
 
+    def test_a_failed_lookup_is_retried_next_run(self, tmp_path) -> None:  # noqa: ANN001
+        """A rate-limited geocode must not quietly retire a job for good."""
+        from job_scout.database import Database
+        from job_scout.models import RunStats
+
+        job = self._job("Unresolved", "Somewhere the geocoder choked on")
+        db = Database(tmp_path / "jobs.db")
+
+        def fake_travel(listing, config, database=None):  # noqa: ANN001, ANN202
+            listing.location_unknown = True
+            listing.distance_km = None
+            listing.travel_times = []
+            return listing
+
+        with patch("job_scout.cli._calculate_travel_for_job", side_effect=fake_travel):
+            kept = _filter_by_commute([job], self._config(), db, False, RunStats())
+
+        assert kept == []
+        assert db.is_duplicate(job) is False
+
+    def test_a_listing_with_no_location_is_settled(self, tmp_path) -> None:  # noqa: ANN001
+        """Re-asking cannot invent a location, so that answer is recorded."""
+        from job_scout.database import Database
+        from job_scout.models import RunStats
+
+        job = self._job("Nowhere", "")
+        db = Database(tmp_path / "jobs.db")
+
+        def fake_travel(listing, config, database=None):  # noqa: ANN001, ANN202
+            listing.location_unknown = True
+            return listing
+
+        with patch("job_scout.cli._calculate_travel_for_job", side_effect=fake_travel):
+            _filter_by_commute([job], self._config(), db, False, RunStats())
+
+        assert db.is_duplicate(job) is True
+
     def test_no_jobs_is_not_an_error(self, tmp_path) -> None:  # noqa: ANN001
         """An empty candidate list short-circuits."""
         from job_scout.database import Database
