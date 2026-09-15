@@ -4,6 +4,24 @@ Format: [Keep a Changelog](https://keepachangelog.com)
 
 <!-- version list -->
 
+## v1.17.2 (2026-09-15)
+
+### Bug Fixes
+
+- **pipeline**: Make stopping actually stop, instead of draining the queue
+  ([`b111f56`](https://github.com/JvWageningen/job-scout/commit/b111f5636ee15c0f34b408e172b83a896ad6dc00))
+
+### Chores
+
+- Sync uv.lock to 1.17.1 [skip ci]
+  ([`dae48ba`](https://github.com/JvWageningen/job-scout/commit/dae48ba19f9d901025af32e50e4bba635032e231))
+
+### Code Style
+
+- Format test_cli after the stop-cancellation test
+  ([`2b63e3b`](https://github.com/JvWageningen/job-scout/commit/2b63e3bccd145bdf7b8a3232dcaaad399100dd7f))
+
+
 ## v1.17.1 (2026-09-15)
 
 ### Bug Fixes
