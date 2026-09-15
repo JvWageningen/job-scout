@@ -110,8 +110,25 @@ class RunProgress:
                 (datetime.now(UTC) - self.started_at).total_seconds()
             ),
             "stop_requested": self.stop_requested,
-            "stage_seconds": {k: round(v, 1) for k, v in self.stage_seconds.items()},
+            "stage_seconds": self.stage_totals(),
         }
+
+    def stage_totals(self) -> dict[str, float]:
+        """Return seconds per stage, counting the one still running.
+
+        Banking time only when a stage ends would leave the current stage --
+        usually the slowest one -- missing from the breakdown for as long as it
+        runs, so the totals understate the run exactly while someone is
+        watching it.
+
+        Returns:
+            Mapping of stage key to seconds spent.
+        """
+        totals = dict(self.stage_seconds)
+        if self.stage:
+            elapsed = (datetime.now(UTC) - self.stage_started_at).total_seconds()
+            totals[self.stage] = totals.get(self.stage, 0.0) + elapsed
+        return {k: round(v, 1) for k, v in totals.items()}
 
 
 _runs: dict[str | None, RunProgress] = {}
@@ -256,10 +273,4 @@ def stage_seconds(user: str | None) -> dict[str, float]:
     """
     with _lock:
         progress = _runs.get(user)
-        if progress is None:
-            return {}
-        totals = dict(progress.stage_seconds)
-        if progress.stage:
-            elapsed = (datetime.now(UTC) - progress.stage_started_at).total_seconds()
-            totals[progress.stage] = totals.get(progress.stage, 0.0) + elapsed
-        return {k: round(v, 1) for k, v in totals.items()}
+        return progress.stage_totals() if progress else {}

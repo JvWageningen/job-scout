@@ -250,6 +250,21 @@ class TestStageTimings:
         finally:
             progress.end_run("alice")
 
+    def test_the_status_payload_counts_the_running_stage(self) -> None:
+        """The stage in progress is usually the slow one; it must be shown.
+
+        Banking time only at a stage boundary left the current stage out of
+        the breakdown for as long as it ran, so the totals understated the run
+        exactly while someone was watching it.
+        """
+        progress.begin_run("alice")
+        try:
+            progress.set_stage("evaluating", 40)
+            payload = progress.get("alice")
+            assert "evaluating" in payload["stage_seconds"]
+        finally:
+            progress.end_run("alice")
+
     def test_no_run_reports_no_timings(self) -> None:
         """A user with no active run has nothing to report."""
         assert progress.stage_seconds("nobody") == {}
