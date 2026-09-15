@@ -2,11 +2,18 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
 from job_scout.llm.base import CallPurpose, LLMError
+
+# Purposes where the model's reasoning earns its cost: the answer is a
+# judgement, not a sieve. Kept in sync with Config.local_reasoning_purposes.
+DEFAULT_REASONING: frozenset[str] = frozenset(
+    {"evaluation", "cv_parsing", "resume_tailoring", "cover_letter"}
+)
 
 if TYPE_CHECKING:
     import openai
@@ -59,6 +66,9 @@ class LocalLLMClient:
         fallback_base_urls: list[str] | None = None,
         connect_timeout: float = 15.0,
         probe_timeout: float = 10.0,
+        reasoning_purposes: Sequence[str] | None = None,
+        max_tokens_reasoning: int = 3000,
+        max_tokens_direct: int = 1200,
     ) -> None:
         """Initialise the local LLM client.
 
@@ -79,6 +89,10 @@ class LocalLLMClient:
                 primary is unreachable.
             connect_timeout: Seconds allowed to establish a TCP connection.
             probe_timeout: Seconds allowed for a health probe.
+            reasoning_purposes: Call purposes that keep the model's reasoning
+                enabled. Every other purpose asks the model to answer directly.
+            max_tokens_reasoning: Output ceiling for a reasoning call.
+            max_tokens_direct: Output ceiling for a direct call.
         """
         self._base_urls = _dedupe_urls([base_url, *(fallback_base_urls or [])])
         self._api_key = api_key or "not-needed"
@@ -90,8 +104,17 @@ class LocalLLMClient:
         self._screening_timeout = screening_timeout
         self._connect_timeout = connect_timeout
         self._probe_timeout = probe_timeout
+        self._reasoning_purposes = frozenset(
+            reasoning_purposes if reasoning_purposes is not None else DEFAULT_REASONING
+        )
+        self._max_tokens_reasoning = max_tokens_reasoning
+        self._max_tokens_direct = max_tokens_direct
         self._active_index = 0
         self._clients: dict[str, Any] = {}
+        # Set once a server rejects the thinking switch, so we stop sending it
+        # instead of failing every later call on a model whose chat template
+        # does not know the option.
+        self._thinking_switch_unsupported = False
 
     @property
     def base_url(self) -> str:
@@ -162,7 +185,9 @@ class LocalLLMClient:
             index = (self._active_index + offset) % len(self._base_urls)
             base_url = self._base_urls[index]
             try:
-                response = self._clients_complete(base_url, read_timeout, model, prompt)
+                response = self._call_with_thinking_fallback(
+                    base_url, read_timeout, model, prompt, purpose
+                )
             except openai.APIConnectionError as exc:
                 # Covers APITimeoutError, which subclasses it.
                 failures.append(f"{base_url}: {type(exc).__name__}: {exc}")
@@ -182,8 +207,62 @@ class LocalLLMClient:
 
         raise LLMError("No local LLM endpoint reachable - " + "; ".join(failures))
 
+    def _call_with_thinking_fallback(
+        self,
+        base_url: str,
+        read_timeout: float,
+        model: str,
+        prompt: str,
+        purpose: CallPurpose,
+    ) -> Any:
+        """Issue one call, retrying once without the thinking switch.
+
+        Not every chat template understands ``enable_thinking``. A server that
+        rejects it fails the request outright, which would otherwise take down
+        every screening and quick-scoring call on that model. The first refusal
+        disables the switch for the rest of the run.
+
+        Args:
+            base_url: Endpoint to call.
+            read_timeout: Read timeout in seconds.
+            model: Model id to request.
+            prompt: The user prompt.
+            purpose: The call purpose.
+
+        Returns:
+            The raw chat completion response.
+        """
+        import openai  # noqa: PLC0415
+
+        sent_switch = (
+            purpose not in self._reasoning_purposes
+            and not self._thinking_switch_unsupported
+        )
+        try:
+            return self._clients_complete(
+                base_url, read_timeout, model, prompt, purpose
+            )
+        except openai.BadRequestError:
+            if not sent_switch:
+                # Nothing to back off from, so this is a real rejection.
+                raise
+            logger.warning(
+                "Model {} rejected the thinking switch; "
+                "continuing with reasoning left on",
+                model,
+            )
+            self._thinking_switch_unsupported = True
+            return self._clients_complete(
+                base_url, read_timeout, model, prompt, purpose
+            )
+
     def _clients_complete(
-        self, base_url: str, read_timeout: float, model: str, prompt: str
+        self,
+        base_url: str,
+        read_timeout: float,
+        model: str,
+        prompt: str,
+        purpose: CallPurpose,
     ) -> Any:
         """Issue one chat completion against a specific endpoint.
 
@@ -192,10 +271,23 @@ class LocalLLMClient:
             read_timeout: Read timeout in seconds.
             model: Model id to request.
             prompt: The user prompt.
+            purpose: Decides whether reasoning stays on and which token cap applies.
 
         Returns:
             The raw chat completion response.
         """
+        reasoning = purpose in self._reasoning_purposes
+        extra: dict[str, Any] = {
+            "max_tokens": (
+                self._max_tokens_reasoning if reasoning else self._max_tokens_direct
+            )
+        }
+        if not reasoning and not self._thinking_switch_unsupported:
+            # How Qwen-family chat templates are told to skip the thinking
+            # block. Harmless on templates that ignore it; the one that objects
+            # is handled by the caller, which retries without it.
+            extra["chat_template_kwargs"] = {"enable_thinking": False}
+
         return self._client_for(base_url, read_timeout).chat.completions.create(
             model=model,
             messages=[
@@ -210,6 +302,7 @@ class LocalLLMClient:
                 {"role": "user", "content": prompt},
             ],
             timeout=read_timeout,
+            extra_body=extra,
         )
 
     def _route(self, purpose: CallPurpose) -> tuple[str, float]:

@@ -2194,6 +2194,40 @@ def create_app() -> FastAPI:
             "message": f"Pipeline run started for user '{user or 'global'}'",
         }
 
+    @app.post("/api/run/stop")
+    def stop_run(body: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Ask a running pipeline to stop at its next checkpoint.
+
+        The run is asked to stop rather than killed, so whatever it has
+        already finished is saved. Those jobs are recognised as seen on the
+        next run, so starting again continues from roughly where this left
+        off instead of redoing the work.
+
+        Args:
+            body: Request body with an optional 'user'.
+
+        Returns:
+            Dictionary with 'status' and a message.
+
+        Raises:
+            HTTPException: If the user does not exist.
+        """
+        user = (body or {}).get("user")
+        if user and user not in list_users():
+            raise HTTPException(status_code=404, detail=f"User '{user}' not found")
+
+        if not progress.request_stop(user):
+            return {
+                "status": "idle",
+                "message": f"No run in progress for user '{user or 'global'}'",
+            }
+        return {
+            "status": "stopping",
+            "message": (
+                f"Run for '{user or 'global'}' will stop after the current job"
+            ),
+        }
+
     @app.get("/api/run/status")
     def get_run_status(user: str | None = None) -> dict[str, Any]:
         """Get the status of the current or last pipeline run for a user.

@@ -372,3 +372,111 @@ def test_check_available_rejects_unexpected_payload() -> None:
 
     assert ok is False
     assert "unexpected response shape" in err
+
+
+class TestReasoningPerPurpose:
+    """Tests for enabling reasoning only where it earns its cost."""
+
+    def _client(self) -> LocalLLMClient:
+        """Return a client with the default reasoning purposes."""
+        with patch("openai.OpenAI"):
+            return LocalLLMClient(
+                base_url="http://local:8080/v1",
+                evaluation_model="qwen",
+                max_tokens_reasoning=3000,
+                max_tokens_direct=1200,
+            )
+
+    def _capture(self, client: LocalLLMClient) -> MagicMock:
+        """Point the client at a responder that records the request."""
+        responder = MagicMock()
+        responder.chat.completions.create.return_value = _fake_response('{"ok": 1}')
+        client._client_for = lambda base_url, read_timeout: responder  # type: ignore[method-assign]
+        return responder
+
+    def test_screening_asks_the_model_not_to_think(self) -> None:
+        """A sieve stage should not pay for a reasoning block."""
+        client = self._client()
+        responder = self._capture(client)
+
+        client.complete("prompt", purpose="screening")
+
+        body = responder.chat.completions.create.call_args.kwargs["extra_body"]
+        assert body["chat_template_kwargs"] == {"enable_thinking": False}
+        assert body["max_tokens"] == 1200
+
+    def test_quick_eval_asks_the_model_not_to_think(self) -> None:
+        """Quick scoring is a gate, not a judgement."""
+        client = self._client()
+        responder = self._capture(client)
+
+        client.complete("prompt", purpose="quick_eval")
+
+        body = responder.chat.completions.create.call_args.kwargs["extra_body"]
+        assert body["chat_template_kwargs"] == {"enable_thinking": False}
+
+    def test_full_evaluation_keeps_reasoning(self) -> None:
+        """The scoring call keeps reasoning: turning it off moved the scores."""
+        client = self._client()
+        responder = self._capture(client)
+
+        client.complete("prompt", purpose="evaluation")
+
+        body = responder.chat.completions.create.call_args.kwargs["extra_body"]
+        assert "chat_template_kwargs" not in body
+        assert body["max_tokens"] == 3000
+
+    def test_every_call_has_a_token_ceiling(self) -> None:
+        """No call may run unbounded and block the queue."""
+        client = self._client()
+        responder = self._capture(client)
+
+        for purpose in ("evaluation", "screening", "quick_eval", "keywords"):
+            client.complete("prompt", purpose=purpose)  # type: ignore[arg-type]
+            body = responder.chat.completions.create.call_args.kwargs["extra_body"]
+            assert body["max_tokens"] > 0
+
+    def test_reasoning_purposes_are_configurable(self) -> None:
+        """A caller can decide which purposes think."""
+        with patch("openai.OpenAI"):
+            client = LocalLLMClient(
+                base_url="http://local:8080/v1",
+                evaluation_model="qwen",
+                reasoning_purposes=["screening"],
+            )
+        responder = self._capture(client)
+
+        client.complete("prompt", purpose="screening")
+        assert (
+            "chat_template_kwargs"
+            not in responder.chat.completions.create.call_args.kwargs["extra_body"]
+        )
+
+        client.complete("prompt", purpose="evaluation")
+        assert responder.chat.completions.create.call_args.kwargs["extra_body"][
+            "chat_template_kwargs"
+        ] == {"enable_thinking": False}
+
+    def test_a_model_that_rejects_the_switch_still_works(self) -> None:
+        """A template that does not know the option must not break the run."""
+        import openai
+
+        client = self._client()
+        responder = MagicMock()
+        responder.chat.completions.create.side_effect = [
+            openai.BadRequestError(
+                "unknown template kwarg", response=MagicMock(status_code=400), body=None
+            ),
+            _fake_response('{"ok": 1}'),
+        ]
+        client._client_for = lambda base_url, read_timeout: responder  # type: ignore[method-assign]
+
+        assert client.complete("prompt", purpose="screening") == '{"ok": 1}'
+        assert responder.chat.completions.create.call_count == 2
+
+        # The switch is not sent again once it is known to be unsupported.
+        responder.chat.completions.create.side_effect = None
+        responder.chat.completions.create.return_value = _fake_response('{"ok": 2}')
+        client.complete("prompt", purpose="screening")
+        body = responder.chat.completions.create.call_args.kwargs["extra_body"]
+        assert "chat_template_kwargs" not in body

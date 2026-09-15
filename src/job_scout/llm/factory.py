@@ -67,6 +67,9 @@ def _build_raw_client(
             fallback_base_urls=config.local_fallback_base_urls,
             connect_timeout=config.local_connect_timeout,
             probe_timeout=config.local_probe_timeout,
+            reasoning_purposes=config.local_reasoning_purposes,
+            max_tokens_reasoning=config.local_max_tokens_reasoning,
+            max_tokens_direct=config.local_max_tokens_direct,
         )
     else:
         return ClaudeCliClient(

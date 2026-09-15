@@ -348,6 +348,74 @@ def _apply_travel_filter(job: JobListing, config: Config) -> bool:
     )
 
 
+def _filter_by_commute(
+    jobs: list[JobListing],
+    config: Config,
+    db: Database,
+    dry_run: bool,
+    stats: RunStats,
+    *,
+    full: bool = False,
+) -> list[JobListing]:
+    """Drop jobs outside the commute limits before any LLM looks at them.
+
+    The travel check used to run last, on the handful of jobs that had already
+    survived two LLM passes. That ordering meant the expensive question ("is
+    this a good job for you?") was answered before the cheap one ("could you
+    even get there?"), and a quarter of those answers were then thrown away on
+    geography alone.
+
+    The filter itself is unchanged, so the jobs that reach the evaluator are
+    the same ones as before -- they are simply no longer paid for first.
+    Geocoding and routing are cached and job locations repeat heavily, so the
+    real cost is a handful of lookups per run.
+
+    Args:
+        jobs: Jobs that passed title screening.
+        config: Effective user configuration.
+        db: Database, used for the geocode and route caches.
+        dry_run: When True, nothing is written to the database.
+        stats: Mutable stats to update.
+        full: Whether existing rows should be updated rather than skipped.
+
+    Returns:
+        The jobs that are within reach.
+    """
+    if not jobs:
+        return []
+
+    progress.set_stage("commute", len(jobs))
+    kept: list[JobListing] = []
+    unreachable: list[JobListing] = []
+    workers = min(config.max_parallel_evaluations, len(jobs))
+
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = [
+            executor.submit(_calculate_travel_for_job, job, config, db) for job in jobs
+        ]
+        for future in as_completed(futures):
+            job = future.result()
+            progress.advance(f"{job.title} @ {job.company}")
+            progress.raise_if_stopped()
+            if _apply_travel_filter(job, config):
+                kept.append(job)
+            else:
+                job.status = JobStatus.REJECTED
+                unreachable.append(job)
+
+    stats.commute_filtered = len(unreachable)
+    stats.rejected += len(unreachable)
+    if unreachable:
+        logger.info(
+            f"Out of commuting range: {len(unreachable)} job(s) - not evaluated"
+        )
+        # Saved rather than dropped, so they are recognised as already seen on
+        # the next run instead of being scraped and re-checked every time.
+        if not dry_run:
+            db.save_jobs_batch(unreachable, update_existing=full)
+    return kept
+
+
 def _process_jobs(
     new_jobs: list[JobListing],
     config: Config,
@@ -377,8 +445,12 @@ def _process_jobs(
     stats = RunStats()
     matched: list[JobListing] = []
     llm_client: LLMClient = client if client is not None else get_llm_client(config)
+    reachable = _filter_by_commute(new_jobs, config, db, dry_run, stats, full=full)
+    if not reachable:
+        return matched, stats
+
     survivors = _run_quick_eval(
-        new_jobs, config, cv_text, db, dry_run, full, llm_client, stats
+        reachable, config, cv_text, db, dry_run, full, llm_client, stats
     )
 
     if not survivors:
@@ -404,6 +476,7 @@ def _process_jobs(
             job, passed, error_msg = future.result()
             logger.info(f"Evaluating: {job.title} @ {job.company}")
             progress.advance(f"{job.title} @ {job.company}")
+            progress.raise_if_stopped()
             if error_msg:
                 logger.error(f"Evaluation error: {error_msg}")
                 stats.errors.append(error_msg)
@@ -417,36 +490,16 @@ def _process_jobs(
                 stats.rejected += 1
                 jobs_to_save.append(job)
             else:
-                # Job passed LLM filters; will calculate travel times in parallel
                 evaluated_jobs.append(job)
 
-    # Calculate travel times in parallel for all jobs that passed LLM evaluation
-    if evaluated_jobs:
-        travel_workers = min(config.max_parallel_evaluations, len(evaluated_jobs))
-
-        def calculate_travel(job: JobListing) -> JobListing:
-            """Helper to calculate travel times for a single job."""
-            return _calculate_travel_for_job(job, config, db)
-
-        with ThreadPoolExecutor(max_workers=travel_workers) as travel_executor:
-            # Submit all travel time calculation tasks
-            travel_futures = {}
-            for eval_job in evaluated_jobs:
-                future = travel_executor.submit(calculate_travel, eval_job)  # type: ignore[arg-type]
-                travel_futures[future] = eval_job
-
-            # Process travel time results as they complete
-            for future in as_completed(travel_futures):
-                eval_job = cast(JobListing, future.result())
-                # Now apply the travel filter (no I/O, just checking limits)
-                if _apply_travel_filter(eval_job, config):
-                    eval_job.status = JobStatus.MATCHED
-                    matched.append(eval_job)
-                    stats.matched += 1
-                else:
-                    eval_job.status = JobStatus.REJECTED
-                    stats.rejected += 1
-                jobs_to_save.append(eval_job)
+    # The commute was already checked, and rejected jobs never reached the
+    # evaluator, so everything that survives here is both a good fit and
+    # reachable.
+    for eval_job in evaluated_jobs:
+        eval_job.status = JobStatus.MATCHED
+        matched.append(eval_job)
+        stats.matched += 1
+        jobs_to_save.append(eval_job)
 
     # Batch save all evaluated jobs to reduce database overhead
     if not dry_run and jobs_to_save:
@@ -608,6 +661,7 @@ def _run_quick_eval(
             job, score = future.result()
             logger.info(f"Quick eval [{idx}/{total}]: {job.title} @ {job.company}")
             progress.advance(f"{job.title} @ {job.company}")
+            progress.raise_if_stopped()
             if score is None:
                 # Quick-eval could not score this job (transient LLM/parse
                 # error). Fail open: keep it and let full evaluation decide,
@@ -1055,11 +1109,28 @@ def _execute_run(name: str, *, dry_run: bool = False, full: bool = False) -> Non
     cv_text = _load_cv_text(config)
     llm_client = get_llm_client(config)
     progress.begin_run(name)
+    started_at = datetime.now()
     try:
         stats, started_at, duration = _run_pipeline(
             config, db, cv_text, dry_run=dry_run, full=full, llm_client=llm_client
         )
+    except progress.RunStoppedError:
+        # Everything finished so far is already saved, and those jobs are
+        # recognised as seen next time, so a restart carries on rather than
+        # repeating the work.
+        logger.info(f"Run for '{name}' stopped on request")
+        click.echo("Run stopped.")
+        return
     finally:
+        timings = progress.stage_seconds(name)
+        if timings:
+            breakdown = ", ".join(
+                f"{stage} {seconds:.0f}s"
+                for stage, seconds in sorted(
+                    timings.items(), key=lambda kv: kv[1], reverse=True
+                )
+            )
+            logger.info(f"Stage timings for '{name}': {breakdown}")
         progress.end_run(name)
     # Save run history only for non-dry-run executions
     if not dry_run:
@@ -1598,6 +1669,7 @@ def _print_run_summary(stats: RunStats) -> None:
     click.echo(f"  Deduplicated:   {stats.deduplicated}")
     click.echo(f"  Title filtered: {stats.title_filtered}")
     click.echo(f"  Title screened: {stats.title_screened}")
+    click.echo(f"  Out of range:   {stats.commute_filtered}")
     click.echo(f"  Quick filtered: {stats.quick_filtered}")
     click.echo(f"  Evaluated:      {stats.evaluated}")
     click.echo(f"  Matched:        {stats.matched}")

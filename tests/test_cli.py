@@ -9,7 +9,7 @@ from unittest.mock import patch
 import pytest
 from click.testing import CliRunner
 
-from job_scout.cli import cli
+from job_scout.cli import _filter_by_commute, cli
 from job_scout.models import Config, JobListing, JobStatus
 
 
@@ -747,3 +747,97 @@ def test_prune_filled_matches_disabled_returns_all() -> None:
     config = Config(verify_matches_open=False)
     result = _prune_filled_matches([job], MagicMock(), config, dry_run=False)
     assert result == [job]
+
+
+class TestCommutePreFilter:
+    """Tests for dropping unreachable jobs before the LLM sees them."""
+
+    def _job(self, title: str, location: str) -> JobListing:
+        """Build a listing at a given location."""
+        return JobListing(
+            title=title,
+            company="ACME",
+            location=location,
+            url=f"https://example.invalid/{title}",
+            description="",
+            source="test",
+        )
+
+    def _config(self) -> Config:
+        """Return a config with a tight commute."""
+        return Config(
+            name="test",
+            home_address="Somewhere 1, Town",
+            max_distance_km=30,
+            max_travel_car=45,
+            allow_unknown_location=False,
+        )
+
+    def test_unreachable_jobs_never_reach_the_evaluator(self, tmp_path) -> None:  # noqa: ANN001
+        """The whole point: pay for geography before paying for the LLM."""
+        from job_scout.database import Database
+        from job_scout.models import RunStats
+
+        near = self._job("Near", "Town")
+        far = self._job("Far", "Faraway")
+        db = Database(tmp_path / "jobs.db")
+        stats = RunStats()
+
+        def fake_travel(job, config, database=None):  # noqa: ANN001, ANN202
+            job.distance_km = 5.0 if job.title == "Near" else 400.0
+            job.location_unknown = False
+            job.travel_times = []
+            return job
+
+        with patch("job_scout.cli._calculate_travel_for_job", side_effect=fake_travel):
+            kept = _filter_by_commute([near, far], self._config(), db, False, stats)
+
+        assert [j.title for j in kept] == ["Near"]
+        assert stats.commute_filtered == 1
+        assert stats.rejected == 1
+
+    def test_rejected_jobs_are_saved_so_they_are_not_rechecked(self, tmp_path) -> None:  # noqa: ANN001
+        """An out-of-range job is remembered, not re-scraped every run."""
+        from job_scout.database import Database
+        from job_scout.models import RunStats
+
+        far = self._job("Far", "Faraway")
+        db = Database(tmp_path / "jobs.db")
+
+        def fake_travel(job, config, database=None):  # noqa: ANN001, ANN202
+            job.distance_km = 400.0
+            job.location_unknown = False
+            job.travel_times = []
+            return job
+
+        with patch("job_scout.cli._calculate_travel_for_job", side_effect=fake_travel):
+            _filter_by_commute([far], self._config(), db, False, RunStats())
+
+        assert db.is_duplicate(far) is True
+
+    def test_dry_run_saves_nothing(self, tmp_path) -> None:  # noqa: ANN001
+        """A dry run must not write the rejects."""
+        from job_scout.database import Database
+        from job_scout.models import RunStats
+
+        far = self._job("Far", "Faraway")
+        db = Database(tmp_path / "jobs.db")
+
+        def fake_travel(job, config, database=None):  # noqa: ANN001, ANN202
+            job.distance_km = 400.0
+            job.location_unknown = False
+            job.travel_times = []
+            return job
+
+        with patch("job_scout.cli._calculate_travel_for_job", side_effect=fake_travel):
+            _filter_by_commute([far], self._config(), db, True, RunStats())
+
+        assert db.is_duplicate(far) is False
+
+    def test_no_jobs_is_not_an_error(self, tmp_path) -> None:  # noqa: ANN001
+        """An empty candidate list short-circuits."""
+        from job_scout.database import Database
+        from job_scout.models import RunStats
+
+        db = Database(tmp_path / "jobs.db")
+        assert _filter_by_commute([], self._config(), db, False, RunStats()) == []

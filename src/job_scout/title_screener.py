@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from loguru import logger
 
+from job_scout import progress
 from job_scout.evaluator import _extract_json
 from job_scout.llm.base import LLMClient, LLMError
 from job_scout.llm.factory import get_llm_client
@@ -184,6 +185,7 @@ def screen_job_titles(
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         # Submit all batch screening tasks
         futures = []
+        batch_sizes = {}
         for batch in batches:
             future = executor.submit(
                 _screen_batch_parallel,
@@ -195,11 +197,17 @@ def screen_job_titles(
                 ),
             )
             futures.append(future)
+            batch_sizes[future] = len(batch)
 
         # Process results as they complete
         for future in as_completed(futures):
             batch_results = future.result()
             kept.extend(batch_results)
+            # Screening works in batches of 80, so reporting per batch is the
+            # only progress there is; without it the dashboard showed 0 of 501
+            # for the whole stage and looked hung.
+            progress.advance(step=batch_sizes[future])
+            progress.raise_if_stopped()
 
     screened = len(jobs) - len(kept)
     if screened:

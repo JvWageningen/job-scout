@@ -59,6 +59,10 @@ async function fetchWithAuth(url, options = {}) {
 function setupEventListeners() {
     const userSelect = document.getElementById('user-select');
     const runBtn = document.getElementById('run-btn');
+    const stopBtn = document.getElementById('stop-btn');
+    if (stopBtn) {
+        stopBtn.addEventListener('click', stopPipeline);
+    }
     const logSelect = document.getElementById('log-select');
 
     if (userSelect) {
@@ -763,6 +767,7 @@ async function pollRunStatus() {
                 runBtn.disabled = true;
                 runBtn.textContent = 'Running...';
             }
+            showStopButton(true, data.progress);
             statusPollInterval = setInterval(pollRunStatus, 2000);
             return;
         }
@@ -778,6 +783,7 @@ async function pollRunStatus() {
                 runBtn.disabled = false;
                 runBtn.textContent = 'Run Pipeline';
             }
+            showStopButton(false);
             clearInterval(statusPollInterval);
             statusPollInterval = null;
             // Reload dashboard data
@@ -787,6 +793,47 @@ async function pollRunStatus() {
         }
     } catch (error) {
         console.error('Error polling run status:', error);
+    }
+}
+
+/**
+ * Show or hide the stop button, reflecting a stop already asked for.
+ */
+function showStopButton(visible, progressData) {
+    const stopBtn = document.getElementById('stop-btn');
+    if (!stopBtn) return;
+    stopBtn.classList.toggle('hidden', !visible);
+    const stopping = Boolean(progressData && progressData.stop_requested);
+    stopBtn.disabled = stopping;
+    stopBtn.textContent = stopping ? 'Stopping…' : 'Stop run';
+}
+
+/**
+ * Ask the running pipeline to stop (POST to /api/run/stop)
+ */
+async function stopPipeline() {
+    const stopBtn = document.getElementById('stop-btn');
+    if (stopBtn) {
+        stopBtn.disabled = true;
+        stopBtn.textContent = 'Stopping…';
+    }
+    try {
+        const response = await fetchWithAuth(`${API_BASE}/run/stop`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ user: currentUser }),
+        });
+        const data = await response.json();
+        if (!response.ok) {
+            throw new Error(data.detail || 'Could not stop the run');
+        }
+    } catch (error) {
+        console.error('Error stopping run:', error);
+        alert(`Could not stop the run: ${error.message}`);
+        if (stopBtn) {
+            stopBtn.disabled = false;
+            stopBtn.textContent = 'Stop run';
+        }
     }
 }
 
@@ -838,6 +885,7 @@ async function runPipeline() {
             if (statusPollInterval) {
                 clearInterval(statusPollInterval);
             }
+            showStopButton(true);
             statusPollInterval = setInterval(pollRunStatus, 2000);
             // Poll immediately
             await pollRunStatus();

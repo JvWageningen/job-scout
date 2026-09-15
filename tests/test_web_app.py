@@ -2456,3 +2456,35 @@ class TestSearchPersonEndpoint:
         )
         assert response.status_code == 200
         assert response.json()["result"]["confidence"] == "high"
+
+
+class TestStopRun:
+    """Tests for POST /api/run/stop."""
+
+    def test_stopping_a_running_pipeline_asks_it_to_stop(
+        self, client: TestClient, test_user: str
+    ) -> None:
+        """The dashboard can end a run that is taking too long."""
+        from job_scout import progress
+
+        progress.begin_run(test_user)
+        try:
+            response = client.post("/api/run/stop", json={"user": test_user})
+            assert response.status_code == 200
+            assert response.json()["status"] == "stopping"
+            assert progress.get(test_user)["stop_requested"] is True
+        finally:
+            progress.end_run(test_user)
+
+    def test_stopping_when_nothing_runs_is_not_an_error(
+        self, client: TestClient, test_user: str
+    ) -> None:
+        """Pressing stop twice, or after it finished, is harmless."""
+        response = client.post("/api/run/stop", json={"user": test_user})
+        assert response.status_code == 200
+        assert response.json()["status"] == "idle"
+
+    def test_stopping_an_unknown_user_is_rejected(self, client: TestClient) -> None:
+        """A typo does not silently do nothing."""
+        response = client.post("/api/run/stop", json={"user": "nobody"})
+        assert response.status_code == 404

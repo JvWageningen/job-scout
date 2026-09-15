@@ -274,6 +274,26 @@ class Config(BaseModel):
     local_keywords_model: str | None = None
     local_evaluation_timeout: float = 120
     local_screening_timeout: float = 90
+    # Reasoning models spend most of their output on a thinking block. That is
+    # worth paying for when the call is a judgement call, and wasted when it is
+    # a coarse gate: measured on Qwen3.8, one full evaluation emitted 800-5400
+    # completion tokens (35-247s), while the same prompt with thinking off
+    # emitted ~180 (16-46s). Screening and quick scoring are sieves, so they
+    # run without it; the full evaluation keeps it, because turning it off
+    # there visibly moved scores.
+    local_reasoning_purposes: list[str] = Field(
+        default_factory=lambda: [
+            "evaluation",
+            "cv_parsing",
+            "resume_tailoring",
+            "cover_letter",
+        ],
+        description="Call purposes that keep the model's reasoning enabled",
+    )
+    # A hard ceiling per call. Without one, nothing stops a model from filling
+    # the whole context window on a single job and blocking the queue.
+    local_max_tokens_reasoning: int = Field(default=3000, ge=256)
+    local_max_tokens_direct: int = Field(default=1200, ge=64)
     quick_eval_threshold: int = 40
     quick_eval_provider: Literal["claude_cli", "zai", "kilo_cli", "local"] | None = None
     screening_provider: Literal["claude_cli", "zai", "kilo_cli", "local"] | None = None
@@ -423,6 +443,7 @@ class RunStats(BaseModel):
     deduplicated: int = 0
     title_filtered: int = 0
     title_screened: int = 0
+    commute_filtered: int = 0
     quick_filtered: int = 0
     evaluated: int = 0
     matched: int = 0

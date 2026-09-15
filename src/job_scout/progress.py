@@ -21,6 +21,7 @@ from datetime import UTC, datetime
 STAGES: tuple[str, ...] = (
     "scraping",
     "screening",
+    "commute",
     "quick_eval",
     "evaluating",
     "verifying",
@@ -31,6 +32,7 @@ STAGES: tuple[str, ...] = (
 _HUMAN_STAGES: dict[str, str] = {
     "scraping": "Scraping job boards",
     "screening": "Screening job titles",
+    "commute": "Checking travel distance",
     "quick_eval": "Quick scoring",
     "evaluating": "Full evaluation",
     "verifying": "Checking vacancies are still open",
@@ -55,6 +57,10 @@ class RunProgress:
     detail: str = ""
     started_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     stage_started_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    stop_requested: bool = False
+    # Seconds spent in each stage so far, so a slow run can be attributed to a
+    # stage instead of guessed at from the total.
+    stage_seconds: dict[str, float] = field(default_factory=dict)
 
     @property
     def stage_label(self) -> str:
@@ -103,6 +109,8 @@ class RunProgress:
             "elapsed_seconds": round(
                 (datetime.now(UTC) - self.started_at).total_seconds()
             ),
+            "stop_requested": self.stop_requested,
+            "stage_seconds": {k: round(v, 1) for k, v in self.stage_seconds.items()},
         }
 
 
@@ -143,11 +151,17 @@ def set_stage(stage: str, total: int = 0, *, detail: str = "") -> None:
         progress = _runs.get(user)
         if progress is None:
             return
+        now = datetime.now(UTC)
+        if progress.stage:
+            elapsed = (now - progress.stage_started_at).total_seconds()
+            progress.stage_seconds[progress.stage] = (
+                progress.stage_seconds.get(progress.stage, 0.0) + elapsed
+            )
         progress.stage = stage
         progress.total = total
         progress.current = 0
         progress.detail = detail
-        progress.stage_started_at = datetime.now(UTC)
+        progress.stage_started_at = now
 
 
 def advance(detail: str = "", *, step: int = 1) -> None:
@@ -179,3 +193,73 @@ def get(user: str | None) -> dict[str, object] | None:
     with _lock:
         progress = _runs.get(user)
         return progress.as_dict() if progress else None
+
+
+class RunStoppedError(Exception):
+    """Raised inside a run once a stop has been requested from the dashboard."""
+
+
+def request_stop(user: str | None) -> bool:
+    """Ask the run for a user to stop at its next checkpoint.
+
+    The run is not killed. It is asked to stop, and it does so between items,
+    so the work already finished is saved rather than discarded. Because
+    finished jobs are recorded and skipped as duplicates next time, restarting
+    continues roughly where the stopped run left off.
+
+    Args:
+        user: User whose run should stop, or None for the global run.
+
+    Returns:
+        True if a run was there to be stopped.
+    """
+    with _lock:
+        progress = _runs.get(user)
+        if progress is None:
+            return False
+        progress.stop_requested = True
+        return True
+
+
+def stop_requested() -> bool:
+    """Report whether the active run has been asked to stop.
+
+    Returns:
+        True if a stop was requested for the run on this thread.
+    """
+    with _lock:
+        progress = _runs.get(_active_user.get())
+        return bool(progress and progress.stop_requested)
+
+
+def raise_if_stopped() -> None:
+    """Abort the active run if the dashboard asked it to stop.
+
+    Raises:
+        RunStoppedError: If a stop has been requested.
+    """
+    if stop_requested():
+        raise RunStoppedError("Run stopped from the dashboard")
+
+
+def stage_seconds(user: str | None) -> dict[str, float]:
+    """Return how long each stage of a user's run has taken.
+
+    The final stage is included with the time spent in it so far, so this is
+    usable while the run is still going.
+
+    Args:
+        user: User whose run to report on.
+
+    Returns:
+        Mapping of stage key to seconds spent, empty if no run is active.
+    """
+    with _lock:
+        progress = _runs.get(user)
+        if progress is None:
+            return {}
+        totals = dict(progress.stage_seconds)
+        if progress.stage:
+            elapsed = (datetime.now(UTC) - progress.stage_started_at).total_seconds()
+            totals[progress.stage] = totals.get(progress.stage, 0.0) + elapsed
+        return {k: round(v, 1) for k, v in totals.items()}

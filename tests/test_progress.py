@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
+import pytest
+
 from job_scout import progress
 
 
@@ -173,3 +175,81 @@ class TestEta:
         assert state is not None
         assert isinstance(state["elapsed_seconds"], int)
         _reset()
+
+
+class TestStopRequest:
+    """Tests for stopping a run from the dashboard."""
+
+    def test_stop_is_reported_to_the_running_pipeline(self) -> None:
+        """The pipeline thread sees a stop asked for elsewhere."""
+        progress.begin_run("alice")
+        try:
+            assert progress.stop_requested() is False
+            assert progress.request_stop("alice") is True
+            assert progress.stop_requested() is True
+        finally:
+            progress.end_run("alice")
+
+    def test_raise_if_stopped_aborts_the_run(self) -> None:
+        """Checkpoints raise once a stop has been asked for."""
+        progress.begin_run("alice")
+        try:
+            progress.raise_if_stopped()  # no stop yet, must not raise
+            progress.request_stop("alice")
+            with pytest.raises(progress.RunStoppedError):
+                progress.raise_if_stopped()
+        finally:
+            progress.end_run("alice")
+
+    def test_stopping_an_idle_user_reports_nothing_to_stop(self) -> None:
+        """Asking a user with no run to stop is not an error."""
+        assert progress.request_stop("nobody") is False
+
+    def test_stop_does_not_leak_between_users(self) -> None:
+        """Stopping one user's run leaves another's alone."""
+        progress.begin_run("alice")
+        progress.request_stop("bob")
+        try:
+            assert progress.stop_requested() is False
+        finally:
+            progress.end_run("alice")
+
+    def test_stop_is_visible_in_the_status_payload(self) -> None:
+        """The dashboard can tell a stop is already under way."""
+        progress.begin_run("alice")
+        try:
+            progress.set_stage("evaluating", 10)
+            assert progress.get("alice")["stop_requested"] is False
+            progress.request_stop("alice")
+            assert progress.get("alice")["stop_requested"] is True
+        finally:
+            progress.end_run("alice")
+
+
+class TestStageTimings:
+    """Tests for per-stage timing."""
+
+    def test_time_is_attributed_to_each_stage(self) -> None:
+        """Leaving a stage banks the time spent in it."""
+        progress.begin_run("alice")
+        try:
+            progress.set_stage("scraping", 5)
+            progress.set_stage("screening", 5)
+            timings = progress.stage_seconds("alice")
+            assert "scraping" in timings
+            assert "screening" in timings
+        finally:
+            progress.end_run("alice")
+
+    def test_the_current_stage_counts_while_it_runs(self) -> None:
+        """A stage still in progress is reported, not withheld."""
+        progress.begin_run("alice")
+        try:
+            progress.set_stage("quick_eval", 100)
+            assert "quick_eval" in progress.stage_seconds("alice")
+        finally:
+            progress.end_run("alice")
+
+    def test_no_run_reports_no_timings(self) -> None:
+        """A user with no active run has nothing to report."""
+        assert progress.stage_seconds("nobody") == {}
