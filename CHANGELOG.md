@@ -4,6 +4,19 @@ Format: [Keep a Changelog](https://keepachangelog.com)
 
 <!-- version list -->
 
+## v1.16.5 (2026-09-15)
+
+### Bug Fixes
+
+- **pipeline**: Do not retire a job because its location would not geocode
+  ([`c8d0f4e`](https://github.com/JvWageningen/job-scout/commit/c8d0f4e0c5e228d205581a8a2bd5d6029ccffbf5))
+
+### Chores
+
+- Sync uv.lock to 1.16.4 [skip ci]
+  ([`de397e5`](https://github.com/JvWageningen/job-scout/commit/de397e55e1ed306fd21052f9a2246d332db14d86))
+
+
 ## v1.16.4 (2026-09-15)
 
 ### Chores
