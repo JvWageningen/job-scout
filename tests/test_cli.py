@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -932,3 +933,54 @@ class TestStoppingMidEvaluation:
         # The run stopped early, but what it had already judged is in hand.
         assert to_save, "a stopped run must not discard finished evaluations"
         assert len(to_save) < len(jobs)
+
+    def test_stopping_does_not_wait_for_the_whole_queue(self, tmp_path) -> None:  # noqa: ANN001
+        """A stop must skip the jobs not started, not wait them out.
+
+        Every job is submitted to the pool up front, so without cancelling the
+        pending futures a stop takes as long as finishing the stage -- which
+        makes the button look broken.
+        """
+        from job_scout import progress
+        from job_scout.database import Database
+        from job_scout.models import RunStats
+
+        jobs = [
+            JobListing(
+                title=f"Job {i}",
+                company="ACME",
+                location="Town",
+                url=f"https://example.invalid/{i}",
+                description="",
+                source="test",
+            )
+            for i in range(40)
+        ]
+        db = Database(tmp_path / "jobs.db")
+        started = {"n": 0}
+
+        def fake_eval(args):  # noqa: ANN001, ANN202
+            started["n"] += 1
+            # Real evaluations take minutes; without some cost here every
+            # future finishes before the loop runs and there is nothing left
+            # to cancel, which would make the test pass on any implementation.
+            time.sleep(0.02)
+            progress.request_stop("stopper")
+            return args[0], False, None
+
+        progress.begin_run("stopper")
+        try:
+            with (
+                patch("job_scout.cli._eval_job_full_parallel", side_effect=fake_eval),
+                pytest.raises(progress.RunStoppedError),
+            ):
+                _evaluate_survivors(
+                    jobs, Config(name="test"), "", db, MagicMock(),
+                    RunStats(), [], [], 2,
+                )
+        finally:
+            progress.end_run("stopper")
+
+        assert started["n"] < len(jobs), (
+            "the stop waited for jobs it should have cancelled"
+        )

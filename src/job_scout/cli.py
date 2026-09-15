@@ -348,6 +348,26 @@ def _apply_travel_filter(job: JobListing, config: Config) -> bool:
     )
 
 
+def _stop_checkpoint(executor: ThreadPoolExecutor) -> None:
+    """Abort the stage if a stop was asked for, dropping the work not started.
+
+    Every job is submitted to the pool up front, so leaving the pool's context
+    manager waits for all of them -- which would make a stop take as long as
+    finishing the stage. Cancelling the futures that have not started yet
+    leaves only the handful already in flight to finish.
+
+    Args:
+        executor: The pool running this stage.
+
+    Raises:
+        RunStoppedError: If a stop has been requested.
+    """
+    if not progress.stop_requested():
+        return
+    executor.shutdown(wait=False, cancel_futures=True)
+    progress.raise_if_stopped()
+
+
 def _filter_by_commute(
     jobs: list[JobListing],
     config: Config,
@@ -403,7 +423,7 @@ def _filter_by_commute(
                 unreachable.append(job)
             # Checked after the verdict is recorded, so a stop never discards
             # an answer that has already been worked out.
-            progress.raise_if_stopped()
+            _stop_checkpoint(executor)
 
     stats.commute_filtered = len(unreachable)
     stats.rejected += len(unreachable)
@@ -552,7 +572,7 @@ def _evaluate_survivors(
                 job.status = JobStatus.REJECTED
                 stats.rejected += 1
                 jobs_to_save.append(job)
-                progress.raise_if_stopped()
+                _stop_checkpoint(executor)
                 continue
             stats.evaluated += 1
             if not passed:
@@ -567,8 +587,8 @@ def _evaluate_survivors(
                 evaluated_jobs.append(job)
                 jobs_to_save.append(job)
             # Only once this job's verdict is banked, so stopping costs at
-            # most the job still in flight.
-            progress.raise_if_stopped()
+            # most the jobs still in flight.
+            _stop_checkpoint(executor)
 
 
 def _eval_job_quick_parallel(
@@ -789,8 +809,8 @@ def _quick_score_jobs(
             else:
                 survivors.append(job)
             # After the verdict, so stopping never loses a score already paid
-            # for. The rejects below are saved on the way out either way.
-            progress.raise_if_stopped()
+            # for. The rejects are saved on the way out either way.
+            _stop_checkpoint(executor)
 
 
 def _dedupe_matched_for_notification(

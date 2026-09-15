@@ -207,7 +207,11 @@ def screen_job_titles(
             # only progress there is; without it the dashboard showed 0 of 501
             # for the whole stage and looked hung.
             progress.advance(step=batch_sizes[future])
-            progress.raise_if_stopped()
+            if progress.stop_requested():
+                # Every batch is queued up front, so leaving the pool would
+                # otherwise wait for all of them before the stop took effect.
+                executor.shutdown(wait=False, cancel_futures=True)
+                progress.raise_if_stopped()
 
     screened = len(jobs) - len(kept)
     if screened:
