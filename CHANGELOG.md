@@ -4,6 +4,19 @@ Format: [Keep a Changelog](https://keepachangelog.com)
 
 <!-- version list -->
 
+## v1.16.4 (2026-09-15)
+
+### Chores
+
+- Sync uv.lock to 1.16.3 [skip ci]
+  ([`ee1c410`](https://github.com/JvWageningen/job-scout/commit/ee1c410b1c8fc092ce1636442b998ac363ba6b6d))
+
+### Performance Improvements
+
+- **pipeline**: Stop paying the LLM for jobs that are out of reach
+  ([`1383a93`](https://github.com/JvWageningen/job-scout/commit/1383a9350a295b225b1bf3e29256e3aae599bb3b))
+
+
 ## v1.16.3 (2026-09-14)
 
 ### Bug Fixes
