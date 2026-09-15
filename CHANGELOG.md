@@ -4,6 +4,19 @@ Format: [Keep a Changelog](https://keepachangelog.com)
 
 <!-- version list -->
 
+## v1.16.6 (2026-09-15)
+
+### Bug Fixes
+
+- **pipeline**: Keep the work a stopped run already finished
+  ([`f19ba30`](https://github.com/JvWageningen/job-scout/commit/f19ba30982278fa50137704a26883916a0d05580))
+
+### Chores
+
+- Sync uv.lock to 1.16.5 [skip ci]
+  ([`9891657`](https://github.com/JvWageningen/job-scout/commit/9891657989e0c895e4fa566315767c82302ffeb4))
+
+
 ## v1.16.5 (2026-09-15)
 
 ### Bug Fixes
