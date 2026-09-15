@@ -396,12 +396,14 @@ def _filter_by_commute(
         for future in as_completed(futures):
             job = future.result()
             progress.advance(f"{job.title} @ {job.company}")
-            progress.raise_if_stopped()
             if _apply_travel_filter(job, config):
                 kept.append(job)
             else:
                 job.status = JobStatus.REJECTED
                 unreachable.append(job)
+            # Checked after the verdict is recorded, so a stop never discards
+            # an answer that has already been worked out.
+            progress.raise_if_stopped()
 
     stats.commute_filtered = len(unreachable)
     stats.rejected += len(unreachable)
@@ -477,6 +479,59 @@ def _process_jobs(
     jobs_to_save: list[JobListing] = []
     evaluated_jobs: list[JobListing] = []
 
+    try:
+        _evaluate_survivors(
+            survivors,
+            config,
+            cv_text,
+            db,
+            llm_client,
+            stats,
+            jobs_to_save,
+            evaluated_jobs,
+            max_workers,
+        )
+    finally:
+        # A stop request unwinds through here, and the jobs already judged are
+        # worth keeping: they are what lets a restart carry on instead of
+        # asking the model the same questions again.
+        if not dry_run and jobs_to_save:
+            job_ids = db.save_jobs_batch(jobs_to_save, update_existing=full)
+            for job, job_id in zip(jobs_to_save, job_ids, strict=True):
+                job.id = job_id
+
+    for eval_job in evaluated_jobs:
+        eval_job.status = JobStatus.MATCHED
+        matched.append(eval_job)
+        stats.matched += 1
+
+    return matched, stats
+
+
+def _evaluate_survivors(
+    survivors: list[JobListing],
+    config: Config,
+    cv_text: str,
+    db: Database,
+    llm_client: LLMClient,
+    stats: RunStats,
+    jobs_to_save: list[JobListing],
+    evaluated_jobs: list[JobListing],
+    max_workers: int,
+) -> None:
+    """Score every surviving job, collecting results into the given lists.
+
+    Args:
+        survivors: Jobs that passed quick scoring.
+        config: Effective user configuration.
+        cv_text: Extracted CV text.
+        db: Database, used for the evaluation cache.
+        llm_client: Client to score with.
+        stats: Mutable stats to update.
+        jobs_to_save: Collects every job whose verdict is settled.
+        evaluated_jobs: Collects the jobs that passed.
+        max_workers: Parallel evaluations to run.
+    """
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         # Submit all evaluation tasks
         future_to_job = {}
@@ -491,13 +546,13 @@ def _process_jobs(
             job, passed, error_msg = future.result()
             logger.info(f"Evaluating: {job.title} @ {job.company}")
             progress.advance(f"{job.title} @ {job.company}")
-            progress.raise_if_stopped()
             if error_msg:
                 logger.error(f"Evaluation error: {error_msg}")
                 stats.errors.append(error_msg)
                 job.status = JobStatus.REJECTED
                 stats.rejected += 1
                 jobs_to_save.append(job)
+                progress.raise_if_stopped()
                 continue
             stats.evaluated += 1
             if not passed:
@@ -505,24 +560,15 @@ def _process_jobs(
                 stats.rejected += 1
                 jobs_to_save.append(job)
             else:
+                # The commute was already checked and out-of-range jobs never
+                # reached the evaluator, so passing here means both a good fit
+                # and a reachable one.
+                job.status = JobStatus.MATCHED
                 evaluated_jobs.append(job)
-
-    # The commute was already checked, and rejected jobs never reached the
-    # evaluator, so everything that survives here is both a good fit and
-    # reachable.
-    for eval_job in evaluated_jobs:
-        eval_job.status = JobStatus.MATCHED
-        matched.append(eval_job)
-        stats.matched += 1
-        jobs_to_save.append(eval_job)
-
-    # Batch save all evaluated jobs to reduce database overhead
-    if not dry_run and jobs_to_save:
-        job_ids = db.save_jobs_batch(jobs_to_save, update_existing=full)
-        for job, job_id in zip(jobs_to_save, job_ids, strict=True):
-            job.id = job_id
-
-    return matched, stats
+                jobs_to_save.append(job)
+            # Only once this job's verdict is banked, so stopping costs at
+            # most the job still in flight.
+            progress.raise_if_stopped()
 
 
 def _eval_job_quick_parallel(
@@ -660,6 +706,53 @@ def _run_quick_eval(
 
     # Run evaluations in parallel with bounded thread pool
     max_workers = min(config.max_parallel_evaluations, len(jobs))
+    try:
+        _quick_score_jobs(
+            jobs,
+            config,
+            cv_text,
+            db,
+            llm_client,
+            stats,
+            survivors,
+            rejected,
+            max_workers,
+        )
+    finally:
+        # Also runs when a stop unwinds through here, so the jobs already
+        # scored stay scored and a restart does not repeat them.
+        if not dry_run and rejected:
+            job_ids = db.save_jobs_batch(rejected, update_existing=full)
+            for job, job_id in zip(rejected, job_ids, strict=True):
+                job.id = job_id
+
+    return survivors
+
+
+def _quick_score_jobs(
+    jobs: list[JobListing],
+    config: Config,
+    cv_text: str,
+    db: Database,
+    llm_client: LLMClient,
+    stats: RunStats,
+    survivors: list[JobListing],
+    rejected: list[JobListing],
+    max_workers: int,
+) -> None:
+    """Give every job a coarse score, sorting it into survivors or rejects.
+
+    Args:
+        jobs: Jobs to score.
+        config: Effective user configuration.
+        cv_text: Extracted CV text.
+        db: Database, used for the evaluation cache.
+        llm_client: Client to score with.
+        stats: Mutable stats to update.
+        survivors: Collects the jobs worth a full evaluation.
+        rejected: Collects the jobs scored below the threshold.
+        max_workers: Parallel scorings to run.
+    """
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         # Submit all tasks and keep track of job indices
         future_to_idx = {}
@@ -676,7 +769,6 @@ def _run_quick_eval(
             job, score = future.result()
             logger.info(f"Quick eval [{idx}/{total}]: {job.title} @ {job.company}")
             progress.advance(f"{job.title} @ {job.company}")
-            progress.raise_if_stopped()
             if score is None:
                 # Quick-eval could not score this job (transient LLM/parse
                 # error). Fail open: keep it and let full evaluation decide,
@@ -696,14 +788,9 @@ def _run_quick_eval(
                 rejected.append(job)
             else:
                 survivors.append(job)
-
-    # Batch save rejected jobs to reduce database overhead
-    if not dry_run and rejected:
-        job_ids = db.save_jobs_batch(rejected, update_existing=full)
-        for job, job_id in zip(rejected, job_ids, strict=True):
-            job.id = job_id
-
-    return survivors
+            # After the verdict, so stopping never loses a score already paid
+            # for. The rejects below are saved on the way out either way.
+            progress.raise_if_stopped()
 
 
 def _dedupe_matched_for_notification(

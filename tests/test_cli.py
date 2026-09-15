@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from click.testing import CliRunner
 
-from job_scout.cli import _filter_by_commute, cli
+from job_scout.cli import _evaluate_survivors, _filter_by_commute, cli
 from job_scout.models import Config, JobListing, JobStatus
 
 
@@ -878,3 +878,57 @@ class TestCommutePreFilter:
 
         db = Database(tmp_path / "jobs.db")
         assert _filter_by_commute([], self._config(), db, False, RunStats()) == []
+
+
+class TestStoppingMidEvaluation:
+    """Tests that a stopped run keeps the work it already did."""
+
+    def test_finished_evaluations_are_saved_when_a_run_is_stopped(
+        self, tmp_path
+    ) -> None:  # noqa: ANN001
+        """Otherwise stopping would throw away hours of scoring."""
+        from job_scout import progress
+        from job_scout.database import Database
+        from job_scout.models import RunStats
+
+        jobs = [
+            JobListing(
+                title=f"Job {i}",
+                company="ACME",
+                location="Town",
+                url=f"https://example.invalid/{i}",
+                description="",
+                source="test",
+            )
+            for i in range(4)
+        ]
+        db = Database(tmp_path / "jobs.db")
+        stats = RunStats()
+        to_save: list[JobListing] = []
+        passed: list[JobListing] = []
+        config = Config(name="test", home_address="Somewhere 1, Town")
+
+        calls = {"n": 0}
+
+        def fake_eval(args):  # noqa: ANN001, ANN202
+            job = args[0]
+            calls["n"] += 1
+            if calls["n"] == 3:
+                progress.request_stop("stopper")
+            return job, False, None
+
+        progress.begin_run("stopper")
+        try:
+            with (
+                patch("job_scout.cli._eval_job_full_parallel", side_effect=fake_eval),
+                pytest.raises(progress.RunStoppedError),
+            ):
+                _evaluate_survivors(
+                    jobs, config, "", db, MagicMock(), stats, to_save, passed, 1
+                )
+        finally:
+            progress.end_run("stopper")
+
+        # The run stopped early, but what it had already judged is in hand.
+        assert to_save, "a stopped run must not discard finished evaluations"
+        assert len(to_save) < len(jobs)
