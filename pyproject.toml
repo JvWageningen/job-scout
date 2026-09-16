@@ -1,11 +1,39 @@
 [project]
 name = "job-scout"
 version = "1.17.3"
-description = "Automated daily job search tool for the Dutch job market"
+description = "Automated job search for the Dutch market, scored against your CV by an LLM and filtered by real commute time"
 readme = "README.md"
 requires-python = ">=3.12"
-license = "MIT"
-authors = [{ name = "JvWageningen" }]
+license = "PolyForm-Noncommercial-1.0.0"
+license-files = ["LICENSE"]
+authors = [{ name = "Jeroen van Wageningen" }]
+maintainers = [{ name = "Jeroen van Wageningen" }]
+keywords = [
+    "job-search",
+    "job-board",
+    "vacancy",
+    "netherlands",
+    "llm",
+    "automation",
+    "self-hosted",
+    "cv",
+    "commute",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Environment :: Web Environment",
+    "Intended Audience :: End Users/Desktop",
+    "Natural Language :: Dutch",
+    "Natural Language :: English",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Office/Business",
+    "Topic :: Internet :: WWW/HTTP :: Indexing/Search",
+    "Typing :: Typed",
+]
 dependencies = [
     "python-jobspy>=0.1.0",
     "openrouteservice>=2.3.3",
@@ -34,9 +62,12 @@ browser = ["playwright>=1.40"]
 job-scout = "job_scout.cli:main"
 
 [project.urls]
+Homepage = "https://github.com/JvWageningen/job-scout"
 Repository = "https://github.com/JvWageningen/job-scout"
+Documentation = "https://github.com/JvWageningen/job-scout/blob/main/docs/README.md"
 Issues = "https://github.com/JvWageningen/job-scout/issues"
 Changelog = "https://github.com/JvWageningen/job-scout/blob/main/CHANGELOG.md"
+Funding = "https://github.com/sponsors/JvWageningen"
 
 [build-system]
 requires = ["uv_build>=0.10.10,<0.11.0"]
@@ -95,4 +126,5 @@ dev = [
     "vulture>=2.14",
     "radon>=6.0.1",
     "pip-audit>=2.7.3",
+    "pre-commit>=4.0",
 ]
