@@ -4,6 +4,19 @@ Format: [Keep a Changelog](https://keepachangelog.com)
 
 <!-- version list -->
 
+## v2.2.0 (2026-09-16)
+
+### Chores
+
+- Sync uv.lock to 2.1.0 [skip ci]
+  ([`3bf3ec0`](https://github.com/JvWageningen/job-scout/commit/3bf3ec0f17beff3e53f319aed83405dac656de8c))
+
+### Features
+
+- Add multilingual motivational letters from current CV and private style examples
+  ([`907181c`](https://github.com/JvWageningen/job-scout/commit/907181c6d29f5931fd650a5e690d18207a34f793))
+
+
 ## v2.1.0 (2026-09-16)
 
 ### Chores
