@@ -1,1 +1,15 @@
 * text=auto eol=lf
+
+# Brand and binary assets: never line-ending normalised, never diffed as text.
+*.png binary
+*.ico binary
+*.pdf binary
+
+# Machine-written files. Excluding them from diffs and language stats keeps
+# pull requests readable and the repository language bar honest.
+uv.lock linguist-generated=true
+CHANGELOG.md linguist-generated=true
+
+# Agent tooling that ships with the repo but is not part of the product.
+.claude/** linguist-vendored=true
+.vibegen/** linguist-vendored=true
