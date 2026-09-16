@@ -60,6 +60,9 @@ On an ASUSTOR NAS (ADM):
 sh /volume1/Docker/job-scout/deploy/nas-install.sh
 ```
 
+`/volume1/Docker` is the author's Synology/ASUSTOR convention, not a requirement:
+the checkout works from any directory.
+
 Idempotent: re-run after editing `.env` or re-syncing the source. It checks
 Docker access, seeds `.env`, fixes ownership on `data/` for uid 1000, probes
 the model server, builds, starts, and waits for the dashboard.
@@ -75,7 +78,7 @@ sudo. If neither works it prints the exact `sudoers.d` rule to add.
 will not find it:
 
 ```yaml
-cv_path: /data/users/Jeroen/CV_Jeroen.pdf
+cv_path: /data/users/alex/cv.pdf
 ```
 
 ## Operating

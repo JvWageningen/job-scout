@@ -1,572 +1,180 @@
-# job-scout
+<div align="center">
 
-[![CI](https://github.com/JvWageningen/job-scout/actions/workflows/ci.yml/badge.svg)](https://github.com/JvWageningen/job-scout/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.png">
+  <img src="assets/logo.png" alt="job-scout" width="420">
+</picture>
 
-An automated daily job search tool for the Dutch job market. It scrapes positions from Indeed.nl, Nationalevacaturebank.nl, and LinkedIn, uses an LLM to evaluate listings against your profile and CV, calculates travel times via car, public transport, and bike, filters by configurable travel limits, and sends push notifications for matching positions via [ntfy.sh](https://ntfy.sh). Results are deduplicated across runs using a local SQLite database. Supports multiple independent users, each with their own profile, database, and notification topic, plus an optional web dashboard for managing all of it without the CLI.
+<p><strong>Your job search, run overnight by a machine that has actually read your CV.</strong></p>
 
-## Prerequisites
+<p>job-scout sweeps the Dutch job boards every week, scores every vacancy against your real profile with an LLM you choose — including one running on your own hardware — and only tells you about the handful you could realistically get to and would actually want.</p>
 
-### For easy installation (Docker)
-- Windows 10/11, macOS, or Linux
-- Docker: [Docker Desktop](https://www.docker.com/products/docker-desktop/) on Windows/macOS, [Docker Engine](https://docs.docker.com/engine/install/) on Linux -- on both platforms the installer offers to set it up for you
+[![CI](https://img.shields.io/github/actions/workflow/status/JvWageningen/job-scout/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/JvWageningen/job-scout/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/JvWageningen/job-scout?style=flat-square&color=2f5d8a)](https://github.com/JvWageningen/job-scout/releases)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-2f5d8a?style=flat-square)](https://www.python.org/downloads/)
+[![License: PolyForm Noncommercial 1.0.0](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-c9761f?style=flat-square)](LICENSE)
+[![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-2f5d8a?style=flat-square)](https://docs.astral.sh/ruff/)
+[![Checked with mypy](https://img.shields.io/badge/types-mypy%20strict-2f5d8a?style=flat-square)](https://mypy-lang.org/)
+[![Sponsor](https://img.shields.io/badge/sponsor-%E2%9D%A4-c9761f?style=flat-square&logo=githubsponsors&logoColor=white)](https://github.com/sponsors/JvWageningen)
 
-### For developer installation (CLI)
-- Python 3.12+
-- [uv](https://docs.astral.sh/uv/) package manager
-- One of the supported LLM backends (see [Configure LLM provider](#configure-llm-provider))
-- (Optional) [OpenRouteService API key](https://openrouteservice.org/) for car/bike travel times
-- (Optional) [NS API key](https://apiportal.ns.nl/) for Dutch public transport travel times
-- (Optional) [ntfy.sh](https://ntfy.sh) topic for push notifications
+</div>
 
-## Installation
+---
 
-Choose your installation path below. **Easy install** is for users who want job-scout running with minimal setup—no CLI or Python knowledge required. **Developer install** is for contributors or those who prefer command-line workflows.
+Job boards are optimised for volume, not for you. A saved search returns hundreds of listings that match a keyword and nothing else: wrong seniority, wrong discipline, ninety minutes away, pay you would never accept. Reading them is the actual work of a job hunt, and it is the part nobody wants to do.
 
-### Easy install (Windows)
+job-scout does that reading. It scrapes Indeed, LinkedIn, Nationale Vacaturebank and any company careers page you point it at, then puts every listing through a funnel of progressively more expensive checks — a cheap title filter, a batched LLM screen, a real commute calculation, a quick score, and finally a full evaluation against your CV and your stated preferences. What reaches your phone is a short list with a fit score, a reason, the commute by car, bike and train, and a link to the employer's own posting where one exists.
 
-**Requirements:** Windows 10 or 11, and [Docker Desktop](https://www.docker.com/products/docker-desktop/).
+It runs on your machine or your NAS. With a local model, no part of your CV ever leaves your network.
 
-Run this one command in PowerShell:
+## Features
+
+| Capability | What it does |
+|---|---|
+| **Scored against your actual CV** | Your CV PDF is parsed into a structured profile and every vacancy is evaluated against it — fit score, reasoning, and an explicit check against the things you said you do *not* want. |
+| **Real commute filtering** | Every listing is geocoded and routed by car, bike and NS public transport before any expensive model sees it. Set a ceiling per mode; anything beyond it never reaches you. |
+| **Bring your own LLM** | Local OpenAI-compatible servers (Ollama, LM Studio, vLLM, llama.cpp), Z.AI GLM, the Claude Code CLI or the Kilo Code CLI — and you can route each stage to a different one, a cheap model for screening and a strong one for the final call. |
+| **Career tracks** | Search several genuinely different directions at once, each with its own description, keywords and reject rules, plus blend tracks for a flavour you want *inside* a role rather than as a job of its own. |
+| **Guided career coach** | Not sure what you are looking for? A short interview, grounded in what your CV already shows, proposes a handful of concrete directions — accept the ones you like and they are written back as tracks. |
+| **Pay and holiday gate** | The model extracts salary and vacation days from the posting and a conservative Dutch-aware regex re-scans the full text as a backstop. Below your floor, above your ceiling: gone. |
+| **Never a dead link** | Every match is re-checked live before you are notified, and jobs already in your pipeline are swept for filled-or-closed signals. |
+| **Match enrichment** | Each match gets a web search for the vacancy on the employer's own site or ATS, plus a cached, evidence-backed review of what it is like to work there. |
+| **Application toolkit** | Tailor your resume to a posting's keywords and render it to PDF, draft a cover letter, and pre-answer the application's screening questions in your own voice. |
+| **Document review** | An honest second opinion before you send anything: your CV in general or as an application for one specific vacancy, or a motivational letter judged against the posting it answers. Nothing is saved or sent. |
+| **Interview prep** | Keep a reusable bank of STAR stories, then have the behavioural questions a posting is likely to ask extracted and matched to the story that best answers each one. |
+| **Self-hosted control room** | An eleven-tab web dashboard with live per-stage progress and a stop button, four push channels (ntfy, email, Slack, Discord), per-user databases and configs, a container-native weekly scheduler that wakes a sleeping GPU host over Wake-on-LAN, and an MCP server for querying your pipeline from an AI client. |
+
+## Quick start
+
+**Windows** — requires [Docker Desktop](https://www.docker.com/products/docker-desktop/); the installer offers to fetch it if missing.
 
 ```powershell
 powershell -ExecutionPolicy Bypass -Command "iwr -useb https://raw.githubusercontent.com/JvWageningen/job-scout/main/deploy/install.ps1 | iex"
 ```
 
-The installer will:
-- Check for Docker Desktop and offer to install it via winget if missing
-- Create a `job-scout` folder in your user profile (`%USERPROFILE%\job-scout`)
-- Download the latest release and set up Docker containers
-- Open the dashboard automatically at http://localhost:24817
-
-To update job-scout later, run the same command again.
-
-### Easy install (Linux)
-
-**Requirements:** Linux (most distributions), and [Docker](https://docs.docker.com/engine/install/).
-
-Run this command in your terminal:
+**Linux** — requires [Docker Engine](https://docs.docker.com/engine/install/); the installer offers to fetch it if missing.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/JvWageningen/job-scout/main/deploy/install.sh | bash
 ```
 
-The installer will:
-- Check for Docker and offer to install it if missing
-- Create a `job-scout` folder in your home directory (`~/job-scout`)
-- Download the latest release and set up the containers
-- Print the dashboard address (http://localhost:24817) when it is up
-
-To update job-scout later, run the same command again.
+Both installers are idempotent: run the same command again to update. For an always-on NAS or server, see [docs/DEPLOY.md](docs/DEPLOY.md).
 
 ### After installing
 
-Once the dashboard opens:
+1. **Open the dashboard** at `http://localhost:24817` and create your user.
+2. **Point it at an LLM** under LLM Settings — nothing that follows works without one. A local OpenAI-compatible server (Ollama, LM Studio) is the default and needs no key, just a model actually running; for a hosted model, paste a Z.AI key under Secrets. The backends and per-stage routing are in [docs/LLM_PROVIDERS.md](docs/LLM_PROVIDERS.md).
+3. **Fill in Profile & Filters** — your CV path, home address, commute ceilings per mode, salary floor, and a short description of what you are looking for (and what you are not).
+4. **Generate keywords** from the Keywords tab, which derives your search terms and title include/exclude lists from that profile and your CV.
+5. **Run once**, review the matches, then set your weekly slots and notification channel under Schedule and Notifications.
 
-1. **Create a user** — click *Create New User* at the top and pick a name
-2. **Describe what you want** — fill in your profile under *Profile & Filters*, and upload your CV as a PDF right there
-3. **Set the schedule** — under *Schedule → Automatic runs*, pick the days and times to search
-4. **Get notified** — under *Notifications*, scan the QR code with the [ntfy](https://ntfy.sh) app to receive matches on your phone
+Full walkthrough: [docs/USAGE.md](docs/USAGE.md) · dashboard tour: [docs/WEB_DASHBOARD.md](docs/WEB_DASHBOARD.md).
 
-No command line needed. The dashboard handles everything.
+### Developer install
 
-**If your network is shared:** To add a password, set `JOB_SCOUT_DASHBOARD_TOKEN` in the `.env` file inside your job-scout folder.
-
-**Wake-on-LAN note:** The Schedule tab can wake a sleeping model server before each run. This works on Linux installs with Docker Engine (host networking) and on NAS installs — but not under Docker Desktop (Windows, macOS, or WSL2), where the installer switches to bridge networking. There, leave the MAC field empty and keep the model server awake, or run the model on the same machine.
-
-### Developer install (CLI)
-
-For developers, contributors, or those who prefer the command line.
-
-#### Getting started
+Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/).
 
 ```bash
-git clone https://github.com/JvWageningen/job-scout
+git clone https://github.com/JvWageningen/job-scout.git
 cd job-scout
 uv sync
+
+uv run job-scout init --user alex              # interactive setup
+uv run job-scout keywords refresh --user alex  # derive keywords from profile + CV
+uv run job-scout run --user alex --dry-run     # full pipeline, no saving, no notifications
 ```
 
-#### Quick start
+Every command is documented in [docs/USAGE.md](docs/USAGE.md); every setting in [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
 
-```bash
-# 1. Interactive setup — prompts for profile, CV path, salary, vacation, API keys
-uv run job-scout init --user alex
+## How it works
 
-# 2. Generate search keywords and title filters from your profile and CV
-uv run job-scout keywords refresh --user alex
-
-# 3. Run a full search cycle
-uv run job-scout run --user alex
-
-# 4. Preview without sending notifications
-uv run job-scout run --user alex --dry-run
-```
-
-Or skip the CLI and use the [web dashboard](#web-dashboard) once a user is set up.
-
-### NAS / server install
-
-For always-on NAS or server deployments, see [docs/DEPLOY.md](docs/DEPLOY.md) and [deploy/nas-install.sh](deploy/nas-install.sh). The NAS installer configures job-scout to run on a schedule and wake your model server before each search.
-
-## How It Works
-
-Each `job-scout run` executes a multi-stage filtering pipeline, with LLM calls and I/O parallelized within each stage:
+One `job-scout run` is a funnel. Each stage is cheaper than the one it feeds, and I/O and LLM calls are parallelised within a stage, so the expensive full evaluation only ever sees listings that already survived a title filter, an LLM screen and a real routing calculation.
 
 ```text
-Scrape (Indeed, LinkedIn, NVB, custom sites) — parallel across sources
-  → Deduplicate (skip previously seen jobs, by URL and by normalized title+company)
-    → Keyword title filter (fast local include/exclude matching)
-      → LLM title screening (batched calls review all remaining titles)
-        → Quick LLM fit score (cheap first-pass filter, parallelized)
-          → Full LLM evaluation (fit score, negative match, salary, vacation, parallelized)
-            → Travel time filter (car, bike, public transport, parallelized)
-              → Salary & vacation filter
-                → Notify via ntfy.sh
+  invalidate stale evaluations     profile changed? drop the cached scores
+  auto-prune active jobs           optional: expire vacancies already filled
+            │
+  scrape ───┴──► Indeed · LinkedIn · Nationale Vacaturebank · custom career pages
+            │    (parallel across sources, deduplicated within the batch)
+            ▼
+  deduplicate against the database
+            ▼
+  title filter                     rule-based, morpheme-aware include/exclude
+            ▼
+  LLM title screen                 batched — many titles per call
+            ▼
+  commute filter                   geocode + car / bike / NS routing vs your limits
+            ▼
+  quick evaluation                 cheap per-track score, best track recorded
+            ▼
+  full evaluation                  fit score · negative match · salary · vacation
+            ▼
+  compensation filter              LLM extraction + deterministic regex backstop
+            ▼
+  verify still open                expire anything filled since it was scraped
+            ▼
+  enrich                           employer's own posting URL · company review
+            ▼
+  notify                           ntfy · email · Slack · Discord, per job or digest
+            ▼
+  save run statistics              stage timings and counts for the Analytics tab
 ```
 
-The `keywords refresh` command generates all filter keywords automatically from your profile:
-- **Search keywords** (Dutch + English) for job board queries
-- **Title include keywords** (e.g. "CRO", "conversie", "analyst") — titles must contain at least one
-- **Title exclude keywords** (e.g. "SAP", "payroll") — titles containing these are skipped instantly
+Evaluations are cached by normalised title and company, so a vacancy cross-posted to three boards never costs three LLM calls — and the cache is invalidated automatically when you change your profile.
 
-Previously seen evaluations are cached by normalized title+company, so re-evaluating a cross-posted duplicate never costs a second LLM call.
+job-scout is built for one person running a personal job hunt at modest volume; whether scraping a given board is permitted is governed by that site's terms of service and the law where you live, not by this project — see [SECURITY.md](SECURITY.md).
 
-## Usage
+## Dashboard
 
-### Multi-user
+Everything the pipeline produces is browsable and editable from a self-hosted web UI: matches and approvals, profile and filters, keywords, custom sites, LLM routing, secrets, schedule and analytics — with live per-stage progress while a run is in flight.
 
-Each user gets their own directory under `data/users/<name>/` containing their `config.yaml`, `jobs.db`, and `logs/` — none of it is tracked in git. Global settings (LLM provider, model names, server URLs) live in `data/config.yaml`, created automatically by `job-scout init`, and are shared across all users.
+<p align="center">
+  <a href="assets/dashboard.png">
+    <img src="assets/dashboard.png" alt="The job-scout dashboard showing matched vacancies with fit scores, commute times and salary bands" width="900">
+  </a>
+</p>
 
-```bash
-# Add a new user
-uv run job-scout init --user bob
+<sub align="center">Demonstration data. Every company and vacancy shown is fictional.</sub>
 
-# Run for a specific user
-uv run job-scout run --user alex
+## Documentation
 
-# Run for all users
-uv run job-scout run --all
+| Document | Contents |
+|---|---|
+| [docs/README.md](docs/README.md) | Documentation index — start here |
+| [docs/USAGE.md](docs/USAGE.md) | Full CLI reference and day-to-day workflows |
+| [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | Every global key, per-user key, secret and environment variable |
+| [docs/LLM_PROVIDERS.md](docs/LLM_PROVIDERS.md) | The four backends and per-stage routing |
+| [docs/NOTIFICATIONS.md](docs/NOTIFICATIONS.md) | ntfy, email, Slack and Discord; modes and retry |
+| [docs/WEB_DASHBOARD.md](docs/WEB_DASHBOARD.md) | Dashboard tabs, token auth and security posture |
+| [docs/DEPLOY.md](docs/DEPLOY.md) | Docker, NAS and server deployment |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | How the pieces fit together, and why |
+| [CHANGELOG.md](CHANGELOG.md) | Release history |
+| [LICENSE](LICENSE) | PolyForm Noncommercial 1.0.0, in full |
 
-# Show a user's effective config (global + user settings merged)
-uv run job-scout config show --user alex
+## Contributing
 
-# Set a user-scoped value
-uv run job-scout config set ntfy_topic "alex-alerts" --user alex
+Contributions are welcome — bug reports, new scrapers, better prompts, documentation fixes. Commits follow [Conventional Commits](https://www.conventionalcommits.org/), because the release version and changelog are generated from them, and CI must pass ruff, ruff format, pytest and mypy before anything merges.
 
-# Set a global value (shared across all users)
-uv run job-scout config set max_jobs_per_source 75
-```
+Read [CONTRIBUTING.md](CONTRIBUTING.md) for the dev setup and the pull request process, and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) for the ground rules. Security issues go to [SECURITY.md](SECURITY.md) rather than the public tracker.
 
-### Configuration
+## Support this project
 
-```bash
-uv run job-scout config show                                    # global config
-uv run job-scout config show --user alex                        # effective config for a user
-uv run job-scout config set home_address "Amsterdam" --user alex
-uv run job-scout config set max_travel_car 45 --user alex
-uv run job-scout config set fit_score_threshold 60 --user alex
-uv run job-scout config set min_salary 3000 --user alex
-```
+job-scout is free for your own job hunt, for study and research, and for charities, schools and public bodies — every release under these terms stays free for those uses. Sponsorship pays for the time that goes into new scrapers, better evaluation prompts and keeping the Dutch job boards working as they change.
 
-#### Global settings (`data/config.yaml`)
-
-| Key | Default | Description |
-|-----|---------|-------------|
-| `llm_provider` | `claude_cli` | Default LLM backend: `claude_cli`, `zai`, `kilo_cli`, or `local` |
-| `quick_eval_provider` | — | Override provider for quick-eval only (falls back to `llm_provider`) |
-| `screening_provider` | — | Override provider for title screening only |
-| `evaluation_provider` | — | Override provider for full evaluation only |
-| `keywords_provider` | — | Override provider for keyword generation only |
-| `max_parallel_evaluations` | `5` | Max concurrent LLM calls during quick-eval/evaluation/screening/travel lookups |
-| `max_jobs_per_source` | `50` | Max jobs fetched per source |
-| `ntfy_server` | `https://ntfy.sh` | ntfy.sh server URL |
-| `smtp_host` | — | SMTP relay hostname (for email notifications) |
-| `smtp_port` | `587` | SMTP relay port (for email notifications) |
-| `smtp_from` | — | SMTP sender address (for email notifications) |
-| `llm_max_attempts` | `3` | Retry attempts for LLM calls |
-| `llm_retry_base_delay` | `1.0` | Base backoff delay in seconds (doubles each retry) |
-| `claude_evaluation_model` | — | Claude model for evaluation (default: CLI default) |
-| `claude_screening_model` | `haiku` | Claude model for title screening |
-| `zai_base_url` | `https://api.z.ai/api/coding/paas/v4` | Z AI endpoint |
-| `zai_model` | `glm-5.1` | Z AI model for evaluation and keywords |
-| `zai_screening_model` | `glm-4.5-air` | Z AI model for title screening |
-| `zai_screening_batch_size` | `20` | Batch size for Z AI/Kilo screening calls |
-| `zai_quick_eval_model` | — | Z AI model for quick evaluation |
-| `kilo_evaluation_model` | `zai/glm-5.1` | Kilo CLI model for evaluation |
-| `kilo_screening_model` | `zai/glm-4.5-air` | Kilo CLI model for title screening |
-| `kilo_quick_eval_model` | — | Kilo CLI model for quick evaluation |
-| `local_base_url` | `http://localhost:11434/v1` | OpenAI-compatible endpoint for the `local` provider (Ollama, LM Studio, vLLM, etc. — same machine or LAN) |
-| `local_model` | `llama3.1` | Local model for evaluation and keywords |
-| `local_screening_model` | — | Local model for title screening |
-| `local_quick_eval_model` | — | Local model for quick evaluation |
-
-#### Per-user settings (`data/users/<name>/config.yaml`)
-
-| Key | Default | Description |
-|-----|---------|-------------|
-| `name` | — | User name |
-| `profile_description` | — | Your professional profile and desired roles |
-| `negative_description` | — | Roles/skills to exclude |
-| `cv_path` | — | Path to your CV PDF |
-| `home_address` | — | Home address for travel calculations |
-| `max_travel_car` | `30` | Max car travel time (minutes; requires ORS key) |
-| `max_travel_pt` | `60` | Max public transport time (minutes; requires NS key) |
-| `max_travel_bike` | `45` | Max bike travel time (minutes; requires ORS key) |
-| `max_distance_km` | — | Max straight-line distance in km (no API key needed) |
-| `geocode_cache_days` | `90` | Cache validity for geocoded addresses (days) |
-| `travel_cache_days` | `14` | Cache validity for travel time results (days) |
-| `fit_score_threshold` | `60` | Minimum fit score (0–100) |
-| `quick_eval_threshold` | `40` | Quick evaluation minimum score |
-| `min_salary` | — | Minimum gross monthly salary (EUR) |
-| `max_salary` | — | Maximum gross monthly salary (EUR) |
-| `min_vacation_days` | — | Minimum annual vacation days |
-| `notification_channel` | `ntfy` | Notification channel: `ntfy`, `email`, `slack`, or `discord` |
-| `notification_mode` | `per_job` | Notification mode: `per_job` (one per match) or `digest` (daily summary) |
-| `ntfy_topic` | `job-scout-alerts` | ntfy.sh topic for push notifications |
-| `slack_webhook_url` | — | Slack incoming webhook URL (for `notification_channel: slack`) |
-| `discord_webhook_url` | — | Discord webhook URL (for `notification_channel: discord`) |
-| `smtp_to` | — | Email recipient (for `notification_channel: email`) |
-| `language_preferences` | `["nl","en"]` | Language filter for job boards |
-| `keywords_dutch` | `[]` | Dutch job search keywords (auto-generated) |
-| `keywords_english` | `[]` | English job search keywords (auto-generated) |
-| `title_include_keywords` | `[]` | Title must contain at least one (auto-generated) |
-| `title_exclude_keywords` | `[]` | Title containing any is skipped (auto-generated) |
-| `jobspy_keyword_limit` | `5` | Max keywords to use per scrape for jobspy |
-| `jobspy_sites` | `["indeed","linkedin"]` | Job sources to scrape: `indeed`, `linkedin`, `glassdoor`, `zip_recruiter`, `google`, `bayt`, `naukri`, `bdjobs` |
-| `nvb_keyword_limit` | `3` | Max keywords to use per scrape for Nationalevacaturebank |
-| `custom_sites` | `[]` | Custom site URLs to scrape (see [Custom sites](#custom-sites)) |
-
-#### Secrets (`data/secrets.yaml` or environment variables)
-
-API keys are **never stored in tracked YAML files**. Set them via environment variables or the gitignored `data/secrets.yaml`:
-
-| Secret | Env var | Description |
-| --- | --- | --- |
-| `zai_api_key` | `JOB_SCOUT_ZAI_API_KEY` | Z AI API key |
-| `local_api_key` | `JOB_SCOUT_LOCAL_API_KEY` | API key for the local/LAN LLM server (usually not required) |
-| `ors_api_key` | `JOB_SCOUT_ORS_API_KEY` | OpenRouteService API key |
-| `ns_api_key` | `JOB_SCOUT_NS_API_KEY` | NS Journey Planner API key |
-| `smtp_username` | `JOB_SCOUT_SMTP_USERNAME` | SMTP relay username (optional, if relay requires auth) |
-| `smtp_password` | `JOB_SCOUT_SMTP_PASSWORD` | SMTP relay password (optional, if relay requires auth) |
-
-Environment variables take precedence over `data/secrets.yaml`.
-
-> Set `JOB_SCOUT_DATA_DIR` to override the default `./data/` directory.
-
-### Configure LLM provider
-
-job-scout supports four LLM backends, selectable globally and overridable per pipeline stage (quick-eval, title screening, full evaluation, keyword generation):
-
-- **`claude_cli`** (default) — shells out to the local Claude Code CLI (`claude`)
-- **`zai`** — Z AI's GLM models via their OpenAI-compatible REST API
-- **`kilo_cli`** — the Kilo Code CLI, routing to Z AI or other providers
-- **`local`** — any OpenAI-compatible server on your own machine or local network: [Ollama](https://ollama.com), [LM Studio](https://lmstudio.ai), [llama-swap](https://github.com/pkdoc/llama-swap) (model auto-swap proxy), vLLM, llama.cpp server, text-generation-webui, LocalAI, etc.
-
-```bash
-# Switch the default provider
-uv run job-scout config set llm_provider local
-uv run job-scout config set local_base_url http://192.168.1.50:11434/v1
-uv run job-scout config set local_model llama3.1
-
-# Or mix providers per stage — e.g. cheap local model for quick-eval,
-# a stronger hosted model for the final evaluation
-uv run job-scout config set quick_eval_provider local
-uv run job-scout config set evaluation_provider zai
-```
-
-All of this is also available in the [web dashboard](#web-dashboard)'s LLM Settings tab, including a "Test Connection" button that verifies a candidate provider/URL/key before you save it.
-
-### Notifications
-
-job-scout supports pluggable notification channels: **ntfy.sh** (push notifications), **Email** (SMTP), **Slack** (incoming webhooks), and **Discord** (incoming webhooks). Each user can choose their preferred channel and configure channel-specific settings.
-
-```bash
-# Set notification channel for a user
-uv run job-scout config set notification_channel slack --user alex
-
-# Configure Slack webhook
-uv run job-scout config set slack_webhook_url "https://hooks.slack.com/services/..." --user alex
-
-# Configure email recipient
-uv run job-scout config set smtp_to "you@example.com" --user alex
-```
-
-#### Supported channels
-
-| Channel | Configuration | Notes |
-|---------|---------------|-------|
-| **ntfy.sh** (default) | `notification_channel: ntfy`, `ntfy_topic` (user-scoped), `ntfy_server` (global, read-only) | Free push notifications to your phone or desktop. Public-by-default topics; use a hard-to-guess UUID for privacy. |
-| **Email** (SMTP) | `notification_channel: email`, `smtp_to` (user-scoped), `smtp_host/smtp_port/smtp_from` (global, shared relay) | Requires a shared SMTP relay configured globally. Each user specifies their recipient email. SMTP credentials are secrets. |
-| **Slack** | `notification_channel: slack`, `slack_webhook_url` (user-scoped) | Create an [incoming webhook](https://api.slack.com/messaging/webhooks) in your Slack workspace and paste the URL. |
-| **Discord** | `notification_channel: discord`, `discord_webhook_url` (user-scoped) | Create a webhook in your Discord server's webhook settings and paste the URL. |
-
-#### Notification modes
-
-By default, job-scout sends one notification per matched job. For a more condensed daily summary, enable digest mode:
-
-```bash
-# Enable daily digest (one notification summarizing all matches)
-uv run job-scout config set notification_mode digest --user alex
-
-# Back to per-job notifications (default)
-uv run job-scout config set notification_mode per_job --user alex
-```
-
-| Mode | Behavior | Best for |
-|------|----------|----------|
-| **per_job** (default) | One notification per matched job, sent immediately | Users who want real-time alerts for every match |
-| **digest** | One notification per run summarizing all matches with job title, company, and fit score; top pick highlighted | Users who prefer a condensed daily summary to reduce notification noise |
-
-Digest notifications work with any channel (ntfy.sh, email, Slack, Discord) and are formatted appropriately for each. If a run has zero matches, no digest is sent (consistent with per-job mode).
-
-#### Global SMTP relay (email only)
-
-If your team uses email notifications, configure the shared relay once globally:
-
-```bash
-uv run job-scout config set smtp_host mail.example.com
-uv run job-scout config set smtp_port 587
-uv run job-scout config set smtp_from jobs@example.com
-# Optional: authentication credentials (only if your relay requires it)
-# Set JOB_SCOUT_SMTP_USERNAME and JOB_SCOUT_SMTP_PASSWORD environment variables
-# or add them to data/secrets.yaml
-```
-
-Then each user simply sets their recipient email:
-
-```bash
-uv run job-scout config set smtp_to "alex@example.com" --user alex
-```
-
-#### Testing a notification channel
-
-Before relying on notifications in production, test your configuration via the web dashboard's Notifications tab or the CLI:
-
-```bash
-# Coming soon: CLI test command
-# For now, use the web dashboard Notifications tab and click "Test Notification"
-```
-
-#### Retry and pending notifications
-
-If a notification send fails (network error, webhook unreachable, etc.), the job is automatically marked as `notification_pending` in the database. On the next `job-scout run`, pending notifications are automatically retried using the same channel. This ensures matches are never lost due to transient failures.
-
-## Web dashboard
-
-```bash
-uv run job-scout web                       # binds 0.0.0.0:8000 by default
-uv run job-scout web --host 127.0.0.1 --port 8080
-```
-
-A single-page dashboard (plain HTML/JS, no build step) covering every CLI function: user management, profile & filters, keywords, custom sites, LLM provider settings (including local/LAN testing), secrets, schedule management, run triggering with live status, and a log viewer.
-
-### Optional Token Authentication
-
-By default, the dashboard has no authentication — anyone who can reach the host and port can view your data and trigger runs. To enable optional shared-token authentication, set the `JOB_SCOUT_DASHBOARD_TOKEN` environment variable or add `dashboard_token` to `data/secrets.yaml`:
-
-```bash
-# Via environment variable
-JOB_SCOUT_DASHBOARD_TOKEN="my-secret-token" uv run job-scout web
-
-# Or in data/secrets.yaml
-dashboard_token: my-secret-token
-```
-
-When a token is configured, the frontend will prompt for it on first use, store it in sessionStorage, and attach it to all subsequent API requests via the `Authorization: Bearer <token>` header. Static files (HTML/CSS/JS) remain unauthenticated so the page can load.
-
-> **Important:** This is a simple shared-secret gate, not a multi-user login/authorization system. The token is sent in plaintext over HTTP unless you use HTTPS (reverse proxy/firewall). Never run the dashboard on an untrusted network without additional security (firewall rules, VPN, HTTPS/TLS) — treat it like an internal tool only.
-
-The dashboard prints a startup banner showing whether authentication is enabled. If you don't use a token, restrict access with firewall rules or a VPN.
-
-### Custom sites
-
-Add arbitrary company career pages or job boards. Each page is fetched and the LLM extracts job postings — no per-site parser needed.
-
-```bash
-# Add a site for a specific user
-uv run job-scout sites add https://careers.example.com/jobs --name "Example Corp" --user alex
-
-# List configured sites
-uv run job-scout sites list --user alex
-
-# Remove a site
-uv run job-scout sites remove "Example Corp" --user alex
-```
-
-Custom sites are scraped on every `job-scout run` alongside the standard sources. Extraction failures (unreachable pages, unparseable HTML) log a warning and contribute zero jobs — they never abort a run.
-
-#### JavaScript rendering (optional)
-
-By default, custom sites are fetched as static HTML. If a career page loads jobs via JavaScript (SPA, dynamic content), enable `render_js: true` to render the page fully before extracting jobs. This requires the **optional** `playwright` dependency:
-
-```bash
-# Install playwright (one-time setup)
-uv sync --extra browser
-uv run playwright install --with-deps chromium
-
-# Add a site with JS rendering enabled
-uv run job-scout sites add https://careers.example.com/jobs --name "Example Corp" --user alex --render-js
-```
-
-To enable via the web dashboard, check the **Render JavaScript** checkbox when adding a site. Playwright will be auto-detected; if not installed, a fallback to static HTML is used (with a logged warning).
-
-### Full rerun
-
-Re-scrape, re-evaluate, and re-notify all matches — useful after fixing evaluation issues or changing your profile significantly:
-
-```bash
-uv run job-scout run --user alex --full
-uv run job-scout run --all --full   # all users
-```
-
-A full rerun bypasses the deduplication gate, overwrites stored fit scores and statuses, and re-sends notifications for all matched jobs.
-
-### Viewing Results
-
-```bash
-uv run job-scout jobs list                     # recent matched jobs (default 20)
-uv run job-scout jobs list --limit 50 --user alex
-uv run job-scout jobs rejected --user alex     # rejected jobs with reasons
-```
-
-### Run History & Analytics
-
-Each run (except dry runs) is automatically recorded in the user's database with statistics including scraped count, matched, rejected, notified, errors, and duration. View the history via CLI or the web dashboard:
-
-```bash
-uv run job-scout runs history --user alex      # show last 30 runs
-uv run job-scout runs history --user alex --limit 50
-```
-
-The web dashboard includes an **Analytics** tab displaying recent runs in a table and a lightweight trend chart showing matched jobs over time.
-
-**Note:** Dry-run executions (`--dry-run`) are not recorded in run history, as they are not actual searches and do not persist data.
-
-### Scheduling
-
-Per-user cron scheduling lets each user run job searches on their own schedule. Each scheduled job fires at its configured time and weekdays, running `job-scout run --user <name>` for that user.
-
-#### Schedule a Specific User
-
-```bash
-# Install cron job for user 'alice' at 08:00 on weekdays (Monday-Friday)
-uv run job-scout schedule install --user alice
-
-# Install at 07:00 on weekends (Saturday-Sunday)
-uv run job-scout schedule install --user alice --hour 7 --days 0,6
-
-# Check alice's schedule status
-uv run job-scout schedule status --user alice
-
-# Remove alice's schedule
-uv run job-scout schedule remove --user alice
-```
-
-#### Weekday Options (Cron Syntax)
-
-The `--days` parameter uses cron day-of-week syntax (0 = Sunday, 1 = Monday, ... 6 = Saturday):
-
-- `1-5` - Weekdays only, Monday-Friday (default)
-- `*` - Every day
-- `0,6` - Weekends only (Saturday and Sunday)
-- `0` - Sunday only
-- `1` - Monday only
-- etc.
-
-#### Global Schedule (Backward Compatibility)
-
-For a single-user setup or to run all users at the same time:
-
-```bash
-# Install global cron (runs 'job-scout run --all')
-uv run job-scout schedule install
-
-# Install global cron at 07:00
-uv run job-scout schedule install --hour 7
-
-# Check global schedule
-uv run job-scout schedule status
-
-# Remove global schedule
-uv run job-scout schedule remove
-```
-
-#### Pause a User's Schedule
-
-To temporarily stop a user's scheduled runs without removing the cron job, set the `schedule_paused` field in their config via the web dashboard (Schedule tab) or CLI:
-
-```bash
-uv run job-scout config set schedule_paused true --user alice
-uv run job-scout config set schedule_paused false --user alice
-```
-
-When a paused user's cron job fires, it logs the pause and exits immediately with no processing.
-
-#### Web Dashboard Schedule Tab
-
-Each user can configure their own schedule (hour, minute, weekdays, pause toggle) via the web dashboard's Schedule tab. To manage a user's schedule:
-
-1. Open the dashboard at `http://localhost:8000`
-2. Select the user from the "Select User" dropdown
-3. Go to the Schedule tab
-4. Adjust hour, minute, weekdays, and toggle "Pause this user's scheduled runs"
-5. Click "Save Schedule" to install the cron job and save the configuration
-
-Secrets are read from `data/secrets.yaml` so no environment configuration is needed for cron.
-
-## Project Structure
-
-```
-src/job_scout/
-├── cli.py             # Click CLI entry point and pipeline orchestration
-├── config.py          # YAML configuration, multi-user path helpers, secret loading
-├── models.py          # Pydantic data models (JobListing, Config, CustomSite, …)
-├── database.py        # SQLite persistence, deduplication, and evaluation cache
-├── evaluator.py        # LLM integration (fit score, negative match, compensation)
-├── scraper.py         # Job scraping: jobspy (Indeed, LinkedIn, NVB) + custom sites
-├── cv_parser.py       # PDF CV text extraction (PyPDF2)
-├── travel.py          # Travel times via Nominatim, OpenRouteService, NS API
-├── notifier.py        # ntfy.sh push notifications with retry support
-├── scheduler.py       # Cron job install/remove
-├── title_filter.py    # Fast keyword-based title pre-filter
-├── title_screener.py  # Batch LLM title screening
-├── llm/
-│   ├── base.py        # LLMClient protocol and LLMError
-│   ├── factory.py     # Provider selection, per-purpose routing, RetryingLLMClient wrapping
-│   ├── retry.py       # RetryingLLMClient (exponential backoff)
-│   ├── claude_cli.py  # Claude Code CLI backend
-│   ├── zai.py         # Z AI REST backend
-│   ├── kilo_cli.py    # Kilo CLI backend
-│   └── local.py       # Local/LAN OpenAI-compatible backend (Ollama, LM Studio, vLLM, …)
-└── web/
-    ├── app.py         # FastAPI app: every CLI function exposed as a REST endpoint
-    └── static/         # Dashboard frontend (plain HTML/CSS/JS, no build step)
-```
-
-## Development
-
-```bash
-uv run pytest                  # run tests
-uv run pytest -x               # stop on first failure
-uv run ruff check . --fix      # lint and auto-fix
-uv run ruff format .           # format code
-uv run mypy src/               # type check
-uv run bandit -r src/          # security audit
-uv run pip-audit               # dependency vulnerability check
-uv run vulture src/            # unused code detection
-uv run radon cc src/ -mi C     # complexity report
-```
-
-## Releases & Versioning
-
-Versioning is fully automated with [python-semantic-release](https://python-semantic-release.readthedocs.io/), driven by [Conventional Commits](https://www.conventionalcommits.org/) on `main`:
-
-- `fix: ...` → patch release
-- `feat: ...` → minor release
-- `feat!: ...` or a `BREAKING CHANGE:` footer → major release
-
-On every push to `main`, CI determines whether a release is warranted, bumps the version in `pyproject.toml`, updates `CHANGELOG.md`, tags the commit, and publishes a GitHub Release with the built package and a `SHA256SUMS` checksum file attached. Commits that don't match the convention (docs, chores, etc.) don't trigger a release.
+<div align="center">
+<a href="https://github.com/sponsors/JvWageningen"><img src="https://img.shields.io/badge/Sponsor-%E2%9D%A4-c9761f?style=for-the-badge&logo=githubsponsors&logoColor=white" alt="Sponsor job-scout"></a>
+</div>
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+[PolyForm Noncommercial License 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0) — see [LICENSE](LICENSE). SPDX identifier: `PolyForm-Noncommercial-1.0.0`.
+
+In plain English: use it freely for any noncommercial purpose — your own job hunt, study, research, hobby projects — and freely as a charity, school, public research body, public safety or health body, environmental organisation or government institution. What is not granted is commercial use: nobody may sell it, resell it, offer it as a paid or hosted service, or use it to run a business.
+
+This makes job-scout **source-available, not OSI-approved open source** — the OSI definition does not permit restrictions on the field of use. The source is public, contributions are welcome under the same terms, and the label is simply accurate.
+
+The entire **v1.x** line, up to and including v1.17.3, was released under the MIT licence. That grant is irrevocable: anyone who obtained those versions keeps their MIT rights to that code permanently. The PolyForm terms apply from **v2.0.0** onward.
+
+GitHub's licence detector does not recognise PolyForm, so the repository sidebar reads "View license" rather than naming it. That is expected.
+
+For commercial licensing enquiries, open a [GitHub Discussion](https://github.com/JvWageningen/job-scout/discussions) or an issue.
