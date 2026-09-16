@@ -35,3 +35,16 @@ data/
 
 # Internal dev handoff (IPs, MAC, host paths) -- never publish.
 DEV_HANDOFF.md
+
+# Local agent tooling. Deliberately untracked in a public repository:
+#   .claude/settings.json allowed "Bash(*)" -- a blanket shell auto-approval that every
+#     cloner would silently inherit -- and its hooks are POSIX-only, so they never ran on
+#     the Windows machine this project is developed on.
+#   .mcp.json launched two unpinned third-party npm packages via npx, and was malformed
+#     anyway (entries sat at the top level instead of under "mcpServers").
+# Both still work locally; they are simply no longer published.
+.claude/settings.json
+.claude/settings.local.json
+.claude/hooks/
+.mcp.json
+.vibegen/
