@@ -40,20 +40,26 @@
             </section>
 
             <!-- Tab Navigation -->
-            <nav class="tabs">
-                <button class="tab-btn active" data-tab="dashboard">Dashboard</button>
-                <button class="tab-btn" data-tab="approvals">Approvals</button>
-                <button class="tab-btn" data-tab="profile">Profile & Filters</button>
-                <button class="tab-btn" data-tab="feedback">Document Review</button>
-                <button class="tab-btn" data-tab="cv">CV Builder</button>
-                <button class="tab-btn" data-tab="letters">Letter Writer</button>
-                <button class="tab-btn" data-tab="keywords">Keywords</button>
-                <button class="tab-btn" data-tab="sites">Custom Sites</button>
-                <button class="tab-btn" data-tab="notifications">Notifications</button>
-                <button class="tab-btn" data-tab="llm">LLM Settings</button>
-                <button class="tab-btn" data-tab="secrets">Secrets</button>
-                <button class="tab-btn" data-tab="schedule">Schedule</button>
-                <button class="tab-btn" data-tab="analytics">Analytics</button>
+            <nav class="tabs grouped-tabs" aria-label="Main navigation">
+                <div class="tab-group"><span class="tab-group-label">Find &amp; track jobs</span><div class="tab-group-buttons">
+                    <button class="tab-btn active" data-tab="dashboard">Dashboard</button>
+                    <button class="tab-btn" data-tab="approvals">Approvals</button>
+                    <button class="tab-btn" data-tab="analytics">Analytics</button>
+                </div></div>
+                <div class="tab-group"><span class="tab-group-label">Prepare applications</span><div class="tab-group-buttons">
+                    <button class="tab-btn" data-tab="cv">CV Builder</button>
+                    <button class="tab-btn" data-tab="letters">Cover Letter Writer</button>
+                    <button class="tab-btn" data-tab="feedback">Document Review</button>
+                </div></div>
+                <div class="tab-group"><span class="tab-group-label">Settings</span><div class="tab-group-buttons">
+                    <button class="tab-btn" data-tab="profile">Profile &amp; Filters</button>
+                    <button class="tab-btn" data-tab="keywords">Keywords</button>
+                    <button class="tab-btn" data-tab="sites">Custom Sites</button>
+                    <button class="tab-btn" data-tab="notifications">Notifications</button>
+                    <button class="tab-btn" data-tab="schedule">Schedule</button>
+                    <button class="tab-btn" data-tab="llm">LLM Settings</button>
+                    <button class="tab-btn" data-tab="secrets">Secrets</button>
+                </div></div>
             </nav>
 
             <!-- User Picker Section -->
@@ -70,8 +76,8 @@
 
 
             <section id="letters-section" class="section hidden tab-content" data-tab="letters">
-                <div class="letter-heading"><div><h2>Motivational letters</h2>
-                <p>Make your case, in your own voice. Start with your current CV and a vacancy.</p></div>
+                <div class="letter-heading"><div><h2>Cover letter writer</h2>
+                <p>Generate a complete cover letter (motivatiebrief) from your current CV and a vacancy, in your own voice.</p></div>
                 <span class="letter-badge">Dutch &amp; English</span></div>
                 <p id="letter-status" role="status" aria-live="polite">Select a user to begin.</p>
                 <fieldset id="letter-workspace" disabled>
@@ -89,11 +95,11 @@
                         <label for="letter-notes">What matters to you?</label>
                         <textarea id="letter-notes" maxlength="2000" rows="5" placeholder="Why this role? A conversation you have had, relevant experience, or something you want to ask about."></textarea>
                         <p class="letter-hint">Your CV, vacancy, notes and style examples go to your configured language model.</p>
-                        <div class="letter-actions"><button id="letter-generate" class="btn btn-primary" type="button">Draft letter</button><button id="letter-load" class="btn btn-secondary" type="button">Load saved</button></div>
+                        <div class="letter-actions"><button id="letter-generate" class="btn btn-primary" type="button">Generate full letter</button><button id="letter-load" class="btn btn-secondary" type="button">Load saved</button></div>
                     </div>
                     <div class="letter-paper">
                         <h3>2. Review and make it yours</h3>
-                        <p id="letter-empty">Your draft will appear here. Keep what sounds like you, and check every factual claim before sending.</p>
+                        <p id="letter-empty">Your complete letter will appear here: date, subject, opening, body, closing and signature. Review it, then save or download.</p>
                         <div id="letter-editor" hidden>
                             <p id="letter-source" class="letter-hint"></p>
                             <ul id="letter-warnings" class="letter-warnings"></ul>
@@ -105,6 +111,7 @@
                             <label for="letter-closing">Closing</label><input id="letter-closing" maxlength="500">
                             <label for="letter-signature">Signature</label><input id="letter-signature" maxlength="500">
                             <p id="letter-count" class="letter-hint"></p>
+                            <details class="letter-preview"><summary>Read the complete letter</summary><pre id="letter-full-preview"></pre></details>
                             <div class="letter-actions"><button id="letter-save" class="btn btn-primary" type="button">Save draft</button><button id="letter-pdf" class="btn btn-secondary" type="button">Download PDF</button><button id="letter-text" class="btn btn-secondary" type="button">Download text</button></div>
                             <p class="letter-hint">PDF uses the selected CV's theme. Downloads include your edits. Sending is up to you.</p>
                         </div>
@@ -127,6 +134,17 @@
             <!-- Dashboard Section -->
             <section id="dashboard-section" class="section hidden tab-content" data-tab="dashboard">
                 <h2>Dashboard</h2>
+
+                <div class="workflow-overview" aria-label="Application workflow">
+                    <div class="workflow-intro"><h3>From job search to application</h3><p>Choose the step you want to work on. Each tool uses the selected user.</p></div>
+                    <div class="workflow-cards">
+                        <article><span class="workflow-step">1 · Find</span><h4>Choose suitable roles</h4><p>Set your preferences, run a search below, and review the matches.</p><button type="button" class="btn btn-secondary" onclick="switchTab('profile')">Search preferences</button></article>
+                        <article><span class="workflow-step">2 · Build</span><h4>Prepare your CV</h4><p>Edit your current CV, tailor a version to a vacancy, and export a PDF.</p><button type="button" class="btn btn-secondary" onclick="switchTab('cv')">Open CV Builder</button></article>
+                        <article><span class="workflow-step">3 · Write</span><h4>Generate a full cover letter</h4><p>Use your CV and previous letters to write in Dutch or English. Edit and download the complete letter.</p><button type="button" class="btn btn-primary" onclick="openLetterWriter()">Write a cover letter</button></article>
+                        <article><span class="workflow-step">4 · Review</span><h4>Check your application</h4><p>Get feedback on your CV or letter against the vacancy before you send it.</p><button type="button" class="btn btn-secondary" onclick="switchTab('feedback')">Review documents</button></article>
+                    </div>
+                    <p class="workflow-note">After applying, update the vacancy's status below. Use Approvals for your shortlist and Analytics to follow your progress.</p>
+                </div>
 
                 <!-- Run Controls -->
                 <div class="run-controls">
@@ -482,8 +500,8 @@
             <section id="feedback-section" class="section hidden tab-content" data-tab="feedback">
                 <h2>Document Review</h2>
                 <p class="info-text">
-                    An honest second opinion on what you are about to send. Nothing is
-                    saved or sent anywhere &mdash; the review is generated and shown here.
+                    Get feedback on an existing document using your configured language model.
+                    The review is shown here; it does not submit your application.
                 </p>
 
                 <div class="enrichment-panel">
@@ -504,7 +522,8 @@
                 </div>
 
                 <div class="enrichment-panel">
-                    <h3>Motivational letter</h3>
+                    <h3>Review an existing cover letter</h3>
+                    <p class="info-text">Need to write one first? <button type="button" class="btn btn-small" onclick="openLetterWriter()">Open Cover Letter Writer</button></p>
                     <p class="info-text">
                         A letter can only be judged against the vacancy it answers, so
                         pick one first.

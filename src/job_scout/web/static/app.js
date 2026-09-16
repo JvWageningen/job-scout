@@ -489,7 +489,7 @@ function renderJobCard(job, rejected) {
             <p class="job-links">
                 <a href="${escapeHtml(job.url)}" target="_blank" rel="noopener noreferrer">View Job →</a>
                 ${renderOfficialLink(job)}
-                <button class="btn btn-small" onclick="openLetterForJob(${job.id})">Write letter</button>
+                <button class="btn btn-small" onclick="openLetterForJob(${job.id})">Write cover letter</button>
             </p>
         </div>
     `;

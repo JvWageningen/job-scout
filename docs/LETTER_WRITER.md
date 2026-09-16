@@ -1,4 +1,4 @@
-# Motivational letter writer
+# Cover letter writer
 
 Write a Dutch or English letter from a saved CV Builder profile and a vacancy.
 Your previous letters teach the writer your voice; the current CV supplies your
@@ -7,7 +7,7 @@ experience. The result is an editable draft, ready for your review.
 ## In the dashboard
 
 1. Select one user and save their up-to-date CV under **CV Builder**.
-2. Open **Letter Writer**, or click **Write letter** on a vacancy card.
+2. Open **Cover Letter Writer**, or click **Write cover letter** on a vacancy card.
 3. Choose the vacancy, language and CV. **Automatic** estimates Dutch or English
    from the vacancy text; select a language explicitly for mixed-language listings.
    Automatic CV selection prefers `nederlands` for Dutch and `default` for English,
@@ -16,8 +16,9 @@ experience. The result is an editable draft, ready for your review.
 4. Optionally name the recipient and add a specific reason for applying, a prior
    conversation, or something you want to discuss. Notes are treated as facts you
    supply, so include only things that are true.
-5. Click **Draft letter**. Edit the date, subject, salutation, body, closing and
+5. Click **Generate full letter**. Edit the date, subject, salutation, body, closing and
    signature. Separate paragraphs with blank lines; use `- ` for bullet lines.
+   Expand **Read the complete letter** to see all fields together.
 6. **Save draft** stores one version per vacancy and language. Saving replaces
    that language's previous version. To retrieve it, select Dutch or English and
    click **Load saved**. Generation alone does not overwrite a saved draft.
@@ -102,5 +103,5 @@ warnings; saving requires `--save`. `--pdf` exports the generated text. The CLI'
 step before saving. Use `--help` on a command for its options.
 
 The older `profile generate-cover-letter` command remains available for workflows
-based on parsed CV PDFs. The new `letter` commands and Letter Writer tab use the
+based on parsed CV PDFs. The new `letter` commands and Cover Letter Writer tab use the
 structured, saved CV Builder profile.

@@ -87,7 +87,7 @@ Everything under `src/job_scout/`. Roughly in pipeline order.
 | `resume_tailor.py` | Extracts high-value keywords from a job description, rewrites the resume around them, and renders the result to PDF with ReportLab. |
 | `cover_letter_generator.py` | Drafts a cover letter from `CvProfile` + job, extracts the screening questions a posting implies, and answers them in the candidate's voice. |
 | `interview_prep.py` | Derives likely behavioural questions for a job and matches each to the best STAR story from the saved bank. |
-| `letters/` | Per-user examples, style guides, CV-grounded letter generation, structured draft storage, PDF rendering, and the `/api/letters` router and `letter` CLI group. See [Letter Writer](docs/LETTER_WRITER.md). |
+| `letters/` | Per-user examples, style guides, CV-grounded letter generation, structured draft storage, PDF rendering, and the `/api/letters` router and `letter` CLI group. See [Cover Letter Writer](docs/LETTER_WRITER.md). |
 | `cv/` | The CV builder — a self-contained subpackage with its own document model, storage, renderer, FastAPI router, Click group and front end. See [the CV subpackage](#the-cv-subpackage) below. |
 
 ### Delivery, scheduling and integration
@@ -342,8 +342,8 @@ optional-`--user` on a single-user install and refuse to guess on a multi-user o
 ## Web and API layer
 
 `web/app.py` is a FastAPI application factory and the single-page dashboard in
-`web/static/`. Twelve tabs — Dashboard, Approvals, Profile & Filters, Document Review,
-CV Builder, Letter Writer, Keywords, Custom Sites, Notifications, LLM Settings, Secrets, Schedule,
+`web/static/`. Thirteen tabs — Dashboard, Approvals, Profile & Filters, Document Review,
+CV Builder, Cover Letter Writer, Keywords, Custom Sites, Notifications, LLM Settings, Secrets, Schedule,
 Analytics — over a JSON API grouped by resource (`/api/jobs/*`, `/api/config`,
 `/api/profile/*`, `/api/coach/*`, `/api/llm/*`, `/api/cv/*`, `/api/schedule`, `/api/run*`).
 

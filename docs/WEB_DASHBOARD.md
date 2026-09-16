@@ -82,6 +82,21 @@ that mode.
 
 ---
 
+## Finding a function
+
+Navigation is grouped by purpose:
+
+- **Find & track jobs:** Dashboard, Approvals and Analytics.
+- **Prepare applications:** CV Builder, Cover Letter Writer and Document Review.
+- **Settings:** Profile & Filters, Keywords, Custom Sites, Notifications, Schedule,
+  LLM Settings and Secrets.
+
+The Dashboard starts with four workflow cards: find roles, prepare a CV, generate a
+full cover letter, and review the documents. The search controls and vacancy lists
+remain below them. **Cover Letter Writer** generates the entire application letter,
+including its opening, body and closing; Document Review provides feedback on an
+existing document. These are separate actions.
+
 ## The tabs
 
 ### Dashboard
@@ -147,12 +162,12 @@ either in general or as an application for a specific vacancy, or paste a motiva
 letter and have it judged against the vacancy it answers. Nothing here is saved or
 sent anywhere — the critique is generated and displayed.
 
-### Letter Writer
+### Cover Letter Writer
 
 Draft a Dutch or English motivational letter from a vacancy and a saved CV Builder
 profile. Add private example letters and an editable style guide, then review the
 wording, save separate language versions, and export PDF or text. Generation does
-not submit applications. See [Letter Writer](LETTER_WRITER.md) for the complete
+not submit applications. See [Cover Letter Writer](LETTER_WRITER.md) for the complete
 workflow, privacy details and review limitations.
 
 ### Keywords

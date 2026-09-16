@@ -42,10 +42,12 @@ It runs on your machine or your NAS. With a local model, no part of your CV ever
 | **Application toolkit** | Tailor your resume to a posting's keywords and render it to PDF, draft a cover letter, and pre-answer the application's screening questions in your own voice. |
 | **Designed CV builder** | Write your CV section by section in the browser — seven section kinds across a sidebar and a main column — and watch it render live to a two-column PDF with a coloured sidebar, a circular portrait and embedded fonts. The plain ATS-safe resume stays available for upload boxes that would mangle it. |
 | **CV tailored to one vacancy** | Retarget that designed CV at a single posting: relevant roles and skills move to the front, prose is reworded, and the result is saved as a profile of its own. Employers, titles, schools and dates are frozen — a CV that came back having gained an employer is rejected, not handed to you. |
-| **Motivational letters in your voice** | Choose Dutch or English, use your current CV Builder profile, and learn your tone from private examples. Review and edit the draft, save a version per vacancy and language, and download a matching PDF or plain text. [Letter Writer guide](docs/LETTER_WRITER.md). |
+| **Full cover letters in your voice** | Choose Dutch or English, use your current CV Builder profile, and learn your tone from private examples. Review and edit the draft, save a version per vacancy and language, and download a matching PDF or plain text. [Cover Letter Writer guide](docs/LETTER_WRITER.md). |
 | **Document review** | An honest second opinion before you send anything: your CV in general or as an application for one specific vacancy, or a motivational letter judged against the posting it answers. Nothing is saved or sent. |
 | **Interview prep** | Keep a reusable bank of STAR stories, then have the behavioural questions a posting is likely to ask extracted and matched to the story that best answers each one. |
 | **Self-hosted control room** | A web dashboard with live per-stage progress and a stop button, four push channels (ntfy, email, Slack, Discord), per-user databases and configs, a container-native weekly scheduler that wakes a sleeping GPU host over Wake-on-LAN, and an MCP server for querying your pipeline from an AI client. |
+
+![Application workflow: find roles, build a CV, write a full cover letter, and review documents](assets/workflow-overview.png)
 
 ## Quick start
 

@@ -42,7 +42,7 @@
         ['job', 'cv', 'examples', 'warnings'].forEach(id => el(id).replaceChildren());
         ['notes', 'recipient', 'guide', 'body', ...fields].forEach(id => { el(id).value = ''; });
         el('files').value = ''; el('language').value = 'auto';
-        el('source').textContent = ''; el('count').textContent = '';
+        el('source').textContent = ''; el('count').textContent = ''; el('full-preview').textContent = '';
         status('Select a single user to write a letter.');
     }
     async function examples(ctx) {
@@ -92,6 +92,7 @@
         return copy;
     }
     function count() {
+        el('full-preview').textContent = [el('place_date').value, el('subject').value, el('salutation').value, el('body').value, el('closing').value, el('signature').value].filter(Boolean).join('\n\n');
         el('count').textContent = `${el('body').value.trim().split(/\s+/).filter(Boolean).length} words · ${dirty ? 'Unsaved edits' : 'Review before sending'}`;
     }
     function show(letter) {
@@ -110,13 +111,16 @@
         link.href = url; link.download = name; link.click();
         setTimeout(() => URL.revokeObjectURL(url), 30000);
     }
+    window.openLetterWriter = async () => {
+        switchTab('letters');
+        if (loadedUser !== validUser()) await load();
+    };
     window.openLetterForJob = async (id, user = currentUser) => {
         if (user !== currentUser) {
             const select = document.getElementById('user-select');
             select.value = user; select.dispatchEvent(new Event('change'));
         }
-        switchTab('letters');
-        if (loadedUser !== validUser()) await load();
+        await window.openLetterWriter();
         if (validUser() === user) el('job').value = String(id);
     };
     document.addEventListener('DOMContentLoaded', () => {
@@ -153,7 +157,7 @@
                     cv_slug: el('cv').value || null, recipient: el('recipient').value, notes: el('notes').value};
                 const letter = await (await api('/generate', ctx, json('POST', body))).json();
                 fresh(ctx); show(letter); dirty = true; count();
-                status('Draft ready. Review the wording and facts, then save or download.');
+                status('Your full cover letter is ready. Review the wording and facts, then save or download.');
             });
         };
         el('load').onclick = () => {
