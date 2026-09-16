@@ -1288,6 +1288,7 @@ def _execute_run_global(*, dry_run: bool = False, full: bool = False) -> None:
 
 
 @click.group()
+@click.version_option(package_name="job-scout", prog_name="job-scout")
 @click.option("--verbose", "-v", is_flag=True, help="Enable verbose (DEBUG) logging")
 def cli(verbose: bool) -> None:
     """job-scout: Automated job search and filtering tool."""

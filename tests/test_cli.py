@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from click.testing import CliRunner
 
+import job_scout
 from job_scout.cli import _evaluate_survivors, _filter_by_commute, cli
 from job_scout.models import Config, JobListing, JobStatus
 
@@ -41,6 +42,15 @@ def _save_test_config(tmp_path: Path, **overrides: object) -> None:
 
 
 # ---------------------------------------------------------------------------
+def test_version_option_reports_package_version() -> None:
+    """--version prints the installed package version, which bug reports ask for."""
+    runner = CliRunner()
+    result = runner.invoke(cli, ["--version"])
+    assert result.exit_code == 0
+    assert "job-scout" in result.output
+    assert job_scout.__version__ in result.output
+
+
 # config commands
 # ---------------------------------------------------------------------------
 
