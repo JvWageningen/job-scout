@@ -964,6 +964,25 @@ class TestStaticFiles:
         assert response.status_code == 200
         assert "css" in response.headers["content-type"]
 
+    def test_serve_icon_svg(self, client: TestClient) -> None:
+        """Test serving the brand mark used in the dashboard header."""
+        response = client.get("/icon.svg")
+        assert response.status_code == 200
+        assert "svg" in response.headers["content-type"]
+        assert "<svg" in response.text
+
+    def test_serve_favicon(self, client: TestClient) -> None:
+        """Test serving the browser tab icon."""
+        response = client.get("/favicon.ico")
+        assert response.status_code == 200
+        assert "icon" in response.headers["content-type"]
+
+    def test_serve_apple_touch_icon(self, client: TestClient) -> None:
+        """Test serving the iOS home-screen icon."""
+        response = client.get("/apple-touch-icon.png")
+        assert response.status_code == 200
+        assert "png" in response.headers["content-type"]
+
 
 class TestGlobalInit:
     """Tests for POST /api/global-init endpoint."""
@@ -1841,6 +1860,12 @@ class TestTokenAuthentication:
         assert response.status_code == 200
 
         response = client.get("/style.css")
+        assert response.status_code == 200
+
+        response = client.get("/icon.svg")
+        assert response.status_code == 200
+
+        response = client.get("/favicon.ico")
         assert response.status_code == 200
 
     def test_token_configured_api_requests_without_token_rejected(

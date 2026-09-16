@@ -78,6 +78,14 @@ header h1 {
     text-wrap: balance;
 }
 
+/* The mark sits on the baseline of the wordmark rather than above it, so the
+   header stays one line tall on narrow screens. */
+header h1 .brand-mark {
+    vertical-align: -7px;
+    margin-right: 12px;
+    border-radius: 9px;
+}
+
 header .subtitle {
     font-size: 1.05em;
     opacity: 0.72;

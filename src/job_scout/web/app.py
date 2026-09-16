@@ -402,6 +402,24 @@ def create_app() -> FastAPI:
         static_dir = Path(__file__).parent / "static"
         return FileResponse(static_dir / "style.css", headers=no_cache_headers)
 
+    @app.get("/icon.svg", include_in_schema=False)
+    def serve_icon() -> FileResponse:
+        """Serve the job-scout mark used in the dashboard header."""
+        static_dir = Path(__file__).parent / "static"
+        return FileResponse(static_dir / "icon.svg", headers=no_cache_headers)
+
+    @app.get("/favicon.ico", include_in_schema=False)
+    def serve_favicon() -> FileResponse:
+        """Serve the browser tab icon."""
+        static_dir = Path(__file__).parent / "static"
+        return FileResponse(static_dir / "favicon.ico")
+
+    @app.get("/apple-touch-icon.png", include_in_schema=False)
+    def serve_apple_touch_icon() -> FileResponse:
+        """Serve the home-screen icon used when the dashboard is pinned on iOS."""
+        static_dir = Path(__file__).parent / "static"
+        return FileResponse(static_dir / "apple-touch-icon.png")
+
     # --- API Endpoints ---
 
     @app.get("/api/users")
