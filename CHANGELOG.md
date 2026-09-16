@@ -4,6 +4,30 @@ Format: [Keep a Changelog](https://keepachangelog.com)
 
 <!-- version list -->
 
+## v2.1.0 (2026-09-16)
+
+### Chores
+
+- Sync uv.lock to 2.0.0 [skip ci]
+  ([`62d1a6b`](https://github.com/JvWageningen/job-scout/commit/62d1a6b8224efd1dcdef01a6aedb350ee3341523))
+
+### Documentation
+
+- Document the CV builder and why there are now two PDF paths
+  ([`130163c`](https://github.com/JvWageningen/job-scout/commit/130163cf846658a0dfffea82628a9c2a4151c5d0))
+
+- Summarise the v2.0.0 licence change at release level
+  ([`181ac06`](https://github.com/JvWageningen/job-scout/commit/181ac060fff27cd9dbb197b1c8a521f3823b21dc))
+
+### Features
+
+- **cv**: Reach the CV builder from the CLI, the API and the dashboard
+  ([`93b1c97`](https://github.com/JvWageningen/job-scout/commit/93b1c9774e322e9bda4dae178aa5676a121367ab))
+
+- **cv**: Vendor the cv-builder project as a job-scout subpackage
+  ([`2fac981`](https://github.com/JvWageningen/job-scout/commit/2fac981549f939bac4554667f3af4236f12d5d91))
+
+
 ## v2.0.0 (2026-09-16)
 
 ### Chores
