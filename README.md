@@ -12,7 +12,7 @@
 [![CI](https://img.shields.io/github/actions/workflow/status/JvWageningen/job-scout/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/JvWageningen/job-scout/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/JvWageningen/job-scout?style=flat-square&color=2f5d8a)](https://github.com/JvWageningen/job-scout/releases)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-2f5d8a?style=flat-square)](https://www.python.org/downloads/)
-[![License: PolyForm Noncommercial 1.0.0](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-c9761f?style=flat-square)](LICENSE)
+[![License: AGPL v3](https://img.shields.io/badge/license-AGPL--3.0-c9761f?style=flat-square)](LICENSE)
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-2f5d8a?style=flat-square)](https://docs.astral.sh/ruff/)
 [![Checked with mypy](https://img.shields.io/badge/types-mypy%20strict-2f5d8a?style=flat-square)](https://mypy-lang.org/)
 [![Sponsor](https://img.shields.io/badge/sponsor-%E2%9D%A4-c9761f?style=flat-square&logo=githubsponsors&logoColor=white)](https://github.com/sponsors/JvWageningen)
@@ -149,7 +149,7 @@ Everything the pipeline produces is browsable and editable from a self-hosted we
 | [docs/DEPLOY.md](docs/DEPLOY.md) | Docker, NAS and server deployment |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | How the pieces fit together, and why |
 | [CHANGELOG.md](CHANGELOG.md) | Release history |
-| [LICENSE](LICENSE) | PolyForm Noncommercial 1.0.0, in full |
+| [LICENSE](LICENSE) | GNU AGPL v3.0, in full |
 
 ## Contributing
 
@@ -167,14 +167,12 @@ job-scout is free for your own job hunt, for study and research, and for chariti
 
 ## License
 
-[PolyForm Noncommercial License 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0) — see [LICENSE](LICENSE). SPDX identifier: `PolyForm-Noncommercial-1.0.0`.
+[GNU Affero General Public License v3.0 or later](https://www.gnu.org/licenses/agpl-3.0.html) — see [LICENSE](LICENSE). SPDX identifier: `AGPL-3.0-or-later`.
 
-In plain English: use it freely for any noncommercial purpose — your own job hunt, study, research, hobby projects — and freely as a charity, school, public research body, public safety or health body, environmental organisation or government institution. What is not granted is commercial use: nobody may sell it, resell it, offer it as a paid or hosted service, or use it to run a business.
+job-scout is free software, in the OSI and FSF sense: use it, study it, change it and share it, commercially or not. The one obligation that matters is reciprocity — if you distribute a modified version, **or run one as a network service that other people use**, those people must be able to get its complete source under the same licence. That last clause is what separates the AGPL from the GPL, and it is the reason for it here: job-scout ships a web dashboard, so a hosted fork is exactly the case worth covering.
 
-This makes job-scout **source-available, not OSI-approved open source** — the OSI definition does not permit restrictions on the field of use. The source is public, contributions are welcome under the same terms, and the label is simply accurate.
+In practice, for the people this was built for, nothing changes. Running it for your own job hunt, editing it, and sharing your changes with friends carries no obligation to anyone. The licence only bites when you hand a modified version to someone else.
 
-The entire **v1.x** line, up to and including v1.17.3, was released under the MIT licence. That grant is irrevocable: anyone who obtained those versions keeps their MIT rights to that code permanently. The PolyForm terms apply from **v2.0.0** onward.
+The entire **v1.x** line, up to and including v1.17.3, was released under the MIT licence. That grant is irrevocable: anyone who obtained those versions keeps their MIT rights to that code permanently. The AGPL terms apply from **v2.0.0** onward.
 
-GitHub's licence detector does not recognise PolyForm, so the repository sidebar reads "View license" rather than naming it. That is expected.
-
-For commercial licensing enquiries, open a [GitHub Discussion](https://github.com/JvWageningen/job-scout/discussions) or an issue.
+If the AGPL genuinely does not work for your situation, open a [GitHub Discussion](https://github.com/JvWageningen/job-scout/discussions) — a separate arrangement is possible in principle.

@@ -281,8 +281,8 @@ on the same terms the project ships under.** The detail, so that you know exactl
 are agreeing to when you open a pull request:
 
 1. **Inbound = outbound.** Contributions are accepted under the
-   [PolyForm Noncommercial License 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0)
-   (SPDX: `PolyForm-Noncommercial-1.0.0`), the same licence the project itself is released
+   [GNU AGPL v3.0 or later](https://www.gnu.org/licenses/agpl-3.0.html)
+   (SPDX: `AGPL-3.0-or-later`), the same licence the project itself is released
    under from v2.0.0 onward. *Why:* a project whose contributions arrive under a different
    licence than it ships under cannot be distributed at all, so keeping inbound and outbound
    identical is what makes the code usable by anyone.
@@ -293,40 +293,47 @@ are agreeing to when you open a pull request:
    an incompatible third-party licence. *Why:* nobody downstream can rely on the licence if
    the contributor was not entitled to grant it in the first place.
 
-3. **You additionally grant the maintainer permission to relicense your contribution under
-   different terms in future.** This is a grant to Jeroen van Wageningen as the project
-   maintainer, it is not exclusive, and it does not take your own rights away — you remain
-   free to use your code however you like, including in commercial work. *Why:* it keeps
-   dual-licensing possible (for example, offering a commercial licence to a company that
-   wants one) and keeps the door open to moving the project to a more permissive licence
-   later, without having to track down every contributor for individual permission.
+3. **Nothing else is asked of you.** There is no copyright assignment and no relicensing
+   grant. Your contribution stays yours, licensed to everyone under the AGPL on the same
+   terms as the rest of the project. *Why:* a blanket relicensing grant is a CLA in all but
+   name, and it is the thing that most often stops a drive-by contributor from bothering.
+   The trade is that the project cannot be relicensed later without asking contributors —
+   which is the point: copyleft that the maintainer can unilaterally revoke is not much of a
+   guarantee to build on.
 
 There is no separate CLA to sign and no bot to click through. Opening a pull request is the
 agreement.
 
-### What PolyForm Noncommercial actually permits
+### What the AGPL actually requires
 
-Free for **any noncommercial purpose**: your own job hunt, study, research, hobby projects.
-Free for charities, schools, public research bodies, public safety and health bodies,
-environmental organisations and government institutions. What is **not** granted is
-commercial use — nobody may sell it, resell it, offer it as a paid or hosted service, or use
-it to run a business.
+job-scout is free software in the OSI and FSF sense: use it, study it, change it and share
+it, for any purpose including commercial ones. There is no noncommercial restriction and no
+field-of-use restriction.
 
-This makes job-scout **source-available, not OSI-approved open source** — the OSI definition
-does not allow use restrictions, and this licence has one. That is a deliberate trade, stated
-plainly here rather than hidden behind a label that does not apply.
+The obligation is reciprocity. If you distribute a modified version — or **run one as a
+network service other people use** — you must offer those people the complete corresponding
+source under the AGPL. The network clause (section 13) is what distinguishes the AGPL from
+the GPL, and it is the reason for choosing it here: job-scout ships a web dashboard, so a
+modified hosted fork is precisely the case worth covering.
 
-For commercial licensing enquiries, open a GitHub Discussion or an issue.
+For the people this was built for, this changes nothing. Running it for your own job hunt,
+editing it, and sharing your changes carries no obligation to anyone. The licence only
+applies when you hand a modified version to someone else.
+
+Practically, this also means the dashboard must tell its users where to get the source, which
+is why there is a source link in its footer. If you change the dashboard, leave that link
+working.
 
 ### The MIT history
 
 The entire **v1.x** line, up to and including v1.17.3, was released under the MIT licence.
 That grant is irrevocable: anyone who obtained those versions keeps their MIT rights to that
-code forever, and nothing about the relicense changes it. The PolyForm terms apply to
+code forever, and nothing about the relicense changes it. The AGPL terms apply to
 **v2.0.0 and later**.
 
-One practical note: GitHub's licence detector does not recognise PolyForm, so the repository
-sidebar reads "View license" rather than naming it. That is expected, not a misconfiguration.
+MIT is one-way compatible with the AGPL, so that earlier code — including anything other
+people contributed under it — carries into the AGPL releases without anyone's permission
+being needed.
 
 ---
 

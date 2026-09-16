@@ -23,7 +23,7 @@ fixed.
 | [../CODE_OF_CONDUCT.md](../CODE_OF_CONDUCT.md) | What behaviour is expected in issues, pull requests and discussions? |
 | [../SECURITY.md](../SECURITY.md) | I found a vulnerability — now what? Supported versions, how to report privately, and what to expect afterwards. |
 | [../CHANGELOG.md](../CHANGELOG.md) | What changed between releases? Generated from Conventional Commits on every release. |
-| [../LICENSE](../LICENSE) | What may I use it for? PolyForm Noncommercial 1.0.0 — noncommercial use only, free for your own job hunt, study, charities, schools and public bodies; commercial use is not granted. |
+| [../LICENSE](../LICENSE) | What may I use it for? GNU AGPL v3.0 — free software: use, study, change and share it. Distribute a modified version, or run one as a network service, and its source must go with it. |
 
 ## Start here
 

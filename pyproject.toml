@@ -1,10 +1,10 @@
 [project]
 name = "job-scout"
-version = "2.0.0"
+version = "1.17.3"
 description = "Automated job search for the Dutch market, scored against your CV by an LLM and filtered by real commute time"
 readme = "README.md"
 requires-python = ">=3.12"
-license = "PolyForm-Noncommercial-1.0.0"
+license = "AGPL-3.0-or-later"
 license-files = ["LICENSE"]
 authors = [{ name = "Jeroen van Wageningen" }]
 maintainers = [{ name = "Jeroen van Wageningen" }]

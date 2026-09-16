@@ -15,7 +15,7 @@ no long-term support branches and no backports.
 | Latest release (2.x) | Yes — security fixes land here |
 | 1.x (MIT-licensed) | No — upgrade to the current release |
 
-v2.0.0 is the first release under the PolyForm terms; the whole v1.x line was MIT.
+v2.0.0 is the first release under the AGPL; the whole v1.x line was MIT.
 
 Releases are cut automatically from `main` by [python-semantic-release](https://python-semantic-release.readthedocs.io/),
 so a fix merged to `main` normally ships within minutes of being merged. If you are running a

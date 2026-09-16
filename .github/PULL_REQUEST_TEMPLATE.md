@@ -54,5 +54,5 @@ Run the same gates CI runs, from the repository root:
       `docs/CONFIGURATION.md`, new or changed commands in `docs/USAGE.md`
 - [ ] No secrets, API keys, personal data or CV content in the diff, the tests or the fixtures
 - [ ] Commits follow Conventional Commits, matching the type ticked above
-- [ ] I agree that my contribution is licensed under the PolyForm Noncommercial License 1.0.0, on the
-      terms set out in [CONTRIBUTING.md](https://github.com/JvWageningen/job-scout/blob/main/CONTRIBUTING.md)
+- [ ] I agree that my contribution is licensed under the GNU AGPL v3.0 or later, on the terms set out
+      in [CONTRIBUTING.md](https://github.com/JvWageningen/job-scout/blob/main/CONTRIBUTING.md)
