@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CV Builder</title>
+    <link rel="stylesheet" href="/static/style.css" />
+    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark"></span>
+        <span>CV Builder</span>
+      </div>
+
+      <div class="topbar-controls">
+        <label class="field inline">
+          <span>Profile</span>
+          <select id="profile-picker"></select>
+        </label>
+        <button id="new-profile" class="ghost" type="button">New</button>
+        <button id="delete-profile" class="ghost danger" type="button">Delete</button>
+      </div>
+
+      <div class="topbar-actions">
+        <span id="status" class="status" role="status" aria-live="polite"></span>
+        <button id="save" class="primary" type="button">Save</button>
+        <button id="download" class="primary solid" type="button">Download PDF</button>
+      </div>
+    </header>
+
+    <main class="layout">
+      <section class="editor" id="editor" aria-label="CV editor">
+        <details class="panel" open>
+          <summary>Identity</summary>
+          <div class="panel-body" id="identity-panel"></div>
+        </details>
+
+        <details class="panel">
+          <summary>Design</summary>
+          <div class="panel-body" id="theme-panel"></div>
+        </details>
+
+        <details class="panel" open>
+          <summary>Sidebar sections</summary>
+          <div class="panel-body">
+            <div id="sidebar-sections" class="sections"></div>
+            <button class="add-section" data-column="sidebar" type="button">
+              + Add sidebar section
+            </button>
+          </div>
+        </details>
+
+        <details class="panel" open>
+          <summary>Main sections</summary>
+          <div class="panel-body">
+            <div id="main-sections" class="sections"></div>
+            <button class="add-section" data-column="main" type="button">
+              + Add main section
+            </button>
+          </div>
+        </details>
+      </section>
+
+      <section class="preview" aria-label="PDF preview">
+        <div class="preview-bar">
+          <span>Preview</span>
+          <label class="checkbox">
+            <input type="checkbox" id="auto-preview" checked />
+            <span>Auto refresh</span>
+          </label>
+          <button id="refresh" class="ghost" type="button">Refresh</button>
+        </div>
+        <div class="preview-frame">
+          <iframe id="preview" title="Rendered CV preview"></iframe>
+          <div id="preview-error" class="preview-error" hidden></div>
+        </div>
+      </section>
+    </main>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>

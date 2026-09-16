@@ -116,6 +116,23 @@ def user_dir(name: str) -> Path:
     return DATA_DIR / "users" / name
 
 
+def user_cv_dir(name: str) -> Path:
+    """Return the CV builder's data directory for a user.
+
+    ProfileStore derives its own ``profiles/`` subdirectory from this root, so a
+    user's CV documents end up at ``data/users/<name>/cv/profiles/<slug>/``. Giving
+    each user their own root is what keeps one person's CV out of another's list on
+    a shared install.
+
+    Args:
+        name: User name.
+
+    Returns:
+        Path to data/users/<name>/cv/.
+    """
+    return user_dir(name) / "cv"
+
+
 def user_config_path(name: str) -> Path:
     """Return the config file path for a specific user.
 
