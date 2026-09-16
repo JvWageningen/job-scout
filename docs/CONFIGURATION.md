@@ -119,6 +119,11 @@ type:
 | `list[str]` | `remote,hybrid` or `["remote","hybrid"]` | Comma-separated, or JSON when a value contains a comma |
 | nullable `str` | empty string | Clears the field back to `null`. A nullable `int` or `float` that already holds a number is not clearable this way: the empty string is parsed as a number first and the command exits 1 |
 
+One trap has no guard: an empty string clears *any* field that reaches that branch, so
+`config set smtp_host ""` writes `smtp_host: null` and `config set keywords_dutch ""` writes
+`null` rather than `[]`. Neither is nullable, so the next command fails Pydantic validation.
+Re-set a real value, or edit the YAML by hand, rather than clearing these.
+
 Two refusals are deliberate:
 
 - Passing `--user` with a **global** key fails with *"is a global field and

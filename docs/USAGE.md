@@ -846,10 +846,11 @@ Exits 1 on crontab failure.
 uv run job-scout wake --mac AA:BB:CC:DD:EE:FF --url http://192.168.1.50:11434/v1/models --timeout 300
 ```
 
-Sends a Wake-on-LAN magic packet to the machine hosting the model server. If `--url` is
-given it then polls that readiness URL and exits 1 if the host never answers within the
-timeout. This is what makes a 03:00 scheduled run viable against a GPU box that sleeps the
-rest of the week.
+Wakes the machine hosting the model server over Wake-on-LAN. With no `--url` it fires a
+magic packet and returns immediately. With `--url` it probes that readiness URL first and
+skips the packet entirely if the host already answers; otherwise it wakes the host and polls
+until it responds, exiting 1 if it never does within the timeout. This is what makes a
+03:00 scheduled run viable against a GPU box that sleeps the rest of the week.
 
 | Option | Default | Environment variable | Description |
 |---|---|---|---|
@@ -860,10 +861,9 @@ rest of the week.
 
 A magic packet is a layer-2 broadcast and does not survive Docker's bridge NAT, which is
 why the compose file uses host networking. On a desktop install using the bridge override,
-waking does not work — leave the MAC empty. Note that `wake` always sends: it needs a MAC
-(`--mac` or `JOB_SCOUT_WAKE_MAC`) and exits 1 without one, and with no `--url` it fires the
-packet and returns immediately — `--url` is what adds the readiness poll, so there is no
-readiness-only mode. The compose file keeps the wake settings out of the environment on
+waking does not work — leave the MAC empty. Note that `wake` is never poll-only: it needs a MAC
+(`--mac` or `JOB_SCOUT_WAKE_MAC`) and exits 1 without one, so there is no mode that checks
+readiness without being prepared to wake. The compose file keeps the wake settings out of the environment on
 purpose (they live in `data/config.yaml`), so running `wake` inside the container means
 passing `--mac` yourself.
 

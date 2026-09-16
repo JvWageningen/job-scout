@@ -2,7 +2,7 @@
 
 The pipeline is long-running and mostly idle, which makes it a better fit for
 an always-on NAS than a workstation. The model server, however, needs a GPU
-and usually lives elsewhere -- so the container wakes that machine before each
+and usually lives elsewhere — so the container wakes that machine before each
 run rather than assuming it is up.
 
 ## Layout
@@ -32,7 +32,7 @@ cycle, so a change applies within a minute without restarting anything.
 
 Setting `JOB_SCOUT_SCHEDULE`, `JOB_SCOUT_WAKE_MAC` or
 `JOB_SCOUT_LLM_HEALTH_URL` as environment variables still works and takes
-precedence -- but then the dashboard can no longer change them, so leave them
+precedence — but then the dashboard can no longer change them, so leave them
 unset unless you specifically want to pin a value.
 
 **`.env`** (gitignored) holds what has to be known before the container
@@ -49,7 +49,7 @@ cp .env.example .env
 | `JOB_SCOUT_TZ` | Container timezone, for log timestamps |
 
 `data/config.yaml` also holds `local_base_url`. It must point at an address
-the **container** can reach -- a Docker bridge address like `172.17.0.1` on
+the **container** can reach — a Docker bridge address like `172.17.0.1` on
 another machine will not resolve from the NAS.
 
 ## Install
