@@ -36,10 +36,7 @@ Format: [Keep a Changelog](https://keepachangelog.com)
 
 ### Features
 
-- Relicense from MIT to PolyForm Noncommercial 1.0.0
-  ([`668dd03`](https://github.com/JvWageningen/job-scout/commit/668dd030307495227b38374b11989927699b9e1d))
-
-- Relicense to the GNU AGPL v3.0
+- Relicense from MIT to the GNU AGPL v3.0
   ([`67e9ac1`](https://github.com/JvWageningen/job-scout/commit/67e9ac1dd4da880f728c7ead6e4942c997187253))
 
 - **cli**: Report the installed version with --version
@@ -50,12 +47,11 @@ Format: [Keep a Changelog](https://keepachangelog.com)
 
 ### Breaking Changes
 
-- The licence changes from PolyForm Noncommercial 1.0.0 to the GNU AGPL v3.0 or later (SPDX:
-  AGPL-3.0-or-later). Commercial use is now permitted, so this is a loosening for most users; the
-  new obligation is that anyone distributing a modified version, or running one as a network
-  service, must offer its complete source under the same terms. The v1.x line remains MIT and that
-  grant is irrevocable; MIT is one-way compatible with the AGPL, so that code carries forward
-  without permission.
+- The licence changes from MIT to the GNU AGPL v3.0 or later (SPDX: AGPL-3.0-or-later). Use,
+  study, modification and commercial use are all permitted; the new obligation is that anyone
+  distributing a modified version, or running one as a network service, must offer its complete
+  source under the same terms. The v1.x line remains MIT and that grant is irrevocable; MIT is
+  one-way compatible with the AGPL, so that code carries forward without permission.
 
 
 ## v1.17.3 (2026-09-15)
