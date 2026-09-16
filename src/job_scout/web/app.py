@@ -15,7 +15,7 @@ from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFi
 from loguru import logger
 from pydantic import ValidationError
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.responses import FileResponse, JSONResponse, Response
+from starlette.responses import FileResponse, HTMLResponse, JSONResponse, Response
 
 from job_scout import feedback, ntfy_topic, progress
 from job_scout.config import (
@@ -31,10 +31,17 @@ from job_scout.config import (
     save_user_config,
     set_config_value,
     update_secrets,
+    user_cv_dir,
     user_db_path,
     user_dir,
     user_logs_dir,
 )
+from job_scout.cv.app import STATIC_DIR as CV_STATIC_DIR
+from job_scout.cv.app import build_api_router as build_cv_api_router
+from job_scout.cv.app import get_store as get_cv_store
+from job_scout.cv.models import CVDocument
+from job_scout.cv.storage import ProfileStore, StorageError
+from job_scout.cv.tailor import TailorError, tailor_cv_document, tailored_slug
 from job_scout.database import Database
 from job_scout.llm.factory import build_raw_client_for_test, get_llm_client
 from job_scout.models import (
@@ -57,13 +64,18 @@ _SCHEDULE_PREVIEW_COUNT = 3
 # a scan or a mistake, and is rejected before it is written to disk.
 _MAX_CV_BYTES = 10_000_000
 
+# Injected into the CV editor page as it is served. The vendored front end
+# defaults to the standalone server's flat "/api"; inside the dashboard the same
+# router lives under "/api/cv", and the page has no other way to know that.
+_CV_API_BASE_SCRIPT = '<script>window.CV_API_BASE = "/api/cv";</script>'
+
 # Sent by the "Test Notification" button. Deliberately a real JobListing put
 # through the normal send path, so the test exercises what an actual match
 # would do rather than a parallel code path that could quietly diverge.
 _TEST_NOTIFICATION_JOB = JobListing(
     title="Test notification",
     company="job-scout",
-    location="Nieuw-Vennep",
+    location="Amsterdam",
     url="https://github.com/JvWageningen/job-scout",
     source="test",
     description=(
@@ -206,6 +218,63 @@ def _require_job(user: str, job_id: object) -> JobListing:
     if job is None:
         raise HTTPException(status_code=404, detail=f"No job with id {ident}")
     return job
+
+
+def _load_cv_document(store: ProfileStore, slug: str) -> CVDocument:
+    """Load one CV profile, translating storage failures into HTTP errors.
+
+    Mirrors the vendored editor's own loader: a missing profile is a 404, an
+    unusable one a 400, so the dashboard reports the same thing the standalone
+    editor would.
+
+    Args:
+        store: The user's profile store.
+        slug: Profile slug.
+
+    Returns:
+        The stored document.
+
+    Raises:
+        HTTPException: 404 when the profile is missing, 400 when it is unusable.
+    """
+    try:
+        return store.load(slug)
+    except StorageError as exc:
+        status = 404 if "does not exist" in str(exc) else 400
+        raise HTTPException(status_code=status, detail=str(exc)) from exc
+
+
+def _save_tailored_profile(
+    store: ProfileStore, source_slug: str, slug: str, doc: CVDocument
+) -> None:
+    """Save a tailored document as a profile of its own, portrait included.
+
+    The portrait is copied rather than shared: a profile owns everything in its
+    own directory, so the tailored CV renders with the same face as the one it
+    came from. A portrait that cannot be copied is logged and skipped -- losing
+    the photograph is not worth losing the tailored CV over.
+
+    Args:
+        store: The user's profile store.
+        source_slug: Slug the document was tailored from.
+        slug: Slug to save the tailored copy under.
+        doc: The tailored document.
+
+    Raises:
+        HTTPException: 500 if the document itself could not be written.
+    """
+    try:
+        store.save(slug, doc)
+    except StorageError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    portrait = store.photo_path(source_slug, doc)
+    if portrait is None:
+        return
+    try:
+        store.save_photo(slug, portrait.read_bytes())
+    except (StorageError, OSError) as exc:
+        logger.warning(f"Could not copy the portrait into {slug}: {exc}")
 
 
 def _resolve_linkedin_data(
@@ -419,6 +488,121 @@ def create_app() -> FastAPI:
         """Serve the home-screen icon used when the dashboard is pinned on iOS."""
         static_dir = Path(__file__).parent / "static"
         return FileResponse(static_dir / "apple-touch-icon.png")
+
+    # --- CV builder ---
+    # The vendored editor's API is mounted under "/api/cv" rather than "/cv/api"
+    # on purpose: TokenAuthMiddleware guards exactly the "/api/" prefix, so the
+    # CV endpoints inherit the dashboard's token protection instead of growing a
+    # second, easily forgotten auth path. The editor page and its assets sit
+    # outside "/api/", like index.html does, and are inert until their API calls
+    # succeed.
+
+    def cv_store(user: str | None = None) -> ProfileStore:
+        """Resolve the CV profile store for the requested user.
+
+        cv-builder is single-tenant and reads its store from app state; job-scout
+        is not, so the dependency it resolves the store through is overridden
+        with this one, keyed off the same '?user=' parameter every other
+        per-user endpoint takes.
+
+        Args:
+            user: User name from the query string.
+
+        Returns:
+            A store rooted at the user's own CV directory.
+
+        Raises:
+            HTTPException: If the user is missing or unknown.
+        """
+        return ProfileStore(user_cv_dir(_require_user(user)))
+
+    app.include_router(build_cv_api_router(), prefix="/api/cv")
+    app.dependency_overrides[get_cv_store] = cv_store
+
+    # Declared here rather than on the vendored router because tailoring is the
+    # one CV operation that needs job-scout itself: the vacancy comes out of the
+    # user's jobs database and the model comes from their LLM settings, neither
+    # of which the standalone editor knows anything about.
+    @app.post("/api/cv/profiles/{slug}/tailor")
+    def tailor_cv_profile(
+        slug: str, user: str | None = None, job_id: int | None = None
+    ) -> dict[str, str]:
+        """Save a vacancy-tailored copy of one CV profile.
+
+        The source profile is only read: the tailored document is written under
+        a slug of its own, which the editor then opens like any other profile.
+
+        Args:
+            slug: Profile to tailor.
+            user: User the profile belongs to.
+            job_id: Database id of the vacancy to tailor towards.
+
+        Returns:
+            Dictionary with the new profile's slug.
+
+        Raises:
+            HTTPException: If the user, profile or job is unknown, the LLM is
+                misconfigured, or the model returned an unusable CV.
+        """
+        from job_scout.llm.base import LLMError  # noqa: PLC0415
+
+        name = _require_user(user)
+        job = _require_job(name, job_id)
+        store = ProfileStore(user_cv_dir(name))
+        doc = _load_cv_document(store, slug)
+
+        try:
+            client = get_llm_client(build_effective_config(name))
+        except LLMError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        try:
+            tailored = tailor_cv_document(doc, job, client)
+        except (LLMError, TailorError) as exc:
+            # 502, not 500: the request was fine, the model upstream was not.
+            raise HTTPException(
+                status_code=502, detail=f"Tailoring failed: {exc}"
+            ) from exc
+
+        new_slug = tailored_slug(slug, job)
+        _save_tailored_profile(store, slug, new_slug, tailored)
+        logger.info(f"Tailored CV '{slug}' for {name} to '{new_slug}'")
+        return {"slug": new_slug}
+
+    @app.get("/cv/", include_in_schema=False)
+    def serve_cv_index() -> HTMLResponse:
+        """Serve the CV editor page, pointed at the mounted API.
+
+        Returns:
+            The editor shell, with its asset links and API base rewritten for
+            this host.
+        """
+        html = (CV_STATIC_DIR / "index.html").read_text(encoding="utf-8")
+        # The vendored page links its assets under "/static/", which belongs to
+        # the standalone server. Rewriting them on the way out keeps that
+        # server's markup untouched while serving the same file here.
+        html = html.replace('"/static/', '"/cv/')
+        html = html.replace("</head>", f"  {_CV_API_BASE_SCRIPT}\n  </head>", 1)
+        return HTMLResponse(html, headers=no_cache_headers)
+
+    @app.get("/cv/app.js", include_in_schema=False)
+    def serve_cv_app_js() -> FileResponse:
+        """Serve the CV editor's JavaScript."""
+        return FileResponse(CV_STATIC_DIR / "app.js", headers=no_cache_headers)
+
+    @app.get("/cv/style.css", include_in_schema=False)
+    def serve_cv_style_css() -> FileResponse:
+        """Serve the CV editor's stylesheet."""
+        return FileResponse(CV_STATIC_DIR / "style.css", headers=no_cache_headers)
+
+    @app.get("/cv/favicon.svg", include_in_schema=False)
+    def serve_cv_favicon() -> FileResponse:
+        """Serve the CV editor's tab icon, which its page links to."""
+        return FileResponse(
+            CV_STATIC_DIR / "favicon.svg",
+            media_type="image/svg+xml",
+            headers=no_cache_headers,
+        )
 
     # --- API Endpoints ---
 

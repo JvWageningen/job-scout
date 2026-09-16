@@ -45,6 +45,7 @@
                 <button class="tab-btn" data-tab="approvals">Approvals</button>
                 <button class="tab-btn" data-tab="profile">Profile & Filters</button>
                 <button class="tab-btn" data-tab="feedback">Document Review</button>
+                <button class="tab-btn" data-tab="cv">CV Builder</button>
                 <button class="tab-btn" data-tab="keywords">Keywords</button>
                 <button class="tab-btn" data-tab="sites">Custom Sites</button>
                 <button class="tab-btn" data-tab="notifications">Notifications</button>
@@ -464,6 +465,23 @@
                     <button type="button" id="letter-feedback-btn" class="btn btn-primary">Review my letter</button>
                     <div id="letter-feedback-result" class="feedback-result"></div>
                 </div>
+            </section>
+
+            <!-- CV Builder Section -->
+            <section id="cv-section" class="section hidden tab-content" data-tab="cv">
+                <h2>CV Builder</h2>
+                <p class="info-text">
+                    Write a CV section by section and watch the designed PDF it
+                    renders to update beside it. Everything saved here belongs to
+                    the user selected above.
+                </p>
+                <!-- The editor is a second application, with its own two-pane
+                     layout and live preview, served at /cv/. It is embedded
+                     rather than inlined so it keeps its own stylesheet and
+                     scripts; app.js sets the src the first time this tab is
+                     opened, and again whenever the selected user changes. -->
+                <p id="cv-builder-prompt" class="loading">Select a user to edit their CV.</p>
+                <iframe id="cv-builder-frame" class="cv-builder-frame hidden" title="CV Builder"></iframe>
             </section>
 
             <section id="keywords-section" class="section hidden tab-content" data-tab="keywords">

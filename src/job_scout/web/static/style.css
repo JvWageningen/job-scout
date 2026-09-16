@@ -1266,3 +1266,18 @@ footer {
     font-size: 0.92em;
     margin-top: 8px;
 }
+
+/* --- CV builder tab ------------------------------------------------------- */
+
+/* The editor is a separate page embedded at /cv/. Its own body is 100vh with
+   scrolling panes inside it, so given a definite height here it fills this box
+   exactly and never adds a second scrollbar next to the dashboard's own. */
+.cv-builder-frame {
+    display: block;
+    width: 100%;
+    height: 78vh;
+    min-height: 620px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--surface);
+}

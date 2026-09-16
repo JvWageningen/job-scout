@@ -31,6 +31,7 @@ from job_scout.config import (
     user_dir,
     user_logs_dir,
 )
+from job_scout.cv.cli import cv as cv_group
 from job_scout.database import Database, _dedup_key
 from job_scout.evaluator import (
     check_llm_available,
@@ -1293,6 +1294,11 @@ def _execute_run_global(*, dry_run: bool = False, full: bool = False) -> None:
 def cli(verbose: bool) -> None:
     """job-scout: Automated job search and filtering tool."""
     _setup_logging(verbose)
+
+
+# The CV builder defines its own group next to the code it drives; attaching it
+# here is what makes it reachable as 'job-scout cv ...'.
+cli.add_command(cv_group)
 
 
 @cli.command()

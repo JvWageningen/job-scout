@@ -80,6 +80,10 @@ function setupEventListeners() {
             } else {
                 hideDashboard();
             }
+            // The embedded CV editor is per-user, so it must follow the
+            // selection instead of carrying on editing whoever was chosen
+            // before. It reloads only if its own tab is open.
+            syncCvBuilderUser();
         });
     }
 
@@ -2783,14 +2787,95 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 });
 
-// Override switchTab to load approval queue when switching to approvals tab
+// Override switchTab to load a tab's content the moment it is opened: the
+// approval queue, and the CV editor, which is only pointed at its page here so
+// a dashboard nobody opens that tab on never renders a PDF preview.
 const originalSwitchTab = window.switchTab;
 window.switchTab = function(tab) {
     originalSwitchTab(tab);
     if (tab === 'approvals') {
         loadApprovalQueue();
     }
+    if (tab === 'cv') {
+        loadCvBuilder();
+    }
 };
+
+// --- CV builder tab ---------------------------------------------------------
+
+// Which user the embedded editor currently has loaded, or null when it has not
+// been pointed at anyone. Tracked separately from the iframe's src so opening
+// the tab again does not throw away an editor that is already on the right user
+// (and any unsaved typing in it).
+let cvBuilderUser = null;
+
+/**
+ * Point the embedded CV editor at the selected user, or prompt for one.
+ *
+ * Called when the CV tab is opened and when the user changes, never on page
+ * load: the editor renders a live PDF preview as it starts, which is wasted
+ * work for anyone who never opens the tab.
+ */
+function loadCvBuilder() {
+    const frame = document.getElementById('cv-builder-frame');
+    const prompt = document.getElementById('cv-builder-prompt');
+    if (!frame || !prompt) {
+        return;
+    }
+
+    // 'all' picks every user for a run; there is no single CV behind it, so it
+    // is treated the same as no selection.
+    const user = currentUser && currentUser !== 'all' ? currentUser : null;
+    if (!user) {
+        clearCvBuilder();
+        return;
+    }
+
+    prompt.classList.add('hidden');
+    frame.classList.remove('hidden');
+    if (cvBuilderUser === user) {
+        return;
+    }
+    cvBuilderUser = user;
+    // The editor reads ?user= to decide whose profiles it edits.
+    frame.src = `/cv/?user=${encodeURIComponent(user)}`;
+}
+
+/**
+ * Unload the editor and show the pick-a-user prompt in its place.
+ */
+function clearCvBuilder() {
+    const frame = document.getElementById('cv-builder-frame');
+    const prompt = document.getElementById('cv-builder-prompt');
+    if (!frame || !prompt) {
+        return;
+    }
+
+    cvBuilderUser = null;
+    // Navigated away rather than having the attribute dropped: removing src
+    // leaves the previous user's document loaded inside the frame.
+    const loaded = frame.getAttribute('src');
+    if (loaded && loaded !== 'about:blank') {
+        frame.src = 'about:blank';
+    }
+    frame.classList.add('hidden');
+    prompt.classList.remove('hidden');
+}
+
+/**
+ * Follow a change in the user picker.
+ *
+ * Reloads the editor while its tab is open, and otherwise only discards the
+ * stale page, so the next visit to the tab loads the right user's CV.
+ */
+function syncCvBuilderUser() {
+    const section = document.querySelector('.tab-content[data-tab="cv"]');
+    if (section && section.classList.contains('active')) {
+        loadCvBuilder();
+        return;
+    }
+    clearCvBuilder();
+}
 
 // --- Automatic runs (container scheduler) -----------------------------------
 
