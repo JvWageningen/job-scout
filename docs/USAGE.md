@@ -1105,3 +1105,9 @@ Related reading: [CONFIGURATION.md](CONFIGURATION.md) ·
 [LLM_PROVIDERS.md](LLM_PROVIDERS.md) · [NOTIFICATIONS.md](NOTIFICATIONS.md) ·
 [WEB_DASHBOARD.md](WEB_DASHBOARD.md) · [DEPLOY.md](DEPLOY.md) ·
 [Architecture](../ARCHITECTURE.md) · [Contributing](../CONTRIBUTING.md)
+
+## Motivational letters (`letter`)
+
+The `letter` group drafts from saved CV Builder profiles, imports private style
+examples, learns a style guide and exports letters. See the [Letter Writer CLI
+guide](LETTER_WRITER.md#cli) for commands and saving behaviour.

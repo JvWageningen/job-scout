@@ -133,6 +133,24 @@ def user_cv_dir(name: str) -> Path:
     return user_dir(name) / "cv"
 
 
+def user_letters_dir(name: str) -> Path:
+    """Return the letter writer's data directory for a user.
+
+    Holds everything personal the letter writer uses, and nothing else:
+    ``examples/`` (the user's own past letters), ``style.md`` (the style guide
+    derived from them, editable by hand) and ``generated/`` (letters written per
+    vacancy). None of it belongs in the repository, which is why it lives under
+    the user's data directory rather than beside the code.
+
+    Args:
+        name: User name.
+
+    Returns:
+        Path to data/users/<name>/letters/.
+    """
+    return user_dir(name) / "letters"
+
+
 def user_config_path(name: str) -> Path:
     """Return the config file path for a specific user.
 

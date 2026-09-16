@@ -46,6 +46,7 @@
                 <button class="tab-btn" data-tab="profile">Profile & Filters</button>
                 <button class="tab-btn" data-tab="feedback">Document Review</button>
                 <button class="tab-btn" data-tab="cv">CV Builder</button>
+                <button class="tab-btn" data-tab="letters">Letter Writer</button>
                 <button class="tab-btn" data-tab="keywords">Keywords</button>
                 <button class="tab-btn" data-tab="sites">Custom Sites</button>
                 <button class="tab-btn" data-tab="notifications">Notifications</button>
@@ -65,6 +66,62 @@
                     </select>
                     <button id="create-user-btn" class="btn btn-secondary">Create New User</button>
                 </div>
+            </section>
+
+
+            <section id="letters-section" class="section hidden tab-content" data-tab="letters">
+                <div class="letter-heading"><div><h2>Motivational letters</h2>
+                <p>Make your case, in your own voice. Start with your current CV and a vacancy.</p></div>
+                <span class="letter-badge">Dutch &amp; English</span></div>
+                <p id="letter-status" role="status" aria-live="polite">Select a user to begin.</p>
+                <fieldset id="letter-workspace" disabled>
+                <div class="letter-grid">
+                    <div class="letter-setup">
+                        <h3>1. Set the direction</h3>
+                        <button id="letter-refresh" class="btn btn-small" type="button">Refresh vacancies &amp; CVs</button>
+                        <label for="letter-job">Vacancy</label><select id="letter-job"></select>
+                        <label for="letter-language">Letter language</label>
+                        <select id="letter-language"><option value="auto">Automatic — match the vacancy</option><option value="nl">Nederlands</option><option value="en">English</option></select>
+                        <label for="letter-cv">Current CV</label><select id="letter-cv"></select>
+                        <p class="letter-hint">Automatic uses a saved CV in the letter's language. Save any CV Builder changes first.</p>
+                        <label for="letter-recipient">Recipient <span class="letter-hint">(optional)</span></label>
+                        <input id="letter-recipient" maxlength="120" placeholder="Name or hiring team">
+                        <label for="letter-notes">What matters to you?</label>
+                        <textarea id="letter-notes" maxlength="2000" rows="5" placeholder="Why this role? A conversation you have had, relevant experience, or something you want to ask about."></textarea>
+                        <p class="letter-hint">Your CV, vacancy, notes and style examples go to your configured language model.</p>
+                        <div class="letter-actions"><button id="letter-generate" class="btn btn-primary" type="button">Draft letter</button><button id="letter-load" class="btn btn-secondary" type="button">Load saved</button></div>
+                    </div>
+                    <div class="letter-paper">
+                        <h3>2. Review and make it yours</h3>
+                        <p id="letter-empty">Your draft will appear here. Keep what sounds like you, and check every factual claim before sending.</p>
+                        <div id="letter-editor" hidden>
+                            <p id="letter-source" class="letter-hint"></p>
+                            <ul id="letter-warnings" class="letter-warnings"></ul>
+                            <label for="letter-place_date">Place and date</label><input id="letter-place_date" maxlength="500">
+                            <label for="letter-subject">Subject</label><input id="letter-subject" maxlength="500">
+                            <label for="letter-salutation">Salutation</label><input id="letter-salutation" maxlength="500">
+                            <label for="letter-body">Letter body</label><textarea id="letter-body" rows="17"></textarea>
+                            <p class="letter-hint">Separate paragraphs with a blank line. Start a line with “- ” for a bullet.</p>
+                            <label for="letter-closing">Closing</label><input id="letter-closing" maxlength="500">
+                            <label for="letter-signature">Signature</label><input id="letter-signature" maxlength="500">
+                            <p id="letter-count" class="letter-hint"></p>
+                            <div class="letter-actions"><button id="letter-save" class="btn btn-primary" type="button">Save draft</button><button id="letter-pdf" class="btn btn-secondary" type="button">Download PDF</button><button id="letter-text" class="btn btn-secondary" type="button">Download text</button></div>
+                            <p class="letter-hint">PDF uses the selected CV's theme. Downloads include your edits. Sending is up to you.</p>
+                        </div>
+                    </div>
+                </div>
+                <details class="letter-style"><summary>Examples &amp; writing style</summary>
+                    <p>Your old letters teach the writer your tone and level of formality. Your current CV supplies the facts. Examples and your guide are stored in this user's private data directory, separate from the public repository.</p>
+                    <label for="letter-files">Add previous letters</label><input type="file" id="letter-files" multiple accept=".pdf,.docx,.odt,.txt,.md">
+                    <p class="letter-hint">Text-based PDF, DOCX, ODT, TXT or Markdown; up to 8 MB each. Scans need text recognition first.</p>
+                    <button id="letter-upload" class="btn btn-secondary" type="button">Add examples</button>
+                    <ul id="letter-examples"></ul>
+                    <button id="letter-learn" class="btn btn-secondary" type="button">Learn style from examples</button>
+                    <p class="letter-hint">Learning proposes an editable guide using your configured model. Review it, then save it.</p>
+                    <label for="letter-guide">Writing style guide</label><textarea id="letter-guide" rows="12" maxlength="16000" placeholder="Describe your voice, preferred formality, and what to improve."></textarea>
+                    <button id="letter-style-save" class="btn btn-primary" type="button">Save style guide</button>
+                </details>
+                </fieldset>
             </section>
 
             <!-- Dashboard Section -->
@@ -887,5 +944,6 @@
     </div>
 
     <script src="/app.js"></script>
+    <script src="/letters.js"></script>
 </body>
 </html>

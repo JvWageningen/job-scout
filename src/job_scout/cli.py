@@ -41,6 +41,7 @@ from job_scout.evaluator import (
     quick_evaluate_fit,
     quick_evaluate_tracks,
 )
+from job_scout.letters.cli import letter as letter_group
 from job_scout.llm.base import LLMClient, LLMError
 from job_scout.llm.factory import get_llm_client
 from job_scout.models import (
@@ -1299,6 +1300,7 @@ def cli(verbose: bool) -> None:
 # The CV builder defines its own group next to the code it drives; attaching it
 # here is what makes it reachable as 'job-scout cv ...'.
 cli.add_command(cv_group)
+cli.add_command(letter_group)
 
 
 @cli.command()

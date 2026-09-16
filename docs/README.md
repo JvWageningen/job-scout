@@ -17,7 +17,8 @@ fixed.
 | [LLM_PROVIDERS.md](LLM_PROVIDERS.md) | Which model runs my search? The four backends (local, Z.AI, Claude CLI, Kilo CLI) and how to route each pipeline stage to a different one. |
 | [NOTIFICATIONS.md](NOTIFICATIONS.md) | How do matches reach me? ntfy, email, Slack and Discord, per-job versus digest mode, and how failed sends are retried. |
 | [CV_BUILDER.md](CV_BUILDER.md) | How do I build the CV itself? The document model and its seven section kinds, the editor tab, where profiles live, tailoring one to a vacancy, and when a designed two-column CV is the wrong file to upload. |
-| [WEB_DASHBOARD.md](WEB_DASHBOARD.md) | What does the dashboard do? The twelve tabs, the optional bearer token, and the security posture you are accepting by exposing it. |
+| [LETTER_WRITER.md](LETTER_WRITER.md) | How do I write a Dutch or English motivational letter in my own voice, using my current CV and previous letters? |
+| [WEB_DASHBOARD.md](WEB_DASHBOARD.md) | What does the dashboard do? The dashboard tabs, the optional bearer token, and the security posture you are accepting by exposing it. |
 | [DEPLOY.md](DEPLOY.md) | How do I run this permanently? Docker Compose on a desktop or a NAS, the data volume, ports, and migrating an existing install into a container. |
 | [../ARCHITECTURE.md](../ARCHITECTURE.md) | How is it built? Module map, pipeline data flow, persistence model, concurrency, and the provider and notifier abstractions. |
 | [../CONTRIBUTING.md](../CONTRIBUTING.md) | How do I change it? Dev setup, the checks CI enforces, Conventional Commits, and the licence your contribution lands under. |

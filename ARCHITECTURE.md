@@ -41,7 +41,7 @@ Everything under `src/job_scout/`. Roughly in pipeline order.
 
 | Module | Role |
 | --- | --- |
-| `cli.py` | The only place Click commands are defined (1 root group, 11 subgroups, 42 leaf commands). Also holds the pipeline itself — `_run_pipeline` and the stage helpers — because both front ends call into it. The `cv` subgroup is the one it does not define: it is built in `cv/cli.py` and attached with `cli.add_command()`. |
+| `cli.py` | Defines the root Click group and the pipeline commands. Also holds the pipeline itself — `_run_pipeline` and the stage helpers — because both front ends call into it. The `cv` and `letter` groups are built in their respective subpackages and attached with `cli.add_command()`. |
 | `config.py` | Data-directory layout, global/user/secret file loading, the `GLOBAL_FIELDS`/`USER_FIELDS`/`SECRET_FIELDS` split, and type coercion for `config set`. |
 | `models.py` | All Pydantic models. `JobListing` is the value carried through every stage; `Config` is the merged settings object; `CareerTrack`, `TravelTime`, `TrackScore`, `RunStats`, `JobStatus` and the evaluation results hang off them. |
 | `database.py` | Every SQL statement in the project. Schema creation, additive migrations, dedup keys, caches and lifecycle transitions. |
@@ -87,6 +87,7 @@ Everything under `src/job_scout/`. Roughly in pipeline order.
 | `resume_tailor.py` | Extracts high-value keywords from a job description, rewrites the resume around them, and renders the result to PDF with ReportLab. |
 | `cover_letter_generator.py` | Drafts a cover letter from `CvProfile` + job, extracts the screening questions a posting implies, and answers them in the candidate's voice. |
 | `interview_prep.py` | Derives likely behavioural questions for a job and matches each to the best STAR story from the saved bank. |
+| `letters/` | Per-user examples, style guides, CV-grounded letter generation, structured draft storage, PDF rendering, and the `/api/letters` router and `letter` CLI group. See [Letter Writer](docs/LETTER_WRITER.md). |
 | `cv/` | The CV builder — a self-contained subpackage with its own document model, storage, renderer, FastAPI router, Click group and front end. See [the CV subpackage](#the-cv-subpackage) below. |
 
 ### Delivery, scheduling and integration
@@ -342,7 +343,7 @@ optional-`--user` on a single-user install and refuse to guess on a multi-user o
 
 `web/app.py` is a FastAPI application factory and the single-page dashboard in
 `web/static/`. Twelve tabs — Dashboard, Approvals, Profile & Filters, Document Review,
-CV Builder, Keywords, Custom Sites, Notifications, LLM Settings, Secrets, Schedule,
+CV Builder, Letter Writer, Keywords, Custom Sites, Notifications, LLM Settings, Secrets, Schedule,
 Analytics — over a JSON API grouped by resource (`/api/jobs/*`, `/api/config`,
 `/api/profile/*`, `/api/coach/*`, `/api/llm/*`, `/api/cv/*`, `/api/schedule`, `/api/run*`).
 
@@ -415,3 +416,13 @@ therefore loses Wake-on-LAN. See [docs/DEPLOY.md](docs/DEPLOY.md).
   criteria, model or prompt version moves.
 - **Notification retry over guaranteed delivery.** Failed sends are flagged and retried on
   the next run; no queue, no broker.
+
+### Letter writer
+
+`letters/writer.py` reads the current `CVDocument` without modifying it, separates
+facts from historical style examples, and calls the existing `cover_letter` LLM
+purpose. `letters/api.py` is mounted under the dashboard token middleware. The
+separate `web/static/letters.js` editor discards stale responses after a user switch.
+Drafts and examples live in `user_letters_dir(name)`; the last saved draft is also
+mirrored into the legacy database cover-letter field. No examples or personal
+style guide are shipped with the package.

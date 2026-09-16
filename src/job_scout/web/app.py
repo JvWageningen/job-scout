@@ -43,6 +43,7 @@ from job_scout.cv.models import CVDocument
 from job_scout.cv.storage import ProfileStore, StorageError
 from job_scout.cv.tailor import TailorError, tailor_cv_document, tailored_slug
 from job_scout.database import Database
+from job_scout.letters.api import build_api_router as build_letters_api_router
 from job_scout.llm.factory import build_raw_client_for_test, get_llm_client
 from job_scout.models import (
     Config,
@@ -517,6 +518,15 @@ def create_app() -> FastAPI:
         return ProfileStore(user_cv_dir(_require_user(user)))
 
     app.include_router(build_cv_api_router(), prefix="/api/cv")
+    app.include_router(build_letters_api_router(), prefix="/api/letters")
+
+    @app.get("/letters.js", include_in_schema=False)
+    def serve_letters_js() -> FileResponse:
+        """Serve the letter editor script."""
+        return FileResponse(
+            Path(__file__).parent / "static" / "letters.js", headers=no_cache_headers
+        )
+
     app.dependency_overrides[get_cv_store] = cv_store
 
     # Declared here rather than on the vendored router because tailoring is the
@@ -878,6 +888,11 @@ def create_app() -> FastAPI:
         try:
             status = check_schedule_status(user=user)
             return {"status": status}
+        except FileNotFoundError:
+            return {
+                "status": "Host cron is unavailable. "
+                "Use Automatic runs below for the container scheduler."
+            }
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc  # noqa: B904
 

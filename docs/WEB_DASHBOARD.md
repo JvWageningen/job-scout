@@ -147,6 +147,14 @@ either in general or as an application for a specific vacancy, or paste a motiva
 letter and have it judged against the vacancy it answers. Nothing here is saved or
 sent anywhere — the critique is generated and displayed.
 
+### Letter Writer
+
+Draft a Dutch or English motivational letter from a vacancy and a saved CV Builder
+profile. Add private example letters and an editable style guide, then review the
+wording, save separate language versions, and export PDF or text. Generation does
+not submit applications. See [Letter Writer](LETTER_WRITER.md) for the complete
+workflow, privacy details and review limitations.
+
 ### Keywords
 
 Shows the four generated lists — Dutch keywords, English keywords, title-include and
