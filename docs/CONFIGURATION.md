@@ -55,15 +55,55 @@ data/
     ├── alex/
     │   ├── config.yaml         # alex's search settings
     │   ├── jobs.db             # alex's jobs, runs, caches and generated documents
-    │   └── logs/               # one log file per run
+    │   ├── logs/               # one log file per run
+    │   └── cv/                 # alex's CV builder profiles (see below)
     └── sam/
         ├── config.yaml
         ├── jobs.db
-        └── logs/
+        ├── logs/
+        └── cv/
 ```
 
 Each user gets their own SQLite database, so two people on one install never
 see each other's matches, evaluations or generated documents.
+
+### CV builder data
+
+The CV builder keeps its documents on disk rather than in the database, one
+directory per profile, so a profile can be copied or backed up by moving it:
+
+```
+data/users/alex/cv/
+└── profiles/
+    ├── default/
+    │   ├── cv.json             # the CVDocument: identity, theme, sections
+    │   └── uploads/
+    │       └── portrait.png    # squared and downscaled on upload
+    └── default-meridiaan-data/ # a tailored copy, saved under its own slug
+        ├── cv.json
+        └── uploads/
+```
+
+`user_cv_dir(name)` returns `data/users/<name>/cv`, and the profile store
+derives the `profiles/` level from it. The root moves with
+`JOB_SCOUT_DATA_DIR` like everything else, so nothing extra is needed to keep
+CVs on a mounted volume — the Docker deployment picks them up at
+`/data/users/<name>/cv/` automatically.
+
+**There are no configuration keys for the CV builder.** It has nothing in
+`config.yaml`, nothing in `secrets.yaml`, and no environment variable of its
+own: the profile it edits is chosen in the editor, the user is chosen by
+`--user` or the dashboard's user picker, and tailoring uses the same LLM
+provider and per-stage routing as everything else (the `resume_tailoring`
+purpose — see [LLM_PROVIDERS.md](LLM_PROVIDERS.md)). The vendored code still
+defines a `CV_BUILDER_DATA` override, but no job-scout entry point reaches it:
+both the CLI and the dashboard always pass an explicit per-user root. Setting it
+does nothing.
+
+The CV builder is also unrelated to the `cv_path` key below. That points at the
+CV **PDF** the pipeline parses to score vacancies; the builder's `cv.json`
+documents are never read by the pipeline, and editing one does not invalidate a
+single cached evaluation. Full detail in [CV_BUILDER.md](CV_BUILDER.md).
 
 ### Relocating the data directory
 
@@ -567,4 +607,5 @@ llm_health_url: http://192.168.1.50:11434/v1/models
 - [LLM_PROVIDERS.md](LLM_PROVIDERS.md) — choosing and routing backends
 - [NOTIFICATIONS.md](NOTIFICATIONS.md) — channels, modes and retry
 - [WEB_DASHBOARD.md](WEB_DASHBOARD.md) — editing all of this in a browser
+- [CV_BUILDER.md](CV_BUILDER.md) — the CV profiles stored beside these files
 - [DEPLOY.md](DEPLOY.md) — how configuration is split under Docker

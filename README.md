@@ -40,9 +40,11 @@ It runs on your machine or your NAS. With a local model, no part of your CV ever
 | **Never a dead link** | Every match is re-checked live before you are notified, and jobs already in your pipeline are swept for filled-or-closed signals. |
 | **Match enrichment** | Each match gets a web search for the vacancy on the employer's own site or ATS, plus a cached, evidence-backed review of what it is like to work there. |
 | **Application toolkit** | Tailor your resume to a posting's keywords and render it to PDF, draft a cover letter, and pre-answer the application's screening questions in your own voice. |
+| **Designed CV builder** | Write your CV section by section in the browser — seven section kinds across a sidebar and a main column — and watch it render live to a two-column PDF with a coloured sidebar, a circular portrait and embedded fonts. The plain ATS-safe resume stays available for upload boxes that would mangle it. |
+| **CV tailored to one vacancy** | Retarget that designed CV at a single posting: relevant roles and skills move to the front, prose is reworded, and the result is saved as a profile of its own. Employers, titles, schools and dates are frozen — a CV that came back having gained an employer is rejected, not handed to you. |
 | **Document review** | An honest second opinion before you send anything: your CV in general or as an application for one specific vacancy, or a motivational letter judged against the posting it answers. Nothing is saved or sent. |
 | **Interview prep** | Keep a reusable bank of STAR stories, then have the behavioural questions a posting is likely to ask extracted and matched to the story that best answers each one. |
-| **Self-hosted control room** | An eleven-tab web dashboard with live per-stage progress and a stop button, four push channels (ntfy, email, Slack, Discord), per-user databases and configs, a container-native weekly scheduler that wakes a sleeping GPU host over Wake-on-LAN, and an MCP server for querying your pipeline from an AI client. |
+| **Self-hosted control room** | A twelve-tab web dashboard with live per-stage progress and a stop button, four push channels (ntfy, email, Slack, Discord), per-user databases and configs, a container-native weekly scheduler that wakes a sleeping GPU host over Wake-on-LAN, and an MCP server for querying your pipeline from an AI client. |
 
 ## Quick start
 
@@ -145,6 +147,7 @@ Everything the pipeline produces is browsable and editable from a self-hosted we
 | [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | Every global key, per-user key, secret and environment variable |
 | [docs/LLM_PROVIDERS.md](docs/LLM_PROVIDERS.md) | The four backends and per-stage routing |
 | [docs/NOTIFICATIONS.md](docs/NOTIFICATIONS.md) | ntfy, email, Slack and Discord; modes and retry |
+| [docs/CV_BUILDER.md](docs/CV_BUILDER.md) | The CV editor, the designed PDF, vacancy tailoring and the ATS trade-off |
 | [docs/WEB_DASHBOARD.md](docs/WEB_DASHBOARD.md) | Dashboard tabs, token auth and security posture |
 | [docs/DEPLOY.md](docs/DEPLOY.md) | Docker, NAS and server deployment |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | How the pieces fit together, and why |

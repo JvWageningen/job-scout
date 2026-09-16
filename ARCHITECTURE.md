@@ -41,7 +41,7 @@ Everything under `src/job_scout/`. Roughly in pipeline order.
 
 | Module | Role |
 | --- | --- |
-| `cli.py` | The only place Click commands are defined (1 root group, 10 subgroups, 38 leaf commands). Also holds the pipeline itself — `_run_pipeline` and the stage helpers — because both front ends call into it. |
+| `cli.py` | The only place Click commands are defined (1 root group, 11 subgroups, 42 leaf commands). Also holds the pipeline itself — `_run_pipeline` and the stage helpers — because both front ends call into it. The `cv` subgroup is the one it does not define: it is built in `cv/cli.py` and attached with `cli.add_command()`. |
 | `config.py` | Data-directory layout, global/user/secret file loading, the `GLOBAL_FIELDS`/`USER_FIELDS`/`SECRET_FIELDS` split, and type coercion for `config set`. |
 | `models.py` | All Pydantic models. `JobListing` is the value carried through every stage; `Config` is the merged settings object; `CareerTrack`, `TravelTime`, `TrackScore`, `RunStats`, `JobStatus` and the evaluation results hang off them. |
 | `database.py` | Every SQL statement in the project. Schema creation, additive migrations, dedup keys, caches and lifecycle transitions. |
@@ -87,6 +87,7 @@ Everything under `src/job_scout/`. Roughly in pipeline order.
 | `resume_tailor.py` | Extracts high-value keywords from a job description, rewrites the resume around them, and renders the result to PDF with ReportLab. |
 | `cover_letter_generator.py` | Drafts a cover letter from `CvProfile` + job, extracts the screening questions a posting implies, and answers them in the candidate's voice. |
 | `interview_prep.py` | Derives likely behavioural questions for a job and matches each to the best STAR story from the saved bank. |
+| `cv/` | The CV builder — a self-contained subpackage with its own document model, storage, renderer, FastAPI router, Click group and front end. See [the CV subpackage](#the-cv-subpackage) below. |
 
 ### Delivery, scheduling and integration
 
@@ -102,6 +103,63 @@ Everything under `src/job_scout/`. Roughly in pipeline order.
 | `mcp_server.py` | MCP server exposing the pipeline to MCP-capable AI clients. |
 | `web/` | `app.py` (the FastAPI application factory and every route) and `static/` (the single-page dashboard: `index.html`, `app.js`, `style.css`, icons). |
 | `llm/` | The provider abstraction — see below. |
+
+### The CV subpackage
+
+`cv/` was a separate project, vendored in wholesale. It keeps its own layering because it
+solves a different problem from everything above it: the pipeline reads a CV to judge
+vacancies, while this writes one.
+
+| Module | Role |
+| --- | --- |
+| `cv/models.py` | `CVDocument` — identity, `Theme`, and two ordered lists of sections (`sidebar`, `main`). A section is a discriminated union over seven kinds: `text`, `experience`, `education`, `skills`, `details`, `contact`, `list`. Every section and entry carries a generated id, which is what makes reordering expressible as data. |
+| `cv/storage.py` | `ProfileStore`: one directory per profile holding `cv.json` and `uploads/`, atomic writes, slug normalisation as the single path-traversal gate, and the starter-profile seeding. Takes its root as a constructor argument, which is the whole reason multi-user support needed no change here. |
+| `cv/render/` | The renderer. `document.py` builds geometry and blocks and drives the canvas, `frame.py` paginates each column independently, `blocks.py` and `text.py` measure and draw, `icons.py` draws sixteen named icons as vectors. |
+| `cv/fonts.py`, `cv/images.py` | Bundled Lato registration with a Helvetica fallback, and portrait normalisation (EXIF-rotate, centre-crop square, downscale). |
+| `cv/sample.py` | The seeded English and Dutch starter documents, and the empty skeleton behind "New profile". |
+| `cv/app.py` | `build_api_router()` — the CRUD, portrait, preview and download endpoints — plus `create_app()` for the standalone server. The store is resolved through a module-level `get_store` dependency precisely so a host application can override it. |
+| `cv/cli.py` | The `cv` Click group: `serve`, `render`, `list`, `tailor`. Click, not the typer CLI it shipped with, so job-scout gains no dependency and everything is one console script. |
+| `cv/tailor.py` | Vacancy tailoring for a `CVDocument`, with the integrity checks described below. |
+| `cv/static/` | The editor front end: `index.html`, `app.js`, `style.css`, `favicon.svg`. One file serves both hosts — it reads `window.CV_API_BASE` and a `?user=` parameter, and falls back to the standalone behaviour when neither is set. |
+
+**Two integration seams, both narrow.** `cli.py` imports the group and calls
+`cli.add_command()`; `web/app.py` mounts the router at `/api/cv` and overrides `get_store`
+with one that returns `ProfileStore(user_cv_dir(user))`. The mount point is inside `/api/`
+on purpose: `TokenAuthMiddleware` guards exactly that prefix, so the CV endpoints inherit
+the dashboard's token instead of growing a second, easily forgotten auth path.
+
+### Why there are two PDF paths
+
+`resume_tailor.py` and `cv/` both produce a tailored PDF, and the overlap is deliberate.
+
+| | `resume_tailor.py` | `cv/` |
+| --- | --- | --- |
+| Input | Raw CV **text**, from `cv_parser.parse_cv()` reading the `cv_path` PDF | A structured `CVDocument` the user authored in the editor |
+| Unit of change | The whole document, rewritten by the LLM | Ordering plus individual prose fields, patched by id |
+| Output | `generate_resume_pdf()` — ReportLab `SimpleDocTemplate`, one column, standard styles, deliberately ATS-safe | `cv/render` — a hand-driven canvas, two independently paginated columns, bleed sidebar, portrait, icons |
+| Stored in | The jobs database, against the job row | A new profile directory of its own |
+
+They are different because their inputs are. Text in, text out can be rewritten freely; a
+structured document cannot, because its fields are claims about a real person and the model
+is holding all of them at once. So `cv/tailor.py` never asks for a new document — it asks
+for a *plan* of id orderings and reworded prose, applies that plan to a deep copy, and then
+re-checks the result: `_reject_rewritten_facts` refuses a patch that edits a frozen field,
+`_validated_order` refuses an ordering that is not a permutation, and `_verify_integrity`
+refuses a finished document whose organisations, titles, periods or skill names are not a
+subset of the original's. A CV that gained an employer raises `TailorError` and nothing is
+written.
+
+The two paths do share what they can: `cv/tailor.py` imports `extract_resume_keywords` and
+`_parse_json_response` from `resume_tailor.py`, so both aim at the same keywords and both
+survive the same chatty, markdown-fenced completions. `cv_parser.py` stays on the
+`resume_tailor.py` side of the line — it extracts text from a PDF and never produces one,
+and the CV builder has no need of it because its documents were never a PDF to begin with.
+`exporter.py` is unrelated to both: it serialises `JobListing` rows to CSV and JSON, and
+touches no document format at all.
+
+Which of the two files to actually send is a judgement call about applicant tracking
+systems, not an architectural one; [docs/CV_BUILDER.md](docs/CV_BUILDER.md) makes the
+recommendation.
 
 ## Data flow
 
@@ -258,7 +316,8 @@ data/
     └── <name>/
         ├── config.yaml      # this user's overrides (USER_FIELDS)
         ├── jobs.db          # this user's database
-        └── logs/            # one log file per run
+        ├── logs/            # one log file per run
+        └── cv/              # CV builder root; profiles/<slug>/cv.json + uploads/
 ```
 
 The split is enforced in `config.py`: `GLOBAL_FIELDS` is an explicit frozenset (providers,
@@ -269,7 +328,11 @@ carry what it actually overrides. `load_llm_config()` is the user-agnostic subse
 where only a client is needed.
 
 Passing `--user <name>` selects that user's config and database; omitting it uses the
-legacy global pair. `--all` iterates every directory under `data/users/`.
+legacy global pair. `--all` iterates every directory under `data/users/`. CV profiles are
+the one per-user store that is not SQLite: `user_cv_dir(name)` returns the `cv/` directory
+above, and `ProfileStore` derives `profiles/<slug>/` from it. The `cv` commands resolve the
+user through the same `_require_single_user()` helper as the rest of the CLI, so they are
+optional-`--user` on a single-user install and refuse to guess on a multi-user one.
 
 > Known bug: `approval queue`, `approval approve`, `company research` and `company view`
 > accept `--user` and validate it, but then open the global `data/jobs.db` instead of the
@@ -277,11 +340,22 @@ legacy global pair. `--all` iterates every directory under `data/users/`.
 
 ## Web and API layer
 
-`web/app.py` is a FastAPI application factory with roughly 64 routes and the single-page
-dashboard in `web/static/`. Eleven tabs — Dashboard, Approvals, Profile & Filters,
-Document Review, Keywords, Custom Sites, Notifications, LLM Settings, Secrets, Schedule,
+`web/app.py` is a FastAPI application factory and the single-page dashboard in
+`web/static/`. Twelve tabs — Dashboard, Approvals, Profile & Filters, Document Review,
+CV Builder, Keywords, Custom Sites, Notifications, LLM Settings, Secrets, Schedule,
 Analytics — over a JSON API grouped by resource (`/api/jobs/*`, `/api/config`,
-`/api/profile/*`, `/api/coach/*`, `/api/llm/*`, `/api/schedule`, `/api/run*`).
+`/api/profile/*`, `/api/coach/*`, `/api/llm/*`, `/api/cv/*`, `/api/schedule`, `/api/run*`).
+
+**The CV Builder tab** is the one tab that is not built from `web/static/app.js`. It is an
+iframe pointed at `/cv/?user=<name>`, which serves the vendored editor's own page with its
+asset links rewritten from `/static/` to `/cv/` and a one-line script injected to set
+`window.CV_API_BASE = "/api/cv"`. The vendored markup is never modified on disk, so the
+standalone server keeps serving the same file unchanged. `app.js` sets the iframe's `src`
+the first time the tab is opened and again when the selected user changes — never on page
+load, because the editor renders a PDF preview as it starts. Tailoring
+(`POST /api/cv/profiles/{slug}/tailor`) is declared on the dashboard rather than on the
+vendored router, because it is the only CV operation that needs the jobs database and the
+user's LLM settings; it answers 502, not 500, when the model returns something unusable.
 
 **Running the pipeline.** `POST /api/run` starts it in a daemon thread and returns
 immediately. `GET /api/run/status` reads the `progress` registry — stage, counts, per-stage

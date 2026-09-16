@@ -16,7 +16,8 @@ fixed.
 | [CONFIGURATION.md](CONFIGURATION.md) | What can I change, and where does it live? Every global key, per-user key, secret and environment variable, with its real default. |
 | [LLM_PROVIDERS.md](LLM_PROVIDERS.md) | Which model runs my search? The four backends (local, Z.AI, Claude CLI, Kilo CLI) and how to route each pipeline stage to a different one. |
 | [NOTIFICATIONS.md](NOTIFICATIONS.md) | How do matches reach me? ntfy, email, Slack and Discord, per-job versus digest mode, and how failed sends are retried. |
-| [WEB_DASHBOARD.md](WEB_DASHBOARD.md) | What does the dashboard do? The eleven tabs, the optional bearer token, and the security posture you are accepting by exposing it. |
+| [CV_BUILDER.md](CV_BUILDER.md) | How do I build the CV itself? The document model and its seven section kinds, the editor tab, where profiles live, tailoring one to a vacancy, and when a designed two-column CV is the wrong file to upload. |
+| [WEB_DASHBOARD.md](WEB_DASHBOARD.md) | What does the dashboard do? The twelve tabs, the optional bearer token, and the security posture you are accepting by exposing it. |
 | [DEPLOY.md](DEPLOY.md) | How do I run this permanently? Docker Compose on a desktop or a NAS, the data volume, ports, and migrating an existing install into a container. |
 | [../ARCHITECTURE.md](../ARCHITECTURE.md) | How is it built? Module map, pipeline data flow, persistence model, concurrency, and the provider and notifier abstractions. |
 | [../CONTRIBUTING.md](../CONTRIBUTING.md) | How do I change it? Dev setup, the checks CI enforces, Conventional Commits, and the licence your contribution lands under. |
@@ -36,6 +37,9 @@ Three routes through the documentation, depending on why you are here.
 2. [WEB_DASHBOARD.md](WEB_DASHBOARD.md) — open the dashboard, fill in your profile and
    filters, upload your CV and press Run. Everything the first run needs is reachable
    from there without touching a config file.
+3. [CV_BUILDER.md](CV_BUILDER.md) — once matches are arriving, this is the half that
+   answers them: write the CV in the browser, render the designed PDF, and tailor it to a
+   specific vacancy. It also explains which of the two PDFs to upload where.
 
 Once it is producing matches you like, [DEPLOY.md](DEPLOY.md) turns it into a scheduled
 service that runs without you.

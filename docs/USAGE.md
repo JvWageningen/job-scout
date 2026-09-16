@@ -3,8 +3,8 @@
 job-scout is driven entirely from one console script, `job-scout`, installed by the
 project's entry point. Locally you invoke it through uv (`uv run job-scout ...`); inside
 the container the image's entrypoint is already `job-scout`, so you pass bare arguments
-(`docker compose exec scheduler job-scout run --all`). The surface is one root group, ten
-subgroups and 38 leaf commands: a handful you will use every week (`run`, `jobs list`,
+(`docker compose exec scheduler job-scout run --all`). The surface is one root group, eleven
+subgroups and 42 leaf commands: a handful you will use every week (`run`, `jobs list`,
 `config set`) and a long tail that exists for the moments you need it — pruning dead
 vacancies, tailoring a resume to a specific posting, waking a sleeping GPU host before a
 scheduled sweep. This page documents all of them.
@@ -16,6 +16,7 @@ flag does not behave identically everywhere.
 - Config keys and defaults referenced here are described in full in [CONFIGURATION.md](CONFIGURATION.md).
 - Provider and per-stage model routing: [LLM_PROVIDERS.md](LLM_PROVIDERS.md).
 - Notification channels and modes: [NOTIFICATIONS.md](NOTIFICATIONS.md).
+- The CV editor behind the `cv` commands, and which PDF to send where: [CV_BUILDER.md](CV_BUILDER.md).
 - The dashboard, which exposes much (not all) of this surface as a UI: [WEB_DASHBOARD.md](WEB_DASHBOARD.md).
 - Running it as a container: [DEPLOY.md](DEPLOY.md).
 
@@ -71,6 +72,10 @@ logs directory regardless of this setting; `-v` only affects what reaches your t
 | [`profile get-answers`](#profile-get-answers) | Print stored screening answers |
 | [`profile star-story`](#profile-star-story) | Manage the STAR story bank |
 | [`profile interview-prep`](#profile-interview-prep) | Match likely questions to your STAR stories |
+| [`cv list`](#cv-list) | List the stored CV profiles |
+| [`cv serve`](#cv-serve) | Run the CV editor on its own |
+| [`cv render`](#cv-render) | Render a stored CV profile to PDF |
+| [`cv tailor`](#cv-tailor) | Tailor a stored CV to one vacancy |
 | [`schedule loop`](#schedule-loop) | Container-native weekly scheduler |
 | [`schedule install`](#schedule-install) | Install a host crontab entry |
 | [`schedule status`](#schedule-status) | Show the installed crontab entry |
@@ -694,6 +699,95 @@ stories that best answer it. Exits 1 when no STAR stories exist, so build the ba
 |---|---|---|
 | `JOB_ID` | required | Numeric job id |
 | `--user TEXT` | none | User preparing |
+
+---
+
+## CV builder
+
+These four commands drive the designed CV: a structured document you edit in a browser and
+render to a two-column PDF with a coloured sidebar. They are independent of the CV PDF
+configured under `cv_path` — that file feeds the pipeline's scoring and the `profile`
+commands, while these read and write CV profiles under
+`data/users/<name>/cv/profiles/<slug>/`.
+
+`--user` behaves as it does elsewhere, with one difference worth knowing: with a single user
+configured it is optional, and with several configured every `cv` command refuses to guess
+and tells you to pass it. The full feature guide, including when a two-column CV is the
+wrong file to upload, is [CV_BUILDER.md](CV_BUILDER.md).
+
+### `cv list`
+
+```bash
+uv run job-scout cv list --user alex
+```
+
+Prints one profile slug per line. On an empty store it prints the directory it looked in
+rather than seeding anything — open the editor to get the starter profiles.
+
+| Option | Default | Description |
+|---|---|---|
+| `--user TEXT` | the only user | User whose CV profiles to list |
+
+### `cv serve`
+
+```bash
+uv run job-scout cv serve --user alex --host 127.0.0.1 --port 38271
+```
+
+Runs the CV editor as its own web server: the section editor on the left, a live PDF preview
+on the right. Seeds the two starter profiles (`default` in English, `nederlands` in Dutch)
+if the user has none yet, and logs the data directory and URL on start-up.
+
+| Option | Default | Description |
+|---|---|---|
+| `--user TEXT` | the only user | User whose CV profiles to edit |
+| `--host TEXT` | `127.0.0.1` | Interface to bind |
+| `--port INTEGER` | `38271` | Port to listen on |
+
+The port is checked before uvicorn starts, so a clash is a one-line message suggesting the
+next port up rather than a traceback. You do not need this command if the dashboard is
+already running: the same editor is the **CV Builder** tab, at `/cv/`, where it inherits the
+dashboard's token.
+
+### `cv render`
+
+```bash
+uv run job-scout cv render default --user alex -o ~/applications/cv.pdf
+```
+
+Renders one stored profile straight to a PDF, creating parent directories as needed, and
+prints the path and page count. No LLM, no network.
+
+| Argument / option | Default | Description |
+|---|---|---|
+| `SLUG` | required | Profile slug, as printed by `cv list` |
+| `--user TEXT` | the only user | User the profile belongs to |
+| `-o`, `--output PATH` | `cv.pdf` | File to write |
+
+### `cv tailor`
+
+```bash
+uv run job-scout cv tailor 42 --user alex --slug default -o ~/applications/meridiaan.pdf
+```
+
+Tailors a stored CV to one vacancy from the user's database and saves it as a **new**
+profile named after the company — `default` plus `meridiaan-data` — then renders that
+profile to PDF. The source profile is read, never written, so the same base CV can be
+tailored again for the next vacancy.
+
+| Argument / option | Default | Description |
+|---|---|---|
+| `JOB_ID` | required | Numeric job id, from `jobs list` |
+| `--user TEXT` | the only user | User whose CV and database to use |
+| `--slug TEXT` | `default` | Profile to tailor. It is read, never written |
+| `-o`, `--output PATH` | `<tailored slug>.pdf` | File to write, in the current directory by default |
+
+The model may only reorder sections, entries and items and reword prose. Employers, job
+titles, schools, degrees, dates and skill names are frozen, and the finished document is
+re-checked against the original: a CV that gained an employer, grew a bullet list or changed
+its theme is refused with a message, and nothing is written. Unlike
+[`profile tailor-resume`](#profile-tailor-resume) there is no job-status requirement — any
+job id in the database will do.
 
 ---
 
