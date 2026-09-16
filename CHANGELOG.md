@@ -4,6 +4,60 @@ Format: [Keep a Changelog](https://keepachangelog.com)
 
 <!-- version list -->
 
+## v2.0.0 (2026-09-16)
+
+### Chores
+
+- Add issue templates, funding and dependabot config
+  ([`38faa89`](https://github.com/JvWageningen/job-scout/commit/38faa89d45f2745b57e8ad8c1d425cd02f1d09c1))
+
+- Add the job-scout brand assets
+  ([`98ea823`](https://github.com/JvWageningen/job-scout/commit/98ea823fe4a4edb8f84f7f5fa4d49bbd49f858e2))
+
+- Stop publishing local agent tooling
+  ([`f755cc0`](https://github.com/JvWageningen/job-scout/commit/f755cc03de61edd20faf77724e6741226e688c78))
+
+- Sync uv.lock to 1.17.3 [skip ci]
+  ([`a1c9c1d`](https://github.com/JvWageningen/job-scout/commit/a1c9c1d477a9822a47f0d1a40edd919d53f851e7))
+
+- Sync uv.lock to 2.0.0 [skip ci]
+  ([`6e97f7d`](https://github.com/JvWageningen/job-scout/commit/6e97f7d59a2bd868672d9cc8634d26cf1cbd98fc))
+
+### Documentation
+
+- Add contributing, security and conduct guides
+  ([`6b2eaa7`](https://github.com/JvWageningen/job-scout/commit/6b2eaa7980b200f393541e72c0507974a48e31d5))
+
+- Correct the wake behaviour and three smaller inaccuracies
+  ([`82a8194`](https://github.com/JvWageningen/job-scout/commit/82a81943556cc990869892bdf5420f9e580b7d53))
+
+- Rewrite the README as a landing page and split the reference into docs/
+  ([`d187019`](https://github.com/JvWageningen/job-scout/commit/d187019c1465443c7750379634da48257f90764e))
+
+### Features
+
+- Relicense from MIT to PolyForm Noncommercial 1.0.0
+  ([`668dd03`](https://github.com/JvWageningen/job-scout/commit/668dd030307495227b38374b11989927699b9e1d))
+
+- Relicense to the GNU AGPL v3.0
+  ([`67e9ac1`](https://github.com/JvWageningen/job-scout/commit/67e9ac1dd4da880f728c7ead6e4942c997187253))
+
+- **cli**: Report the installed version with --version
+  ([`6fa1a7c`](https://github.com/JvWageningen/job-scout/commit/6fa1a7c6be1ea900cb55e5fa2babe2c23f139598))
+
+- **web**: Brand the dashboard with the job-scout mark and favicon
+  ([`c4c57ef`](https://github.com/JvWageningen/job-scout/commit/c4c57efa0d41207b7b2a615455c474b5ee3b4dc7))
+
+### Breaking Changes
+
+- The licence changes from PolyForm Noncommercial 1.0.0 to the GNU AGPL v3.0 or later (SPDX:
+  AGPL-3.0-or-later). Commercial use is now permitted, so this is a loosening for most users; the
+  new obligation is that anyone distributing a modified version, or running one as a network
+  service, must offer its complete source under the same terms. The v1.x line remains MIT and that
+  grant is irrevocable; MIT is one-way compatible with the AGPL, so that code carries forward
+  without permission.
+
+
 ## v1.17.3 (2026-09-15)
 
 ### Bug Fixes
