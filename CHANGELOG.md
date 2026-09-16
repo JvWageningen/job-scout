@@ -4,6 +4,19 @@ Format: [Keep a Changelog](https://keepachangelog.com)
 
 <!-- version list -->
 
+## v2.2.1 (2026-09-16)
+
+### Bug Fixes
+
+- Make full cover letter writing discoverable and group dashboard functions
+  ([`f026d70`](https://github.com/JvWageningen/job-scout/commit/f026d707cc1ff97bab6d3d3031427a833fb44b3e))
+
+### Chores
+
+- Sync uv.lock to 2.2.0 [skip ci]
+  ([`491a3b5`](https://github.com/JvWageningen/job-scout/commit/491a3b5fb2f881079867488a3c604a44385c993e))
+
+
 ## v2.2.0 (2026-09-16)
 
 ### Chores
