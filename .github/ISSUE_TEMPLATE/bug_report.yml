@@ -1,0 +1,106 @@
+name: Bug report
+description: Something in job-scout behaves incorrectly
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this.
+
+        Please redact anything personal before you post: API keys, your home address,
+        CV content, employer names you would rather not make public, and your ntfy topic.
+        Logs from a run can contain all of these.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you observe, and what did you expect instead?
+      placeholder: |
+        Running `job-scout run --user alex` ended with ... but I expected ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: The exact command or dashboard action, and anything needed to hit it again.
+      placeholder: |
+        1. Open the dashboard at http://localhost:24817
+        2. Go to the Schedule tab and ...
+        3. See the error
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+      description: Optional, if it is not already obvious from the description above.
+    validations:
+      required: false
+
+  - type: dropdown
+    id: install-method
+    attributes:
+      label: How did you install job-scout?
+      options:
+        - Windows one-line installer (install.ps1)
+        - Linux one-line installer (install.sh)
+        - Docker Compose
+        - NAS / server install (nas-install.sh)
+        - Developer install (git clone + uv sync)
+    validations:
+      required: true
+
+  - type: dropdown
+    id: llm-provider
+    attributes:
+      label: Which LLM provider were you using?
+      options:
+        - local (Ollama, LM Studio, vLLM, llama.cpp, ...)
+        - zai (Z.AI GLM)
+        - claude_cli (Claude Code CLI)
+        - kilo_cli (Kilo Code CLI)
+        - Not sure / not relevant to this bug
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: job-scout version
+      description: Output of `job-scout --version`, or the Docker image tag you are running.
+      placeholder: "2.0.0"
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: Windows 11 / Ubuntu 24.04 / Synology DSM 7.2
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log output
+      description: |
+        From `data/users/<name>/logs/`, or the dashboard's log viewer. Paste only the
+        relevant portion. This is rendered as a code block, so no backticks are needed.
+      render: shell
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: redaction
+    attributes:
+      label: Before submitting
+      options:
+        - label: I have removed API keys, personal details and CV content from everything pasted above.
+          required: true
+        - label: I checked the existing issues and this does not look like a duplicate.
+          required: false

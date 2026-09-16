@@ -1,0 +1,44 @@
+version: 2
+
+# Commit prefixes are deliberately "chore". python-semantic-release parses every commit on main with
+# the conventional-commit parser, and "chore" produces no version bump — so a dependency PR never
+# triggers a release on its own. The release that follows is cut by the next feat/fix commit.
+
+updates:
+  # Python dependencies: pyproject.toml plus uv.lock, via Dependabot's native uv support.
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "05:00"
+      timezone: "Europe/Amsterdam"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+    groups:
+      python-minor-and-patch:
+        applies-to: version-updates
+        update-types:
+          - "minor"
+          - "patch"
+
+  # GitHub Actions used by .github/workflows/ci.yml.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "05:00"
+      timezone: "Europe/Amsterdam"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+    groups:
+      actions-minor-and-patch:
+        applies-to: version-updates
+        update-types:
+          - "minor"
+          - "patch"

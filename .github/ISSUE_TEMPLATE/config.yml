@@ -1,0 +1,15 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question or idea
+    url: https://github.com/JvWageningen/job-scout/discussions
+    about: >-
+      Setup help, configuration questions, LLM provider advice, commercial licensing enquiries, and
+      anything that is not yet a concrete bug or feature request.
+  - name: Report a security vulnerability
+    url: https://github.com/JvWageningen/job-scout/security/advisories/new
+    about: >-
+      Do not open a public issue. Report privately through a GitHub security advisory; the policy is in
+      SECURITY.md.
+  - name: Sponsor job-scout
+    url: https://github.com/sponsors/JvWageningen
+    about: Support continued development of the project.

@@ -1,0 +1,68 @@
+name: Feature request
+description: Suggest an improvement or a new capability
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Good feature requests start from the problem rather than the solution — knowing what
+        got in your way usually leads somewhere better than the first idea for fixing it.
+
+        If you are asking how to do something that may already be possible, open a
+        [Discussion](https://github.com/JvWageningen/job-scout/discussions) instead, and have
+        a look at [USAGE.md](https://github.com/JvWageningen/job-scout/blob/main/docs/USAGE.md),
+        which documents every command.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you trying to solve?
+      description: Describe what you hit in your own job hunt, not the feature you imagined.
+      placeholder: |
+        Indeed keeps returning recruitment agencies rather than the employers themselves,
+        and I have no way to filter them out without also losing ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: What would you like to happen?
+      description: Your proposed solution, if you have one in mind.
+    validations:
+      required: false
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What have you tried or considered?
+      description: |
+        Existing settings you have already tried, workarounds you are using, or other
+        approaches you rejected and why.
+    validations:
+      required: false
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which part of job-scout does this touch?
+      options:
+        - Scraping and job sources
+        - LLM evaluation and scoring
+        - Commute and travel filtering
+        - Notifications
+        - Web dashboard
+        - Command line interface
+        - Deployment (Docker, NAS, scheduling)
+        - Documentation
+        - Something else / not sure
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: Would you like to help build it?
+      options:
+        - label: I would be willing to open a pull request for this, with some guidance.
+          required: false
