@@ -4,6 +4,19 @@ Format: [Keep a Changelog](https://keepachangelog.com)
 
 <!-- version list -->
 
+## v2.3.1 (2026-09-17)
+
+### Bug Fixes
+
+- **llm**: Detect an unreachable provider by probing, not by timing out
+  ([`6d198eb`](https://github.com/JvWageningen/job-scout/commit/6d198ebd8f95ee64d2128512c7dc77bf0e385b68))
+
+### Chores
+
+- Sync uv.lock to 2.3.0 [skip ci]
+  ([`151a2e6`](https://github.com/JvWageningen/job-scout/commit/151a2e6dfdadbd13b07b0f69413f8af242745728))
+
+
 ## v2.3.0 (2026-09-17)
 
 ### Bug Fixes
