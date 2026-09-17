@@ -432,3 +432,34 @@ def test_availability_reports_both_errors_when_neither_can_serve() -> None:
     assert ok is False
     assert err is not None
     assert "connection refused" in err and "no api key" in err
+
+
+def test_an_unreachable_primary_is_detected_by_probe_not_by_a_slow_request() -> None:
+    """The dead-primary path must cost a probe, not a full request timeout.
+
+    A powered-down host drops packets instead of refusing them, so sending a real
+    prompt first waits out the whole timeout on every endpoint and every retry.
+    """
+    primary, secondary = _Stub(answer="primary"), _Stub(answer="fallback")
+    primary.available = (False, "connection refused")
+    client = _fallback(primary, secondary)
+    assert client.complete("x", purpose="evaluation") == "fallback"
+    assert primary.calls == 0
+
+
+def test_the_probe_runs_once_not_before_every_call() -> None:
+    """Probing on each call would add a round trip to every request."""
+
+    class _Counting(_Stub):
+        probes = 0
+
+        def check_available(self) -> tuple[bool, str | None]:
+            type(self).probes += 1
+            return self.available
+
+    primary, secondary = _Counting(answer="primary"), _Stub()
+    client = _fallback(primary, secondary)
+    for _ in range(3):
+        client.complete("x", purpose="evaluation")
+    assert _Counting.probes == 1
+    assert primary.calls == 3

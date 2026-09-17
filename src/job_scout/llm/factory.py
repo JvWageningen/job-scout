@@ -174,6 +174,31 @@ class _FallbackLLMClient:
         self._fallback = fallback
         self._fallback_name = fallback_name
         self._primary_unreachable = False
+        self._probed = False
+
+    def _probe_primary_once(self) -> None:
+        """Cheaply establish whether the primary is up, before sending a prompt.
+
+        Without this the first call discovers an unreachable provider the
+        expensive way: a host that is powered down drops packets rather than
+        refusing them, so each attempt waits out the full request timeout, and
+        the retry wrapper multiplies that by every endpoint and every attempt.
+        Measured against a sleeping model host that was minutes, against a
+        ``/models`` probe bounded by local_probe_timeout it is seconds.
+        """
+        if self._probed or self._primary_unreachable:
+            return
+        self._probed = True
+        available, error = self._primary.check_available()
+        if available:
+            return
+        self._primary_unreachable = True
+        logger.warning(
+            "Primary LLM provider is not reachable ({}); using fallback "
+            "provider {!r} for the rest of this run",
+            error,
+            self._fallback_name,
+        )
 
     def complete(
         self,
@@ -195,6 +220,7 @@ class _FallbackLLMClient:
         Raises:
             LLMError: If the serving client fails.
         """
+        self._probe_primary_once()
         if not self._primary_unreachable:
             try:
                 return self._primary.complete(prompt, purpose=purpose, timeout=timeout)
