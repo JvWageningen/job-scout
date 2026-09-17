@@ -4,6 +4,19 @@ Format: [Keep a Changelog](https://keepachangelog.com)
 
 <!-- version list -->
 
+## v2.5.0 (2026-09-17)
+
+### Chores
+
+- Sync uv.lock to 2.4.1 [skip ci]
+  ([`c1a0980`](https://github.com/JvWageningen/job-scout/commit/c1a0980dd53eb5f25415e776f4d9c0c8799e52de))
+
+### Features
+
+- **interview**: Predict the interviewer's questions and draft honest answers
+  ([`db7d4a3`](https://github.com/JvWageningen/job-scout/commit/db7d4a34bc4e7dbccd5a132ed33afb0a4f275742))
+
+
 ## v2.4.1 (2026-09-17)
 
 ### Bug Fixes
