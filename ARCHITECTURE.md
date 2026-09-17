@@ -88,19 +88,30 @@ Everything under `src/job_scout/`. Roughly in pipeline order.
 | `cover_letter_generator.py` | Drafts a cover letter from `CvProfile` + job, extracts the screening questions a posting implies, and answers them in the candidate's voice. |
 | `interview_prep.py` | Derives likely behavioural questions for a job and matches each to the best STAR story from the saved bank. |
 | `interview_questions.py` | The inverse direction: the questions the *candidate* asks the employer. Reads the vacancy, the cached `CompanyResearch` and `CompanyReview` and the CV Builder profile, makes one LLM call, and returns a themed `InterviewQuestionSet` that names every grounding source it did not have. Read-only — it never triggers research, a review or a scrape, and stores nothing. |
+| `interview_answers.py` | The mirror of `interview_questions.py`: what the *interviewer* asks the candidate, each prediction carrying a draft answer. Same grounding plus the saved STAR stories, same read-only contract, same single `behavioral_questions` call, and an `InterviewAnswerSet` of `LikelyQuestion` objects with a `kind`, a `why_asked`, the draft, the sources it drew on and an `AnswerFooting` of `strong`, `partial` or `gap`. The hard rule lives in the prompt: an answer may use only the CV facts, the STAR stories and the applicant's notes, and a gap is stated rather than filled. |
 | `letters/` | Per-user examples, style guides, CV-grounded letter generation, structured draft storage, PDF rendering, and the `/api/letters` router and `letter` CLI group. See [Cover Letter Writer](docs/LETTER_WRITER.md). |
 | `cv/` | The CV builder — a self-contained subpackage with its own document model, storage, renderer, FastAPI router, Click group and front end. See [the CV subpackage](#the-cv-subpackage) below. |
 
-**Why `interview_questions.py` sits beside `interview_prep.py` rather than inside it.**
-The two share a name and nothing else: prep consumes a job description and the STAR
-bank to predict what the employer will ask, while this consumes company research, a
-company review and the CV Builder profile to decide what the candidate should ask —
-different inputs, different output model, different failure modes, and the only overlap
-is the `behavioral_questions` routing purpose they both borrow. Folding the second into
-the first would have entangled the STAR matcher with CV-profile selection to save one
-file. It reuses `letters.writer.select_cv` / `cv_facts` and `letters.language` instead,
-because the CV view and the Dutch/English decision are genuinely one behaviour and must
-not drift between the letter writer and the interview tab.
+**Why the three interview modules sit beside each other rather than inside one.**
+`interview_prep.py` consumes a job description and the STAR bank and returns questions
+matched to stories; the other two consume company research, a company review and the CV
+Builder profile as well, and return their own models — different inputs, different output
+models, different failure modes, and the only overlap is the `behavioral_questions`
+routing purpose all three borrow. Folding them together would have entangled the STAR
+matcher with CV-profile selection to save a file. They reuse
+`letters.writer.select_cv` / `cv_facts` and `letters.language` instead, because the CV
+view and the Dutch/English decision are genuinely one behaviour and must not drift
+between the letter writer and the interview tab.
+
+`interview_answers.py` is a sibling of `interview_questions.py`, not a branch inside it:
+the two directions share a shape — grounding block, grounding-aware question budget,
+strict JSON parse, dedupe on a punctuation-stripped key, `missing_context` instead of
+invention — but they share no prompt, no enum and no output model, and the answers half
+additionally reads `Database.get_star_stories()` and enforces its own evidence rule.
+Both are exposed through one `/api/interview` router and one dashboard tab
+(`web/static/interview.js`) with a shared request body and a shared vacancy shortlist, so
+neither direction can be prepared for a vacancy the other would refuse. The older
+`/api/interview-prep/{job_id}` route and `profile interview-prep` command are untouched.
 
 ### Delivery, scheduling and integration
 
@@ -226,7 +237,7 @@ success and rolls back on exception. `database.py` creates 13 tables and applies
 | `cv_cache` | Parsed `CvProfile` JSON keyed by a hash of the CV text. |
 | `tailored_resumes`, `cover_letters`, `screening_questions` | Generated application material, keyed by job id. |
 | `company_research`, `company_reviews`, `person_search_cache` | Enrichment results, cached with a max age. |
-| `star_stories` | The reusable STAR story bank used by interview prep. |
+| `star_stories` | The reusable STAR story bank, read by `interview_prep.py` to match stories to questions and by `interview_answers.py` as the only anecdotes a draft answer may contain. |
 | `meta` | Small key/value rows; currently the evaluation fingerprint. |
 
 **Dedup keys.** `jobs.url` carries a `UNIQUE` constraint and is the primary identity. The
@@ -354,10 +365,11 @@ optional-`--user` on a single-user install and refuse to guess on a multi-user o
 ## Web and API layer
 
 `web/app.py` is a FastAPI application factory and the single-page dashboard in
-`web/static/`. Thirteen tabs — Dashboard, Approvals, Profile & Filters, Document Review,
-CV Builder, Cover Letter Writer, Keywords, Custom Sites, Notifications, LLM Settings, Secrets, Schedule,
-Analytics — over a JSON API grouped by resource (`/api/jobs/*`, `/api/config`,
-`/api/profile/*`, `/api/coach/*`, `/api/llm/*`, `/api/cv/*`, `/api/schedule`, `/api/run*`).
+`web/static/`. Thirteen tabs — Dashboard, Profile & Filters, Document Review,
+CV Builder, Cover Letter Writer, Interview Questions, Keywords, Custom Sites,
+Notifications, LLM Settings, Secrets, Schedule, Analytics — over a JSON API grouped by
+resource (`/api/jobs/*`, `/api/config`, `/api/profile/*`, `/api/coach/*`, `/api/llm/*`,
+`/api/cv/*`, `/api/interview/*`, `/api/schedule`, `/api/run*`).
 
 **The CV Builder tab** is the one tab that is not built from `web/static/app.js`. It is an
 iframe pointed at `/cv/?user=<name>`, which serves the vendored editor's own page with its

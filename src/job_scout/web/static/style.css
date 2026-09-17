@@ -1319,6 +1319,24 @@ footer {
 .interview-why, .interview-grounded { margin: 5px 0 0; font-size: .87rem; color: #586579; line-height: 1.55; }
 .interview-why span, .interview-grounded span { font-weight: 600; color: #435569; }
 
+/* One tab, two halves: the setup is shared, so only the result panel and the
+   generate button swap. A segmented control, not a second tab row. */
+.interview-modes { display: flex; flex-wrap: wrap; gap: 6px; margin: 16px 0 18px; padding: 4px; background: var(--surface-sunken); border: 1px solid var(--line); border-radius: var(--radius); }
+.interview-mode { flex: 1 1 210px; padding: 10px 14px; border: 1px solid transparent; border-radius: var(--radius-sm); background: transparent; font: inherit; font-weight: 600; color: var(--ink-soft); cursor: pointer; transition: color .18s ease, background-color .18s ease, border-color .18s ease; }
+.interview-mode:hover { background: var(--accent-wash); color: var(--accent-strong); }
+.interview-mode:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.interview-mode.active { background: var(--surface); border-color: var(--line); color: var(--ink); box-shadow: var(--shadow); }
+
+/* A predicted question and its draft answer are one thing, so they sit in one
+   block. The left edge carries the footing: amber means the answer is not in
+   the CV yet and is the one to rehearse. */
+.interview-answer { margin-top: 16px; padding: 16px 18px; border: 1px solid var(--line); border-left: 3px solid var(--line); border-radius: var(--radius-sm); background: var(--surface-sunken); overflow-wrap: anywhere; }
+.interview-answer[data-footing=gap] { border-left-color: var(--highlight); background: var(--highlight-wash); }
+.interview-footing { display: inline-block; margin-bottom: 8px; padding: 3px 10px; border-radius: 20px; background: #e4ebf2; color: #435569; font-size: .75rem; font-weight: 700; letter-spacing: .02em; }
+.interview-answer[data-footing=partial] .interview-footing { background: #fdf0dc; color: #7a5210; }
+.interview-answer[data-footing=gap] .interview-footing { background: var(--highlight); color: #fff; }
+#interview-section .interview-draft-label { margin: 12px 0 5px; font-size: .87rem; font-weight: 600; color: #435569; }
+
 /* Group functions by the task they support. */
 .tabs.grouped-tabs { display: flex; flex-direction: column; gap: 0; padding: 8px 0; }
 .tab-group { display: grid; grid-template-columns: 170px minmax(0, 1fr); align-items: start; padding: 7px 0; }

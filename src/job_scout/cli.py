@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sys
+import textwrap
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
@@ -41,6 +42,13 @@ from job_scout.evaluator import (
     generate_keywords,
     quick_evaluate_fit,
     quick_evaluate_tracks,
+)
+from job_scout.interview_answers import (
+    AnswerFooting,
+    InterviewAnswerError,
+    InterviewAnswerSet,
+    LikelyQuestion,
+    generate_interview_answers,
 )
 from job_scout.interview_questions import (
     InterviewQuestionError,
@@ -3701,6 +3709,130 @@ def interview_questions(
     except (InterviewQuestionError, LLMError, StorageError, ValueError, OSError) as exc:
         raise click.ClickException(str(exc)) from exc
     _print_interview_questions(result)
+
+
+# What each footing actually means for the candidate, spelled out beside the
+# label so the word is not left to interpretation.
+_FOOTING_NOTE = {
+    AnswerFooting.STRONG: "your CV or a STAR story carries this",
+    AnswerFooting.PARTIAL: "only adjacent experience, so it has to be framed",
+    AnswerFooting.GAP: "you do not have this; rehearse saying so plainly",
+}
+
+# Answers are spoken paragraphs, not the one-liners the question list prints,
+# so they are wrapped rather than left to the terminal.
+_ANSWER_WIDTH = 88
+
+
+def _wrapped_answer(text: str, indent: str) -> str:
+    """Wrap a spoken answer for a terminal without losing its paragraph breaks.
+
+    Args:
+        text: The draft answer as written.
+        indent: Prefix for every line.
+
+    Returns:
+        The answer wrapped to the printing width.
+    """
+    blocks = [
+        textwrap.fill(
+            block, width=_ANSWER_WIDTH, initial_indent=indent, subsequent_indent=indent
+        )
+        for block in text.split("\n\n")
+    ]
+    return "\n\n".join(blocks)
+
+
+def _print_one_answer(index: int, item: LikelyQuestion) -> None:
+    """Print one likely question, why it is coming, and the answer to give.
+
+    Args:
+        index: Position in the set, so a question is easy to refer back to.
+        item: The question with its draft answer.
+    """
+    marker = "!!" if item.footing is AnswerFooting.GAP else "  "
+    click.echo(f"\n{marker} {index}. [{item.kind.value}] {item.question}")
+    click.echo(f"      asked because: {item.why_asked}")
+    click.echo(
+        f"      footing: {item.footing.value.upper()} -- {_FOOTING_NOTE[item.footing]}"
+    )
+    if item.based_on:
+        click.echo(f"      based on: {', '.join(item.based_on)}")
+    click.echo("      answer:")
+    click.echo(_wrapped_answer(item.draft_answer, " " * 8))
+
+
+def _print_interview_answers(result: InterviewAnswerSet) -> None:
+    """Print the questions to expect, each with its draft answer and footing.
+
+    Args:
+        result: The generated answer set.
+    """
+    click.echo(
+        f"\nLikely questions from {result.company} "
+        f"(job #{result.job_id}, {result.language.value}):"
+    )
+    for index, item in enumerate(result.questions, 1):
+        _print_one_answer(index, item)
+    gaps = sum(1 for item in result.questions if item.footing is AnswerFooting.GAP)
+    if gaps:
+        noun = "answer" if gaps == 1 else "answers"
+        click.echo(
+            "\n"
+            + textwrap.fill(
+                f"{gaps} {noun} marked !! GAP: you do not have that experience, so "
+                "rehearse the honest version before someone asks for it.",
+                width=_ANSWER_WIDTH,
+            )
+        )
+    if result.missing_context:
+        click.echo("\nNotes -- not seen, so nothing above is based on it:")
+        for gap in result.missing_context:
+            click.echo(f"  - {gap}")
+
+
+@interview.command("answers")
+@click.argument("job_id", type=int)
+@click.option("--user", "user_name", default=None, help="User preparing")
+@click.option(
+    "--language",
+    type=click.Choice(["auto", "nl", "en"]),
+    default="auto",
+    help="Language to write the questions and answers in; auto reads the vacancy",
+)
+@click.option("--cv", "cv_slug", default=None, help="CV profile to ground them in")
+@click.option(
+    "--notes", default="", help="Context only you know, e.g. why you are leaving"
+)
+def interview_answers(
+    job_id: int,
+    user_name: str | None,
+    language: str,
+    cv_slug: str | None,
+    notes: str,
+) -> None:
+    """Predict what the interviewer will ask YOU, and draft your answers.
+
+    The mirror of 'interview questions', which writes what you ask them. An
+    answer uses only your CV, your saved STAR stories and your notes; where the
+    evidence is not there it says so and the question is marked GAP, so you
+    rehearse that one rather than meet it for the first time in the room.
+    """
+    target = _require_single_user(user_name)
+    _require_llm()
+    chosen = None if language == "auto" else LetterLanguage(language)
+    try:
+        result = generate_interview_answers(
+            target,
+            job_id,
+            get_llm_client(build_effective_config(target)),
+            language=chosen,
+            cv_slug=cv_slug,
+            notes=notes,
+        )
+    except (InterviewAnswerError, LLMError, StorageError, ValueError, OSError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    _print_interview_answers(result)
 
 
 def main() -> None:

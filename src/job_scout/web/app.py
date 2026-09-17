@@ -54,6 +54,11 @@ from job_scout.cv.models import CVDocument
 from job_scout.cv.storage import ProfileStore, StorageError
 from job_scout.cv.tailor import TailorError, tailor_cv_document, tailored_slug
 from job_scout.database import Database
+from job_scout.interview_answers import (
+    InterviewAnswerError,
+    InterviewAnswerSet,
+    generate_interview_answers,
+)
 from job_scout.interview_questions import (
     InterviewQuestionError,
     InterviewQuestionSet,
@@ -407,8 +412,13 @@ def _preview_or_apply_merge(
     return {"diff": diff, "applied": applied}
 
 
-class InterviewQuestionRequest(BaseModel):
-    """What the applicant asks the interview-question generator for."""
+class InterviewRequest(BaseModel):
+    """What the applicant asks either interview generator for.
+
+    Both directions are prepared from the same four inputs: the vacancy, the
+    language, the CV to ground in and whatever only the applicant knows. One
+    body serves both routes so the two cannot drift apart.
+    """
 
     job_id: int = Field(gt=0)
     language: LetterLanguage | None = Field(
@@ -417,14 +427,14 @@ class InterviewQuestionRequest(BaseModel):
     )
     cv_slug: str | None = Field(
         default=None,
-        description="CV builder profile to ground the questions in; None picks "
+        description="CV builder profile to ground the preparation in; None picks "
         "the profile whose language matches.",
     )
     notes: str = Field(
         default="",
         max_length=2000,
         description="Context only the applicant knows: what they already heard, "
-        "what they want to raise.",
+        "what they want to raise, why they are leaving.",
     )
 
 
@@ -449,7 +459,13 @@ def checked_interview_user(user: str, response: Response) -> Iterator[str]:
     response.headers["Cache-Control"] = "no-store"
     try:
         yield require_user(user)
-    except (InterviewQuestionError, LetterError, StorageError, ValueError) as exc:
+    except (
+        InterviewAnswerError,
+        InterviewQuestionError,
+        LetterError,
+        StorageError,
+        ValueError,
+    ) as exc:
         logger.warning("Interview request rejected for {!r}: {}", user, exc)
         raise HTTPException(400, str(exc)) from exc
     except LLMError as exc:
@@ -472,10 +488,13 @@ InterviewUser = Annotated[str, Depends(checked_interview_user)]
 
 
 def build_interview_router() -> APIRouter:
-    """Build the routes for the questions the candidate asks the employer.
+    """Build both directions of one interview's preparation.
 
-    This is the inverse of ``interview_prep``, which rehearses the questions an
-    employer asks the candidate; nothing here touches that.
+    ``/questions`` writes what this candidate should ask the employer;
+    ``/answers`` predicts what the interviewer will ask them and drafts the
+    reply. They share the request body and the vacancy shortlist, so neither
+    can be prepared for a vacancy the other would refuse. The older
+    ``/api/interview-prep`` route keeps working and is not touched here.
 
     Returns:
         A router to mount under "/api/interview", inside the prefix
@@ -501,9 +520,7 @@ def build_interview_router() -> APIRouter:
         }
 
     @router.post("/questions")
-    def questions(
-        body: InterviewQuestionRequest, user: InterviewUser
-    ) -> InterviewQuestionSet:
+    def questions(body: InterviewRequest, user: InterviewUser) -> InterviewQuestionSet:
         """Write the questions this candidate should ask this employer.
 
         Read-only with respect to the pipeline: it uses the vacancy, the cached
@@ -511,6 +528,24 @@ def build_interview_router() -> APIRouter:
         whatever is missing instead of researching it now.
         """
         return generate_interview_questions(
+            user,
+            body.job_id,
+            get_llm_client(build_effective_config(user)),
+            language=body.language,
+            cv_slug=body.cv_slug,
+            notes=body.notes,
+        )
+
+    @router.post("/answers")
+    def answers(body: InterviewRequest, user: InterviewUser) -> InterviewAnswerSet:
+        """Predict this interviewer's questions and draft this candidate's answers.
+
+        Read-only in the same way, and grounded in the same saved material plus
+        the applicant's own STAR stories: an answer that cites something the
+        candidate never did is found out in the room, so nothing is invented and
+        what is missing comes back in ``missing_context``.
+        """
+        return generate_interview_answers(
             user,
             body.job_id,
             get_llm_client(build_effective_config(user)),

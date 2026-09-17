@@ -18,7 +18,7 @@ fixed.
 | [NOTIFICATIONS.md](NOTIFICATIONS.md) | How do matches reach me? ntfy, email, Slack and Discord, per-job versus digest mode, and how failed sends are retried. |
 | [CV_BUILDER.md](CV_BUILDER.md) | How do I build the CV itself? The document model and its seven section kinds, the editor tab, where profiles live, tailoring one to a vacancy, and when a designed two-column CV is the wrong file to upload. |
 | [LETTER_WRITER.md](LETTER_WRITER.md) | How do I write a Dutch or English motivational letter in my own voice, using my current CV and previous letters? |
-| [INTERVIEW_QUESTIONS.md](INTERVIEW_QUESTIONS.md) | What should I ask *them*? The questions to ask this employer, built from the vacancy, the company research and review, and my CV — and how that differs from interview prep. |
+| [INTERVIEW_QUESTIONS.md](INTERVIEW_QUESTIONS.md) | What happens in the room? Both directions: the questions to ask *them*, and the questions they are likely to ask *me* with a draft answer for each, grounded in my CV and my STAR stories — and how both differ from interview prep. |
 | [WEB_DASHBOARD.md](WEB_DASHBOARD.md) | What does the dashboard do? The dashboard tabs, the optional bearer token, and the security posture you are accepting by exposing it. |
 | [DEPLOY.md](DEPLOY.md) | How do I run this permanently? Docker Compose on a desktop or a NAS, the data volume, ports, and migrating an existing install into a container. |
 | [../ARCHITECTURE.md](../ARCHITECTURE.md) | How is it built? Module map, pipeline data flow, persistence model, concurrency, and the provider and notifier abstractions. |

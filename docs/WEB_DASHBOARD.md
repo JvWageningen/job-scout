@@ -191,30 +191,47 @@ workflow, privacy details and review limitations.
 
 ### Interview Questions
 
-The questions you ask them, for the moment the interviewer asks whether you have any.
-Choose a vacancy, a question language and a CV, add anything you want raised, and the
-tab writes questions built from the vacancy text, the company research and review
-already cached for it, and the factual sections of your CV. They arrive grouped by
-theme — the role, the team, the company, growth and future, ways of working, and what
-is worth probing — each with one line on why it matters for you and one naming what it
-was based on. **Copy all** takes the set as plain text.
+Both sides of the conversation, in one tab. Choose a vacancy, a language and a CV, add
+anything the model should know, then switch between the two halves with the pair of
+buttons under the heading (the left and right arrow keys work too). The badge says
+which half you are in. The setup is shared, so preparing one half and then the other
+costs nothing, and switching leaves a result already on screen standing.
+
+**Questions to ask them** is for the moment the interviewer asks whether you have any.
+The questions are built from the vacancy text, the company research and review already
+cached for it, and the factual sections of your CV, and arrive grouped by theme — the
+role, the team, the company, growth and future, ways of working, and what is worth
+probing — each with one line on why it matters for you and one naming what it was based
+on.
+
+**Questions they may ask you** predicts what this interviewer is likely to put to you
+and drafts an answer for each. They arrive grouped by what the question probes —
+motivation and fit, your experience, technical depth, how you work with others, gaps
+they will probe, practical matters — and every block carries a footing chip saying how
+much real evidence stands behind the answer: *Backed by your CV*, *Partly covered*, or
+*Gap — rehearse this*, which is marked in amber and counted in the summary line. The
+answers are drawn only from your CV, your saved STAR stories and your notes; a gap is
+answered honestly rather than bluffed, because an invented achievement is found out in
+the room. Each draft sits in an editable box — rewrite it until it sounds like you, and
+**Copy all** takes your edited text rather than the original draft.
 
 Two things this tab is not. It is not Document Review, which critiques a document you
-already have. And it is not interview prep: that rehearses the behavioural questions
-the *employer* is likely to ask *you*, matched to your STAR stories, and lives in
-`profile interview-prep` on the CLI.
+already have. And it is not `profile interview-prep`, the older CLI-only feature that
+derives behavioural questions from the job description alone and points at the STAR
+stories that fit, without company research, your CV, or drafted answers.
 
 The vacancy dropdown offers the vacancies still worth working on — nothing rejected,
 expired, closed by you, or lacking a description — best match first, with each fit
 score shown. It is built by the same code as the Cover Letter Writer's dropdown, so
 the two can never disagree about which vacancies are live. **Refresh vacancies & CVs**
-re-reads it without disturbing questions already on screen.
+re-reads it without disturbing anything already on screen.
 
-Nothing is researched when you press the button, and nothing is saved: if the company
-research or review is missing, the tab says so under the questions instead of filling
-the gap in. Read the questions before you use them. See
-[Interview questions](INTERVIEW_QUESTIONS.md) for the grounding, the themes and the
-honest limits.
+Nothing is researched when you press either button, and nothing is saved: if the company
+research, the review or your story bank is missing, the tab says so under the result
+instead of filling the gap in. Your edits to a draft answer live in the page too, so
+copy what you want to keep before you regenerate or switch user. Read everything before
+you use it. See [Interview questions and answers](INTERVIEW_QUESTIONS.md) for the
+grounding, the themes and footings, and the honest limits.
 
 ### Keywords
 
@@ -424,6 +441,7 @@ default, not a control this project implements — do not rely on it.
 - [CONFIGURATION.md](CONFIGURATION.md) — every config key, secret and environment variable
 - [NOTIFICATIONS.md](NOTIFICATIONS.md) — channels, modes and delivery
 - [LLM_PROVIDERS.md](LLM_PROVIDERS.md) — backends and per-stage routing
-- [INTERVIEW_QUESTIONS.md](INTERVIEW_QUESTIONS.md) — the questions you ask the employer
+- [INTERVIEW_QUESTIONS.md](INTERVIEW_QUESTIONS.md) — the questions you ask the employer,
+  and the ones they ask you with a draft answer for each
 - [DEPLOY.md](DEPLOY.md) — Docker, NAS and update procedures
 - [SECURITY.md](../SECURITY.md) — reporting a vulnerability
