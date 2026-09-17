@@ -4,6 +4,19 @@ Format: [Keep a Changelog](https://keepachangelog.com)
 
 <!-- version list -->
 
+## v2.3.2 (2026-09-17)
+
+### Bug Fixes
+
+- **letters**: Log why a letter request failed instead of only telling the client
+  ([`cc03f74`](https://github.com/JvWageningen/job-scout/commit/cc03f740b44bef9d5b35f7c5c5c4049f28f78907))
+
+### Chores
+
+- Sync uv.lock to 2.3.1 [skip ci]
+  ([`895e67e`](https://github.com/JvWageningen/job-scout/commit/895e67ea7ca8a4066a947aae380d642f66a01ce0))
+
+
 ## v2.3.1 (2026-09-17)
 
 ### Bug Fixes
