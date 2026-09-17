@@ -366,8 +366,8 @@ URL.
 > **Known limitation.** `approval queue`, `approval approve`, `company research` and
 > `company view` validate `--user` but then read the legacy global `data/jobs.db` rather
 > than that user's database. On a multi-user install they will not see the jobs the
-> per-user pipeline wrote. Until that is fixed, use the dashboard's Approvals tab, or
-> `jobs update-status`, for per-user approval work.
+> per-user pipeline wrote. Until that is fixed, use **Your progress** on a vacancy in the dashboard, or
+> `jobs update-status`, to track progress in a per-user database.
 
 ### `approval approve`
 

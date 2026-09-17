@@ -54,6 +54,7 @@ from job_scout.models import (
 )
 from job_scout.notify.factory import build_raw_notifier_for_test
 from job_scout.scheduler import check_schedule_status, install_schedule, remove_schedule
+from job_scout.web.vacancies import build_vacancies_router
 from job_scout.weekly_schedule import next_run_after, parse_slots
 from job_scout.wol import normalise_mac, wake_and_wait
 
@@ -519,6 +520,14 @@ def create_app() -> FastAPI:
 
     app.include_router(build_cv_api_router(), prefix="/api/cv")
     app.include_router(build_letters_api_router(), prefix="/api/letters")
+    app.include_router(build_vacancies_router())
+
+    @app.get("/vacancies.js", include_in_schema=False)
+    def serve_vacancies_js() -> FileResponse:
+        """Serve the vacancy library interface."""
+        return FileResponse(
+            Path(__file__).parent / "static" / "vacancies.js", headers=no_cache_headers
+        )
 
     @app.get("/letters.js", include_in_schema=False)
     def serve_letters_js() -> FileResponse:

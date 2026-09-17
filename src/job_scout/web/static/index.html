@@ -43,7 +43,6 @@
             <nav class="tabs grouped-tabs" aria-label="Main navigation">
                 <div class="tab-group"><span class="tab-group-label">Find &amp; track jobs</span><div class="tab-group-buttons">
                     <button class="tab-btn active" data-tab="dashboard">Dashboard</button>
-                    <button class="tab-btn" data-tab="approvals">Approvals</button>
                     <button class="tab-btn" data-tab="analytics">Analytics</button>
                 </div></div>
                 <div class="tab-group"><span class="tab-group-label">Prepare applications</span><div class="tab-group-buttons">
@@ -143,7 +142,7 @@
                         <article><span class="workflow-step">3 · Write</span><h4>Generate a full cover letter</h4><p>Use your CV and previous letters to write in Dutch or English. Edit and download the complete letter.</p><button type="button" class="btn btn-primary" onclick="openLetterWriter()">Write a cover letter</button></article>
                         <article><span class="workflow-step">4 · Review</span><h4>Check your application</h4><p>Get feedback on your CV or letter against the vacancy before you send it.</p><button type="button" class="btn btn-secondary" onclick="switchTab('feedback')">Review documents</button></article>
                     </div>
-                    <p class="workflow-note">After applying, update the vacancy's status below. Use Approvals for your shortlist and Analytics to follow your progress.</p>
+                    <p class="workflow-note">After applying, update the vacancy's status below. Pin vacancies for your shortlist and use Analytics to follow your progress.</p>
                 </div>
 
                 <!-- Run Controls -->
@@ -163,63 +162,26 @@
                 <!-- Run Status -->
                 <div id="run-status"></div>
 
-                <!-- Matched Jobs -->
-                <div class="jobs-section">
-                    <h3>Recently Matched Jobs</h3>
-                    <div class="jobs-filters">
-                        <div class="filter-group">
-                            <label for="matched-min-score">Min Score:</label>
-                            <input type="number" id="matched-min-score" min="0" max="100" placeholder="Any">
+                <section class="vacancy-library" aria-labelledby="vacancies-title">
+                    <h3 id="vacancies-title">Vacancies</h3>
+                    <p class="info-text">Search your saved vacancies, pin the ones you want to keep, and track your application. The match score measures the vacancy's fit with your profile.</p>
+                    <fieldset id="vacancy-filters">
+                        <div class="vacancy-search-row"><div><label for="vacancy-search">Search vacancies</label><input type="search" id="vacancy-search" maxlength="300" placeholder="Job title, company, location, keyword or URL" autocomplete="off"></div><button type="button" id="vacancy-refresh" class="btn btn-secondary">Refresh</button></div>
+                        <div class="vacancy-filter-row">
+                            <div><label for="vacancy-scope">Show</label><select id="vacancy-scope"><option value="all">All vacancies</option><option value="matches">Matches &amp; active applications</option><option value="filtered">Filtered out by search</option></select></div>
+                            <div><label for="vacancy-stage">Your progress</label><select id="vacancy-stage"><option value="">Any progress</option><option value="to_review">To review</option><option value="interested">Interested</option><option value="applied">Applied</option><option value="interviewing">Interviewing</option><option value="offer">Offer received</option><option value="closed">Closed</option></select></div>
+                            <div><label for="vacancy-min-score">Minimum match</label><input type="number" id="vacancy-min-score" min="0" max="100" placeholder="Any"></div>
+                            <div><label for="vacancy-source">Source</label><select id="vacancy-source"><option value="">All sources</option></select></div>
+                            <div><label for="vacancy-sort">Sort</label><select id="vacancy-sort"><option value="score_desc">Best match first</option><option value="score_asc">Lowest match first</option><option value="date_desc">Newest first</option><option value="date_asc">Oldest first</option></select></div>
                         </div>
-                        <div class="filter-group">
-                            <label for="matched-source">Source:</label>
-                            <select id="matched-source">
-                                <option value="">All Sources</option>
-                            </select>
-                        </div>
-                        <div class="filter-group">
-                            <label for="matched-sort">Sort By:</label>
-                            <select id="matched-sort">
-                                <option value="date_desc">Newest First</option>
-                                <option value="date_asc">Oldest First</option>
-                                <option value="score_desc">Highest Score</option>
-                                <option value="score_asc">Lowest Score</option>
-                            </select>
-                        </div>
-                    </div>
-                    <div id="matched-jobs-container" class="jobs-container">
-                        <p class="loading">Loading...</p>
-                    </div>
-                </div>
-
-                <!-- Rejected Jobs -->
-                <div class="jobs-section">
-                    <h3>Recently Rejected Jobs</h3>
-                    <div class="jobs-filters">
-                        <div class="filter-group">
-                            <label for="rejected-min-score">Min Score:</label>
-                            <input type="number" id="rejected-min-score" min="0" max="100" placeholder="Any">
-                        </div>
-                        <div class="filter-group">
-                            <label for="rejected-source">Source:</label>
-                            <select id="rejected-source">
-                                <option value="">All Sources</option>
-                            </select>
-                        </div>
-                        <div class="filter-group">
-                            <label for="rejected-sort">Sort By:</label>
-                            <select id="rejected-sort">
-                                <option value="date_desc">Newest First</option>
-                                <option value="date_asc">Oldest First</option>
-                                <option value="score_desc">Highest Score</option>
-                                <option value="score_asc">Lowest Score</option>
-                            </select>
-                        </div>
-                    </div>
-                    <div id="rejected-jobs-container" class="jobs-container">
-                        <p class="loading">Loading...</p>
-                    </div>
-                </div>
+                        <div class="vacancy-filter-footer"><label class="checkbox-label"><input type="checkbox" id="vacancy-pinned"> Pinned only</label><button type="button" id="vacancy-clear" class="btn btn-small">Clear filters</button></div>
+                    </fieldset>
+                    <details class="vacancy-help"><summary>What do the progress choices mean?</summary><dl><dt>To review</dt><dd>You have not decided what to do with this vacancy.</dd><dt>Interested</dt><dd>You want to pursue it or prepare an application.</dd><dt>Applied</dt><dd>You have sent your application.</dd><dt>Interviewing</dt><dd>You are in contact about an interview or assessment.</dd><dt>Offer received</dt><dd>The employer has made an offer.</dd><dt>Closed</dt><dd>You are no longer pursuing it, or the vacancy is no longer available.</dd></dl><p>You can choose any step directly and change it later. Pinning is a separate bookmark. Neither action sends an application.</p></details>
+                    <p id="vacancy-message" role="status" aria-live="polite"></p>
+                    <p id="vacancy-results" class="info-text"></p>
+                    <div id="vacancy-list" class="jobs-container"><p class="empty">Select one user to view vacancies.</p></div>
+                    <div class="vacancy-pagination"><button type="button" class="btn btn-secondary" id="vacancy-prev" disabled>Previous</button><span id="vacancy-page"></span><button type="button" class="btn btn-secondary" id="vacancy-next" disabled>Next</button></div>
+                </section>
 
                 <!-- Logs Section -->
                 <div class="logs-section">
@@ -235,16 +197,6 @@
                             <pre id="log-text"></pre>
                         </div>
                     </div>
-                </div>
-            </section>
-
-            <!-- Approvals Section -->
-            <section id="approvals-section" class="section hidden tab-content" data-tab="approvals">
-                <h2>Job Application Approvals</h2>
-                <p class="subtitle">Review and approve jobs before submitting applications.</p>
-                <button id="refresh-approval-queue-btn" class="btn btn-secondary">Refresh Queue</button>
-                <div id="approval-queue-container">
-                    <p class="loading">Loading approval queue...</p>
                 </div>
             </section>
 
@@ -964,5 +916,6 @@
 
     <script src="/app.js"></script>
     <script src="/letters.js"></script>
+    <script src="/vacancies.js"></script>
 </body>
 </html>

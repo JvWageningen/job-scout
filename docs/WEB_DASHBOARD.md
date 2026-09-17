@@ -86,7 +86,7 @@ that mode.
 
 Navigation is grouped by purpose:
 
-- **Find & track jobs:** Dashboard, Approvals and Analytics.
+- **Find & track jobs:** Dashboard and Analytics.
 - **Prepare applications:** CV Builder, Cover Letter Writer and Document Review.
 - **Settings:** Profile & Filters, Keywords, Custom Sites, Notifications, Schedule,
   LLM Settings and Secrets.
@@ -108,29 +108,47 @@ already been told about. While a run is going, the status area shows the live st
 and item counts rather than a bare spinner, and **Stop run** requests a cooperative
 stop.
 
-Below that, **Recently Matched Jobs** and **Recently Rejected Jobs** each render as
-cards, filterable by minimum score and source and sortable by date or score. A match
-card shows the fit score and the model's reasoning, the career track it matched, the
-location and salary, the company work-quality review when one was synthesised, a link
-to the listing, and a link to the employer's own posting with an `open` /
-`may be filled` badge. Each match also carries a status dropdown (new, viewed,
-approved, ready, submitted, interviewing, offer, rejected, expired) and a notes box,
-saved per job. Rejected cards show why they were dropped — negative match, fit score,
-or compensation.
+Below that, **Your vacancies** searches the entire selected user's saved library,
+including older vacancies. Search by title, employer, location, description or URL;
+results are paginated in groups of 20. Combine the search with filters for progress,
+minimum match score, source, pinned vacancies, or matches versus automatically
+filtered results. Clear filters to return to the full library.
+
+The **Vacancy match** score is prominent at the top of each card. **Company
+information** is collapsed underneath: its work-quality estimate describes the
+employer, not your suitability for the vacancy. Expand it for the summary, strengths,
+concerns and sources. Vacancy details and the match explanation are also expandable.
+
+**Pin vacancy** is an independent bookmark. Pinned roles appear first within the
+current search and filters; **Pinned only** shows your shortlist. Pins do not change
+progress. Notes have a separate **Save notes** button, and unsaved edits survive
+filtering and pinning within the open page.
+
+**Your progress** has six choices, with short explanations in the interface:
+
+| Progress | Meaning |
+|---|---|
+| To review | You have not decided what to do with the vacancy. |
+| Interested | You want to pursue it or prepare an application. |
+| Applied | You have sent your application. |
+| Interviewing | An interview or assessment is in progress. |
+| Offer received | The employer has made an offer. |
+| Closed | You are no longer pursuing it, or it is unavailable. |
+
+Choose any stage directly and change it later; changes save immediately. A progress
+change does not remove a vacancy from the full library. Rescoring preserves pins,
+notes and your chosen progress. Automatically filtered vacancies are labelled
+separately from your own decisions.
+
+The former **Approvals** tab has been removed. Mark a role **Interested**, pin it,
+or use **Write cover letter** directly on its card. No approval step is needed to
+prepare a CV or letter, and none of these controls submits an application. Existing
+application history is retained: approved/ready becomes Interested, submitted becomes
+Applied, and expired or manually rejected becomes Closed. Legacy CLI approval and
+tracking commands remain available for existing workflows.
 
 At the bottom, a **Logs** panel lists the per-run log files for the selected user and
 prints the one you choose.
-
-### Approvals
-
-The queue of jobs awaiting approval, with a count, the fit score, the listing link and
-an optional notes field per job. Approving records the approver and the notes and moves
-the job to `approved`.
-
-Note that the dashboard reads the selected user's own database here. The equivalent CLI
-commands (`job-scout approval queue` / `approval approve`) currently read the legacy
-global `data/jobs.db` instead, so on a multi-user install the dashboard is the reliable
-route to the approval queue.
 
 ### Profile & Filters
 

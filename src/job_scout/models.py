@@ -34,6 +34,42 @@ class JobStatus(StrEnum):
     MATCHED = "matched"
 
 
+class ApplicationStage(StrEnum):
+    """The applicant's progress, separate from automatic search decisions."""
+
+    TO_REVIEW = "to_review"
+    INTERESTED = "interested"
+    APPLIED = "applied"
+    INTERVIEWING = "interviewing"
+    OFFER = "offer"
+    CLOSED = "closed"
+
+
+def application_stage_for_status(
+    status: str, updated: object = None
+) -> ApplicationStage:
+    """Translate historical processing states without rewriting stored records.
+
+    Args:
+        status: Legacy job status.
+        updated: A recorded manual status change, if any.
+
+    Returns:
+        The corresponding plain-language application stage.
+    """
+    mapping = {
+        "approved": ApplicationStage.INTERESTED,
+        "ready": ApplicationStage.INTERESTED,
+        "submitted": ApplicationStage.APPLIED,
+        "interviewing": ApplicationStage.INTERVIEWING,
+        "offer": ApplicationStage.OFFER,
+        "expired": ApplicationStage.CLOSED,
+    }
+    if status == "rejected" and updated is not None:
+        return ApplicationStage.CLOSED
+    return mapping.get(status, ApplicationStage.TO_REVIEW)
+
+
 class TravelTime(BaseModel):
     """Travel time for a specific transport mode."""
 
@@ -155,6 +191,8 @@ class JobListing(BaseModel):
         default_factory=lambda: datetime.now(UTC)  # noqa: E731
     )
     status: JobStatus = JobStatus.NEW
+    pinned: bool = False
+    application_stage: ApplicationStage = ApplicationStage.TO_REVIEW
     location_unknown: bool = False
     approved_at: datetime | None = None
     approved_by: str | None = None

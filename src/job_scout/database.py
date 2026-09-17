@@ -12,12 +12,14 @@ from pathlib import Path
 from typing import Any
 
 from job_scout.models import (
+    ApplicationStage,
     JobListing,
     JobStatus,
     RunHistoryEntry,
     RunStats,
     TrackScore,
     TravelTime,
+    application_stage_for_status,
 )
 
 
@@ -152,6 +154,8 @@ class Database:
                 ("applied_at", "TEXT"),
                 ("status_updated_at", "TEXT"),
                 ("notes", "TEXT"),
+                ("pinned", "INTEGER NOT NULL DEFAULT 0"),
+                ("application_stage", "TEXT"),
                 ("official_url", "TEXT"),
                 ("official_available", "INTEGER"),
                 ("official_checked_at", "TEXT"),
@@ -849,6 +853,13 @@ class Database:
             applied_at=applied_at,
             status_updated_at=status_updated_at,
             notes=raw.get("notes"),
+            pinned=bool(raw.get("pinned", 0)),
+            application_stage=ApplicationStage(
+                raw.get("application_stage")
+                or application_stage_for_status(
+                    str(raw.get("status") or "new"), raw.get("status_updated_at")
+                )
+            ),
             official_url=raw.get("official_url"),
             official_available=(
                 bool(raw["official_available"])
@@ -1234,7 +1245,7 @@ class Database:
                 """
                 UPDATE jobs
                 SET status = ?, approved_at = ?, approved_by = ?,
-                    approval_notes = ?
+                    approval_notes = ?, application_stage = 'interested'
                 WHERE id = ?
                 """,
                 (
@@ -1278,7 +1289,7 @@ class Database:
             update_params = (new_status.value, now, applied_at, notes, job_id)
             conn.execute(
                 """UPDATE jobs SET status = ?, status_updated_at = ?,
-                   applied_at = ?, notes = ? WHERE id = ?""",
+                   applied_at = ?, notes = ?, application_stage = NULL WHERE id = ?""",
                 update_params,
             )
             return True
@@ -1296,8 +1307,8 @@ class Database:
         now = datetime.now(UTC).isoformat()
         with self._conn() as conn:
             conn.execute(
-                """UPDATE jobs SET status = ?, status_updated_at = ?, notes = ?
-                   WHERE id = ?""",
+                """UPDATE jobs SET status = ?, status_updated_at = ?, notes = ?,
+                   application_stage = 'closed' WHERE id = ?""",
                 (JobStatus.EXPIRED.value, now, reason, job_id),
             )
 

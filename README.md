@@ -45,6 +45,7 @@ It runs on your machine or your NAS. With a local model, no part of your CV ever
 | **Full cover letters in your voice** | Choose Dutch or English, use your current CV Builder profile, and learn your tone from private examples. Review and edit the draft, save a version per vacancy and language, and download a matching PDF or plain text. [Cover Letter Writer guide](docs/LETTER_WRITER.md). |
 | **Document review** | An honest second opinion before you send anything: your CV in general or as an application for one specific vacancy, or a motivational letter judged against the posting it answers. Nothing is saved or sent. |
 | **Interview prep** | Keep a reusable bank of STAR stories, then have the behavioural questions a posting is likely to ask extracted and matched to the story that best answers each one. |
+| **Search and shortlist** | Search every saved vacancy by title, employer, location, description or URL. Pin promising roles, filter by match score, and track six clear application stages. Company research stays available beneath the vacancy�s own match score. |
 | **Self-hosted control room** | A web dashboard with live per-stage progress and a stop button, four push channels (ntfy, email, Slack, Discord), per-user databases and configs, a container-native weekly scheduler that wakes a sleeping GPU host over Wake-on-LAN, and an MCP server for querying your pipeline from an AI client. |
 
 ![Application workflow: find roles, build a CV, write a full cover letter, and review documents](assets/workflow-overview.png)
@@ -131,7 +132,9 @@ job-scout is built for one person running a personal job hunt at modest volume; 
 
 ## Dashboard
 
-Everything the pipeline produces is browsable and editable from a self-hosted web UI: matches and approvals, profile and filters, keywords, custom sites, LLM routing, secrets, schedule and analytics — with live per-stage progress while a run is in flight.
+![Searchable vacancy library with pinned roles and prominent match scores](assets/vacancy-library.png)
+
+Everything the pipeline produces is browsable and editable from a self-hosted web UI: a searchable vacancy library with pins and application progress, profile and filters, keywords, custom sites, LLM routing, secrets, schedule and analytics — with live per-stage progress while a run is in flight.
 
 <p align="center">
   <a href="assets/dashboard.png">
