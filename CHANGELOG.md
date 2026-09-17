@@ -4,6 +4,19 @@ Format: [Keep a Changelog](https://keepachangelog.com)
 
 <!-- version list -->
 
+## v2.4.1 (2026-09-17)
+
+### Bug Fixes
+
+- **interview**: Read pay requests the way an applicant actually writes them
+  ([`b5eb6d9`](https://github.com/JvWageningen/job-scout/commit/b5eb6d9333f2073268adb9b454a5abade7732c13))
+
+### Chores
+
+- Sync uv.lock to 2.4.0 [skip ci]
+  ([`90ae6b0`](https://github.com/JvWageningen/job-scout/commit/90ae6b045f25a6c3a1bcf65a58c346e9c970f236))
+
+
 ## v2.4.0 (2026-09-17)
 
 ### Bug Fixes
