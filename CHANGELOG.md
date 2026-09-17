@@ -4,6 +4,32 @@ Format: [Keep a Changelog](https://keepachangelog.com)
 
 <!-- version list -->
 
+## v2.3.0 (2026-09-17)
+
+### Bug Fixes
+
+- Restore valid UTF-8 in README so the package builds
+  ([`694bee3`](https://github.com/JvWageningen/job-scout/commit/694bee3a34119bb65f6bd5990ec847474101ea81))
+
+### Chores
+
+- Sync uv.lock to 2.2.1 [skip ci]
+  ([`130bc69`](https://github.com/JvWageningen/job-scout/commit/130bc6944aa76113c87bf8f61dcd4bcd1e98ad05))
+
+### Features
+
+- **llm**: Fall back to a second provider when the first is unreachable
+  ([`15a3a7b`](https://github.com/JvWageningen/job-scout/commit/15a3a7b2b112744eb3e1c423e7ac25f1f4c881f5))
+
+- **web**: Searchable vacancy library with applicant-owned progress
+  ([`4487e4c`](https://github.com/JvWageningen/job-scout/commit/4487e4c40c502c4ac8b3c43c77c9263e7ea97b05))
+
+### Refactoring
+
+- **web**: Split the settings group into "Your search" and "Settings"
+  ([`c10e3eb`](https://github.com/JvWageningen/job-scout/commit/c10e3eb96ae01d792ac3bbaabd024fad453f3e78))
+
+
 ## v2.2.1 (2026-09-16)
 
 ### Bug Fixes
