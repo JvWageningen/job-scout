@@ -84,8 +84,13 @@ def select_cv(
     raise LetterError("Save your CV in CV Builder before writing a letter.")
 
 
-def _cv_facts(doc: CVDocument) -> str:
-    """Serialize enabled factual sections, excluding design and contact details."""
+def cv_facts(doc: CVDocument) -> str:
+    """Serialize enabled factual sections, excluding design and contact details.
+
+    Shared with the interview-question writer: both need the same view of the CV,
+    and both must exclude contact and personal details, which are never prompt
+    material.
+    """
     sections = [
         s.model_dump(exclude={"id", "icon"})
         for s in doc.all_sections()
@@ -216,7 +221,7 @@ def write_letter(
         raise LetterError("Add your name and current experience in CV Builder first.")
     guide = load_style_guide(user)
     examples = [e for e in list_examples(user) if e.language is language][:3]
-    facts = _cv_facts(cv)
+    facts = cv_facts(cv)
     vacancy = {
         "title": job.title,
         "company": job.company,

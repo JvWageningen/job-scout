@@ -73,13 +73,14 @@
             ]);
             fresh(ctx);
             el('job').add(new Option('Choose a vacancy', ''));
-            data.jobs.forEach(j => el('job').add(new Option(`${j.title} — ${j.company}`, j.id)));
+            data.jobs.forEach(j => el('job').add(new Option(
+                `${j.title} — ${j.company}${j.fit_score == null ? '' : ` · ${j.fit_score}/100`}`, j.id)));
             el('cv').add(new Option('Automatic — match the letter language', ''));
             data.profiles.forEach(p => el('cv').add(new Option(`${p.slug} (${p.language})`, p.slug)));
             el('guide').value = style.markdown;
             loadedUser = ctx.user;
             status(!data.profiles.length ? 'Save a current CV in CV Builder to get started.' :
-                !data.jobs.length ? 'No vacancies with descriptions yet. Run your search first.' :
+                !data.jobs.length ? 'No open vacancies yet. Run your search first.' :
                 'Ready. Choose a vacancy and a language.');
         });
     }
@@ -142,7 +143,8 @@
             const data = await (await api('/context', ctx)).json(); fresh(ctx);
             const selectedJob = el('job').value, selectedCv = el('cv').value;
             el('job').replaceChildren(new Option('Choose a vacancy', ''));
-            data.jobs.forEach(j => el('job').add(new Option(`${j.title} — ${j.company}`, j.id)));
+            data.jobs.forEach(j => el('job').add(new Option(
+                `${j.title} — ${j.company}${j.fit_score == null ? '' : ` · ${j.fit_score}/100`}`, j.id)));
             el('cv').replaceChildren(new Option('Automatic — match the letter language', ''));
             data.profiles.forEach(p => el('cv').add(new Option(`${p.slug} (${p.language})`, p.slug)));
             el('job').value = selectedJob; el('cv').value = selectedCv;
