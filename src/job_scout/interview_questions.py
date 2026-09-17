@@ -118,12 +118,13 @@ _REVIEW_FIELDS = {
 }
 
 # Only the applicant's own notes may put money on the question list.
-_PAY_WORDS = (
+# Long, unambiguous stems: matched as a prefix so inflections are caught
+# ("verdienen", "arbeidsvoorwaarden", "salarissen").
+_PAY_STEMS = (
     "salaris",
     "salary",
-    "loon",
-    "pay",
     "compensation",
+    "remuneration",
     "benefit",
     "arbeidsvoorwaard",
     "secundaire",
@@ -131,9 +132,20 @@ _PAY_WORDS = (
     "verlof",
     "holiday",
     "vacation",
-    "bonus",
     "pensioen",
     "pension",
+    "verdien",
+    "beloning",
+    "vergoeding",
+    "inschaling",
+)
+# Short words that appear inside unrelated ones -- "pay" in paypal, "loon" in
+# saloon, "schaal" in schaalbaarheid -- so these need both boundaries.
+_PAY_EXACT = ("pay", "loon", "bonus", "aanbod", "schaal")
+_PAY_PATTERN = re.compile(
+    r"\b(?:(?:" + "|".join(_PAY_STEMS) + r")\w*"
+    r"|(?:" + "|".join(_PAY_EXACT) + r")\b)",
+    re.IGNORECASE | re.UNICODE,
 )
 
 _THEMES = ", ".join(theme.value for theme in QuestionTheme)
@@ -406,8 +418,7 @@ def _pay_allowed(notes: str) -> bool:
     Returns:
         True when the notes mention pay, holiday or benefits.
     """
-    lowered = notes.casefold()
-    return any(word in lowered for word in _PAY_WORDS)
+    return _PAY_PATTERN.search(notes) is not None
 
 
 def _prompt(

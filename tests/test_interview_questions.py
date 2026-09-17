@@ -458,3 +458,30 @@ def test_the_concerns_theme_is_not_forced_without_a_review() -> None:
     assert "do not force the" not in _budget_rule(
         {"company_research": {}, "company_review": {}}
     )
+
+
+@pytest.mark.parametrize(
+    ("notes", "allowed"),
+    [
+        ("wat ga ik verdienen?", True),
+        ("graag iets over de beloning", True),
+        ("arbeidsvoorwaarden graag", True),
+        ("vraag naar inschaling", True),
+        ("what is the pay", True),
+        ("I used paypal at my last job", False),
+        ("schaalbaarheid van het systeem", False),
+        ("nothing about money", False),
+    ],
+)
+def test_pay_questions_follow_what_the_applicant_actually_wrote(
+    notes: str, allowed: bool
+) -> None:
+    """Substring matching read these wrongly, and did so invisibly.
+
+    "pay" sat inside paypal and "schaal" inside schaalbaarheid, while the
+    phrasings a Dutch applicant actually types -- verdienen, beloning -- matched
+    nothing at all, so asking for pay questions silently produced none.
+    """
+    from job_scout.interview_questions import _pay_allowed
+
+    assert _pay_allowed(notes) is allowed
