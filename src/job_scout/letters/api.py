@@ -6,6 +6,7 @@ from collections.abc import Iterator
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
+from loguru import logger
 from pydantic import BaseModel, Field
 from starlette.responses import Response
 
@@ -56,13 +57,21 @@ def checked_user(user: str, response: Response) -> Iterator[str]:
     try:
         yield require_user(user)
     except (LetterError, ExampleError, StorageError, ValueError) as exc:
+        logger.warning("Letter request rejected for {!r}: {}", user, exc)
         raise HTTPException(400, str(exc)) from exc
     except (LLMError, StyleError) as exc:
+        # The client message stays deliberately vague -- provider errors can carry
+        # endpoints and key fragments. The operator still needs the real cause, so
+        # it goes to the log rather than nowhere.
+        logger.error(
+            "Letter request failed for {!r}: {}: {}", user, type(exc).__name__, exc
+        )
         raise HTTPException(
             502,
             "The model could not complete the request. Check LLM settings and retry.",
         ) from exc
     except OSError as exc:
+        logger.error("Letter data unreadable for {!r}: {}", user, exc)
         raise HTTPException(
             503, "Private letter data could not be read or saved."
         ) from exc
