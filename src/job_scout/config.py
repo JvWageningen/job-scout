@@ -18,6 +18,7 @@ CONFIG_PATH = DATA_DIR / "config.yaml"
 GLOBAL_FIELDS: frozenset[str] = frozenset(
     {
         "llm_provider",
+        "fallback_provider",
         "claude_evaluation_model",
         "claude_screening_model",
         "zai_base_url",

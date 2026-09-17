@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
-from job_scout.llm.base import CallPurpose, LLMError
+from job_scout.llm.base import CallPurpose, LLMError, LLMUnavailableError
 
 # Purposes where the model's reasoning earns its cost: the answer is a
 # judgement, not a sieve. Kept in sync with Config.local_reasoning_purposes.
@@ -205,7 +205,9 @@ class LocalLLMClient:
                 self._active_index = index
             return _content_of(response, model)
 
-        raise LLMError("No local LLM endpoint reachable - " + "; ".join(failures))
+        raise LLMUnavailableError(
+            "No local LLM endpoint reachable - " + "; ".join(failures)
+        )
 
     def _call_with_thinking_fallback(
         self,

@@ -5,7 +5,7 @@ from __future__ import annotations
 import shutil
 import subprocess
 
-from job_scout.llm.base import CallPurpose, LLMError
+from job_scout.llm.base import CallPurpose, LLMError, LLMUnavailableError
 
 CLAUDE_NOT_FOUND_MSG = (
     "Claude Code CLI not found.\n"
@@ -56,7 +56,7 @@ class ClaudeCliClient:
         """
         ok, err = self.check_available()
         if not ok:
-            raise LLMError(err or CLAUDE_NOT_FOUND_MSG)
+            raise LLMUnavailableError(err or CLAUDE_NOT_FOUND_MSG)
 
         is_cheap = purpose in ("screening", "quick_eval")
         effective_timeout = (

@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from job_scout.llm.base import LLMError
+from job_scout.llm.base import LLMError, LLMUnavailableError
 from job_scout.llm.claude_cli import ClaudeCliClient
-from job_scout.llm.factory import get_llm_client
+from job_scout.llm.factory import _FallbackLLMClient, get_llm_client
 from job_scout.llm.local import LocalLLMClient
 from job_scout.llm.retry import RetryingLLMClient
 from job_scout.llm.zai import ZaiClient
@@ -324,3 +324,111 @@ def test_cv_parsing_same_as_default_not_duplicated() -> None:
 
     # Should be a plain client, not routing
     assert not isinstance(client.inner, _PurposeRoutingClient)
+
+
+# ---------------------------------------------------------------------------
+# fallback provider
+# ---------------------------------------------------------------------------
+
+
+class _Stub:
+    """Minimal LLMClient that raises what a test tells it to."""
+
+    def __init__(self, answer: str = "ok", error: Exception | None = None) -> None:
+        self.answer = answer
+        self.error = error
+        self.calls = 0
+        self.available: tuple[bool, str | None] = (True, None)
+
+    def complete(
+        self, prompt: str, *, purpose: str = "evaluation", timeout: float | None = None
+    ) -> str:
+        self.calls += 1
+        if self.error is not None:
+            raise self.error
+        return self.answer
+
+    def check_available(self) -> tuple[bool, str | None]:
+        return self.available
+
+
+def _fallback(primary: _Stub, secondary: _Stub) -> _FallbackLLMClient:
+    return _FallbackLLMClient(primary, secondary, "zai")
+
+
+def test_no_fallback_configured_returns_plain_retrying_client() -> None:
+    """Without fallback_provider the client is unchanged from before."""
+    client = get_llm_client(Config())
+    assert isinstance(client, RetryingLLMClient)
+
+
+def test_fallback_equal_to_primary_is_ignored() -> None:
+    """Falling back to the provider that just failed would be pointless."""
+    config = Config(llm_provider="local", fallback_provider="local")
+    assert isinstance(get_llm_client(config), RetryingLLMClient)
+
+
+def test_fallback_provider_wraps_the_client() -> None:
+    """A different fallback provider produces a fallback-aware client."""
+    config = Config(llm_provider="local", fallback_provider="zai", zai_api_key="k")
+    assert isinstance(get_llm_client(config), _FallbackLLMClient)
+
+
+def test_unreachable_primary_hands_over_to_the_fallback() -> None:
+    """An unreachable primary is exactly what the fallback exists for."""
+    primary = _Stub(error=LLMUnavailableError("model host asleep"))
+    secondary = _Stub(answer="from fallback")
+    assert _fallback(primary, secondary).complete("x", purpose="evaluation") == (
+        "from fallback"
+    )
+    assert secondary.calls == 1
+
+
+def test_a_bad_answer_does_not_trigger_the_fallback() -> None:
+    """A provider that answered badly is a real failure, not an outage.
+
+    Falling back here would mask bugs and spend money at another provider.
+    """
+    primary = _Stub(error=LLMError("model returned nonsense"))
+    secondary = _Stub()
+    with pytest.raises(LLMError, match="nonsense"):
+        _fallback(primary, secondary).complete("x", purpose="evaluation")
+    assert secondary.calls == 0
+
+
+def test_primary_is_not_retried_once_it_is_known_unreachable() -> None:
+    """A sleeping host will not have woken between two calls a second apart."""
+    primary = _Stub(error=LLMUnavailableError("asleep"))
+    secondary = _Stub(answer="fallback")
+    client = _fallback(primary, secondary)
+    for _ in range(3):
+        client.complete("x", purpose="evaluation")
+    assert primary.calls == 1
+    assert secondary.calls == 3
+
+
+def test_a_healthy_primary_keeps_serving() -> None:
+    """The fallback must not steal traffic while the primary works."""
+    primary = _Stub(answer="primary")
+    secondary = _Stub(answer="fallback")
+    client = _fallback(primary, secondary)
+    assert client.complete("x", purpose="evaluation") == "primary"
+    assert secondary.calls == 0
+
+
+def test_availability_reports_true_when_either_side_can_serve() -> None:
+    """Either provider being up is enough to call the pair available."""
+    primary, secondary = _Stub(), _Stub()
+    primary.available = (False, "connection refused")
+    assert _fallback(primary, secondary).check_available() == (True, None)
+
+
+def test_availability_reports_both_errors_when_neither_can_serve() -> None:
+    """With both down the message has to name both, or it is undiagnosable."""
+    primary, secondary = _Stub(), _Stub()
+    primary.available = (False, "connection refused")
+    secondary.available = (False, "no api key")
+    ok, err = _fallback(primary, secondary).check_available()
+    assert ok is False
+    assert err is not None
+    assert "connection refused" in err and "no api key" in err

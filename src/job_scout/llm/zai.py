@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from loguru import logger
 
-from job_scout.llm.base import CallPurpose, LLMError
+from job_scout.llm.base import CallPurpose, LLMError, LLMUnavailableError
 
 
 class ZaiClient:
@@ -110,6 +110,9 @@ class ZaiClient:
                 response_format={"type": "json_object"},
                 timeout=effective_timeout,
             )
+        except openai.APIConnectionError as exc:
+            # Covers APITimeoutError, which subclasses it.
+            raise LLMUnavailableError(f"Z AI unreachable: {exc}") from exc
         except openai.OpenAIError as exc:
             raise LLMError(f"Z AI API error: {exc}") from exc
 

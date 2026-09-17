@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from job_scout.llm.base import LLMError
+from job_scout.llm.base import LLMError, LLMUnavailableError
 from job_scout.llm.zai import ZaiClient
 
 
@@ -147,8 +147,8 @@ def test_returns_empty_string_on_none_content() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_openai_error_raises_llm_error() -> None:
-    """complete() wraps openai.OpenAIError as LLMError."""
+def test_connection_error_raises_llm_unavailable_error() -> None:
+    """A connection failure is an outage, so it may hand over to a fallback."""
     import openai
 
     client, mock = _make_client()
@@ -156,8 +156,24 @@ def test_openai_error_raises_llm_error() -> None:
         request=MagicMock()
     )
 
+    with pytest.raises(LLMUnavailableError, match="Z AI unreachable"):
+        client.complete("prompt", purpose="evaluation")
+
+
+def test_openai_error_raises_llm_error() -> None:
+    """A non-connection API error is a real failure, not an outage.
+
+    It must stay a plain LLMError so it is never masked by failing over to
+    another provider.
+    """
+    import openai
+
+    client, mock = _make_client()
+    mock.chat.completions.create.side_effect = openai.OpenAIError("boom")
+
     with pytest.raises(LLMError, match="Z AI API error"):
         client.complete("prompt", purpose="evaluation")
+    assert not isinstance(LLMError("x"), LLMUnavailableError)
 
 
 # ---------------------------------------------------------------------------

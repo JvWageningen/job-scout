@@ -282,6 +282,10 @@ class Config(BaseModel):
     # LLM settings (or `job-scout config set llm_provider ...`) to use a
     # hosted provider instead.
     llm_provider: Literal["claude_cli", "zai", "kilo_cli", "local"] = "local"
+    # Used only when the primary provider cannot be REACHED -- a sleeping model
+    # host, a missing CLI. A provider that answers badly is a real failure and is
+    # not masked by switching somewhere else at a different price.
+    fallback_provider: Literal["claude_cli", "zai", "kilo_cli", "local"] | None = None
     claude_evaluation_model: str | None = None
     claude_screening_model: str = "haiku"
     zai_api_key: str | None = None

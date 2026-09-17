@@ -22,6 +22,16 @@ class LLMError(RuntimeError):
     """Raised when an LLM call fails."""
 
 
+class LLMUnavailableError(LLMError):
+    """Raised when a provider could not be reached at all.
+
+    Deliberately narrower than :class:`LLMError`: it means the endpoint or binary
+    was not there, not that the model answered badly. Only this triggers the
+    configured fallback provider, so a genuine model or prompt failure surfaces
+    instead of being silently retried somewhere else at a different price.
+    """
+
+
 @runtime_checkable
 class LLMClient(Protocol):
     """Common interface for LLM provider clients."""

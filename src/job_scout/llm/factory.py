@@ -4,7 +4,14 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from job_scout.llm.base import CallPurpose, LLMClient, LLMError
+from loguru import logger
+
+from job_scout.llm.base import (
+    CallPurpose,
+    LLMClient,
+    LLMError,
+    LLMUnavailableError,
+)
 from job_scout.llm.claude_cli import ClaudeCliClient
 from job_scout.llm.kilo_cli import KiloCliClient
 from job_scout.llm.retry import RetryingLLMClient
@@ -142,6 +149,84 @@ class _PurposeRoutingClient:
         return True, None
 
 
+class _FallbackLLMClient:
+    """Falls back to a second provider when the first cannot be reached.
+
+    Only :class:`LLMUnavailableError` triggers the switch, so a model that
+    answered badly still surfaces as an error rather than being quietly retried
+    somewhere else. Once the primary has proved unreachable, the rest of this
+    client's life goes straight to the fallback: a sleeping model host does not
+    wake up between two calls a second apart, and re-probing it would add the
+    full retry budget to every single call.
+    """
+
+    def __init__(
+        self, primary: LLMClient, fallback: LLMClient, fallback_name: str
+    ) -> None:
+        """Wrap a primary client with a fallback.
+
+        Args:
+            primary: Client to use while it is reachable.
+            fallback: Client to use once the primary proves unreachable.
+            fallback_name: Provider name of the fallback, for log messages.
+        """
+        self._primary = primary
+        self._fallback = fallback
+        self._fallback_name = fallback_name
+        self._primary_unreachable = False
+
+    def complete(
+        self,
+        prompt: str,
+        *,
+        purpose: CallPurpose,
+        timeout: float | None = None,
+    ) -> str:
+        """Complete with the primary client, or the fallback if it is unreachable.
+
+        Args:
+            prompt: The prompt to send.
+            purpose: The call purpose.
+            timeout: Optional timeout override.
+
+        Returns:
+            The LLM response text.
+
+        Raises:
+            LLMError: If the serving client fails.
+        """
+        if not self._primary_unreachable:
+            try:
+                return self._primary.complete(prompt, purpose=purpose, timeout=timeout)
+            except LLMUnavailableError as exc:
+                self._primary_unreachable = True
+                logger.warning(
+                    "Primary LLM provider unreachable ({}); using fallback "
+                    "provider {!r} for the rest of this run",
+                    exc,
+                    self._fallback_name,
+                )
+        return self._fallback.complete(prompt, purpose=purpose, timeout=timeout)
+
+    def check_available(self) -> tuple[bool, str | None]:
+        """Report availability if either provider can serve.
+
+        Returns:
+            (True, None) when the primary or the fallback is available,
+            otherwise (False, both error messages).
+        """
+        ok, err = self._primary.check_available()
+        if ok:
+            return True, None
+        ok_fallback, err_fallback = self._fallback.check_available()
+        if ok_fallback:
+            return True, None
+        return (
+            False,
+            f"primary: {err}; fallback {self._fallback_name!r}: {err_fallback}",
+        )
+
+
 def get_llm_client(config: Config) -> LLMClient:
     """Return the LLMClient configured by *config*, wrapped with retry logic.
 
@@ -180,9 +265,20 @@ def get_llm_client(config: Config) -> LLMClient:
     else:
         inner = _PurposeRoutingClient(default_client, overrides)
 
-    return RetryingLLMClient(
+    primary: LLMClient = RetryingLLMClient(
         inner, config.llm_max_attempts, config.llm_retry_base_delay
     )
+
+    fallback_provider = config.fallback_provider
+    if not fallback_provider or fallback_provider == default_provider:
+        return primary
+
+    fallback = RetryingLLMClient(
+        _build_raw_client(fallback_provider, config),
+        config.llm_max_attempts,
+        config.llm_retry_base_delay,
+    )
+    return _FallbackLLMClient(primary, fallback, fallback_provider)
 
 
 def build_raw_client_for_test(

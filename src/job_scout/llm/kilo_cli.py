@@ -8,7 +8,7 @@ import subprocess
 
 from loguru import logger
 
-from job_scout.llm.base import CallPurpose, LLMError
+from job_scout.llm.base import CallPurpose, LLMError, LLMUnavailableError
 
 KILO_NOT_FOUND_MSG = (
     "Kilo Code CLI not found.\n"
@@ -79,7 +79,7 @@ class KiloCliClient:
         """
         ok, err = self.check_available()
         if not ok:
-            raise LLMError(err or KILO_NOT_FOUND_MSG)
+            raise LLMUnavailableError(err or KILO_NOT_FOUND_MSG)
 
         if purpose == "screening":
             model = self._screening_model
@@ -108,7 +108,7 @@ class KiloCliClient:
         except subprocess.TimeoutExpired as exc:
             raise LLMError(f"Kilo CLI timed out after {effective_timeout}s") from exc
         except FileNotFoundError as exc:
-            raise LLMError(KILO_NOT_FOUND_MSG) from exc
+            raise LLMUnavailableError(KILO_NOT_FOUND_MSG) from exc
 
         if result.returncode != 0 and not result.stdout.strip():
             snip = result.stderr[:400]
