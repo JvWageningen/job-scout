@@ -4,6 +4,24 @@ Format: [Keep a Changelog](https://keepachangelog.com)
 
 <!-- version list -->
 
+## v2.4.0 (2026-09-17)
+
+### Bug Fixes
+
+- **letters**: Offer only vacancies worth applying to, best match first
+  ([`99d0a78`](https://github.com/JvWageningen/job-scout/commit/99d0a7829a03a7c3d1815ddb06004c63620f8cda))
+
+### Chores
+
+- Sync uv.lock to 2.3.2 [skip ci]
+  ([`84818eb`](https://github.com/JvWageningen/job-scout/commit/84818ebf7f219c7019e6b78053c7133b378ae53f))
+
+### Features
+
+- **interview**: Write the questions to ask the employer, from the CV and the company
+  ([`50c70ed`](https://github.com/JvWageningen/job-scout/commit/50c70ed2390ed11711a82948b12535ba97faab69))
+
+
 ## v2.3.2 (2026-09-17)
 
 ### Bug Fixes
