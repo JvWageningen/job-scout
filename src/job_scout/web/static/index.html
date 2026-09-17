@@ -49,6 +49,7 @@
                     <button class="tab-btn" data-tab="cv">CV Builder</button>
                     <button class="tab-btn" data-tab="letters">Cover Letter Writer</button>
                     <button class="tab-btn" data-tab="feedback">Document Review</button>
+                    <button class="tab-btn" data-tab="interview">Interview Questions</button>
                 </div></div>
                 <div class="tab-group"><span class="tab-group-label">Your search</span><div class="tab-group-buttons">
                     <button class="tab-btn" data-tab="profile">Profile &amp; Filters</button>
@@ -129,6 +130,41 @@
                     <label for="letter-guide">Writing style guide</label><textarea id="letter-guide" rows="12" maxlength="16000" placeholder="Describe your voice, preferred formality, and what to improve."></textarea>
                     <button id="letter-style-save" class="btn btn-primary" type="button">Save style guide</button>
                 </details>
+                </fieldset>
+            </section>
+
+            <section id="interview-section" class="section hidden tab-content" data-tab="interview">
+                <div class="letter-heading"><div><h2>Interview questions</h2>
+                <p>The questions <strong>you</strong> ask <strong>them</strong>, for the moment the interviewer says “do you have any questions for us?”. Written from the vacancy, what is already known about the company, and your CV. This is not about rehearsing your own answers, and not about your documents: Document Review checks those.</p></div>
+                <span class="letter-badge">You ask the employer</span></div>
+                <p id="interview-status" role="status" aria-live="polite">Select a single user to prepare interview questions.</p>
+                <fieldset id="interview-workspace" disabled>
+                <div class="letter-grid">
+                    <div class="letter-setup">
+                        <h3>1. Set the conversation</h3>
+                        <button id="interview-refresh" class="btn btn-small" type="button">Refresh vacancies &amp; CVs</button>
+                        <label for="interview-job">Vacancy</label><select id="interview-job"></select>
+                        <label for="interview-language">Question language</label>
+                        <select id="interview-language"><option value="auto">Automatic — match the vacancy</option><option value="nl">Nederlands</option><option value="en">English</option></select>
+                        <label for="interview-cv">Current CV</label><select id="interview-cv"></select>
+                        <p class="letter-hint">Automatic uses a saved CV in the question language. Save any CV Builder changes first.</p>
+                        <label for="interview-notes">Anything you want to raise? <span class="letter-hint">(optional)</span></label>
+                        <textarea id="interview-notes" maxlength="2000" rows="5" placeholder="A doubt you want answered, something from an earlier call, or a subject you want on the table."></textarea>
+                        <p class="letter-hint">Your CV facts, the vacancy, the company research already gathered and your notes go to your configured language model. Nothing new is looked up.</p>
+                        <div class="letter-actions"><button id="interview-generate" class="btn btn-primary" type="button">Generate questions</button></div>
+                    </div>
+                    <div class="letter-paper">
+                        <h3>2. Take these into the room</h3>
+                        <p id="interview-empty">Your questions will appear here, grouped by theme, each one with why it matters for you and what it was based on.</p>
+                        <div id="interview-results" hidden>
+                            <p id="interview-source" class="letter-hint"></p>
+                            <p id="interview-missing" class="letter-warnings"></p>
+                            <div id="interview-themes"></div>
+                            <div class="letter-actions"><button id="interview-copy" class="btn btn-secondary" type="button">Copy all</button></div>
+                            <p class="letter-hint">A model wrote these from your CV and this vacancy. Read them before you use them, and drop any that no longer fit the conversation.</p>
+                        </div>
+                    </div>
+                </div>
                 </fieldset>
             </section>
 
@@ -918,6 +954,7 @@
 
     <script src="/app.js"></script>
     <script src="/letters.js"></script>
+    <script src="/interview.js"></script>
     <script src="/vacancies.js"></script>
 </body>
 </html>

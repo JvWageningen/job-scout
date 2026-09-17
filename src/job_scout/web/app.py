@@ -5,15 +5,26 @@ from __future__ import annotations
 import json
 import secrets
 import threading
+from collections.abc import Iterator
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Annotated, Any, Literal, cast
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import uvicorn
-from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi import (
+    APIRouter,
+    Depends,
+    FastAPI,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+)
 from loguru import logger
-from pydantic import ValidationError
+from pydantic import BaseModel, Field, ValidationError
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import FileResponse, HTMLResponse, JSONResponse, Response
 
@@ -43,7 +54,15 @@ from job_scout.cv.models import CVDocument
 from job_scout.cv.storage import ProfileStore, StorageError
 from job_scout.cv.tailor import TailorError, tailor_cv_document, tailored_slug
 from job_scout.database import Database
+from job_scout.interview_questions import (
+    InterviewQuestionError,
+    InterviewQuestionSet,
+    generate_interview_questions,
+)
 from job_scout.letters.api import build_api_router as build_letters_api_router
+from job_scout.letters.models import LetterLanguage
+from job_scout.letters.writer import LetterError, require_user
+from job_scout.llm.base import LLMError
 from job_scout.llm.factory import build_raw_client_for_test, get_llm_client
 from job_scout.models import (
     Config,
@@ -54,7 +73,7 @@ from job_scout.models import (
 )
 from job_scout.notify.factory import build_raw_notifier_for_test
 from job_scout.scheduler import check_schedule_status, install_schedule, remove_schedule
-from job_scout.web.vacancies import build_vacancies_router
+from job_scout.web.vacancies import build_vacancies_router, open_vacancy_choices
 from job_scout.weekly_schedule import next_run_after, parse_slots
 from job_scout.wol import normalise_mac, wake_and_wait
 
@@ -388,6 +407,121 @@ def _preview_or_apply_merge(
     return {"diff": diff, "applied": applied}
 
 
+class InterviewQuestionRequest(BaseModel):
+    """What the applicant asks the interview-question generator for."""
+
+    job_id: int = Field(gt=0)
+    language: LetterLanguage | None = Field(
+        default=None,
+        description="Force the language; None detects it from the vacancy.",
+    )
+    cv_slug: str | None = Field(
+        default=None,
+        description="CV builder profile to ground the questions in; None picks "
+        "the profile whose language matches.",
+    )
+    notes: str = Field(
+        default="",
+        max_length=2000,
+        description="Context only the applicant knows: what they already heard, "
+        "what they want to raise.",
+    )
+
+
+def checked_interview_user(user: str, response: Response) -> Iterator[str]:
+    """Validate the user and translate expected domain failures into API errors.
+
+    The same split the letter API makes: a problem with the request or the
+    stored data is the caller's to fix and says so, while a provider failure
+    stays vague to the client and detailed in the log.
+
+    Args:
+        user: User name from the query string.
+        response: Response whose caching headers are set before the handler runs.
+
+    Yields:
+        The validated user name.
+
+    Raises:
+        HTTPException: 400 for a bad request or unusable data, 502 when the
+            model call fails, 503 when private data cannot be read.
+    """
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        yield require_user(user)
+    except (InterviewQuestionError, LetterError, StorageError, ValueError) as exc:
+        logger.warning("Interview request rejected for {!r}: {}", user, exc)
+        raise HTTPException(400, str(exc)) from exc
+    except LLMError as exc:
+        # Deliberately vague to the client -- provider errors can carry endpoints
+        # and key fragments. The operator still needs the real cause, so it goes
+        # to the log rather than nowhere.
+        logger.error(
+            "Interview request failed for {!r}: {}: {}", user, type(exc).__name__, exc
+        )
+        raise HTTPException(
+            502,
+            "The model could not complete the request. Check LLM settings and retry.",
+        ) from exc
+    except OSError as exc:
+        logger.error("Interview data unreadable for {!r}: {}", user, exc)
+        raise HTTPException(503, "Private interview data could not be read.") from exc
+
+
+InterviewUser = Annotated[str, Depends(checked_interview_user)]
+
+
+def build_interview_router() -> APIRouter:
+    """Build the routes for the questions the candidate asks the employer.
+
+    This is the inverse of ``interview_prep``, which rehearses the questions an
+    employer asks the candidate; nothing here touches that.
+
+    Returns:
+        A router to mount under "/api/interview", inside the prefix
+        TokenAuthMiddleware guards.
+    """
+    router = APIRouter()
+
+    @router.get("/context")
+    def context(user: InterviewUser) -> dict[str, object]:
+        """Offer the same vacancies and CVs the letter writer offers.
+
+        Both tabs call ``open_vacancy_choices``, so an interview can only ever be
+        prepared for a vacancy that is still live, and the two dropdowns cannot
+        drift apart.
+        """
+        store = ProfileStore(user_cv_dir(user))
+        return {
+            "jobs": open_vacancy_choices(user),
+            "profiles": [
+                {"slug": s, "language": store.load(s).language}
+                for s in store.list_profiles()
+            ],
+        }
+
+    @router.post("/questions")
+    def questions(
+        body: InterviewQuestionRequest, user: InterviewUser
+    ) -> InterviewQuestionSet:
+        """Write the questions this candidate should ask this employer.
+
+        Read-only with respect to the pipeline: it uses the vacancy, the cached
+        company research and review and the saved CV as they are, and reports
+        whatever is missing instead of researching it now.
+        """
+        return generate_interview_questions(
+            user,
+            body.job_id,
+            get_llm_client(build_effective_config(user)),
+            language=body.language,
+            cv_slug=body.cv_slug,
+            notes=body.notes,
+        )
+
+    return router
+
+
 class TokenAuthMiddleware(BaseHTTPMiddleware):
     """Middleware to check dashboard token on /api/* requests."""
 
@@ -520,6 +654,7 @@ def create_app() -> FastAPI:
 
     app.include_router(build_cv_api_router(), prefix="/api/cv")
     app.include_router(build_letters_api_router(), prefix="/api/letters")
+    app.include_router(build_interview_router(), prefix="/api/interview")
     app.include_router(build_vacancies_router())
 
     @app.get("/vacancies.js", include_in_schema=False)
@@ -534,6 +669,13 @@ def create_app() -> FastAPI:
         """Serve the letter editor script."""
         return FileResponse(
             Path(__file__).parent / "static" / "letters.js", headers=no_cache_headers
+        )
+
+    @app.get("/interview.js", include_in_schema=False)
+    def serve_interview_js() -> FileResponse:
+        """Serve the interview question script."""
+        return FileResponse(
+            Path(__file__).parent / "static" / "interview.js", headers=no_cache_headers
         )
 
     app.dependency_overrides[get_cv_store] = cv_store

@@ -1286,15 +1286,15 @@ footer {
 .letter-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; }
 .letter-heading p, .letter-hint { color: #586579; line-height: 1.55; }
 .letter-badge { background: #e8f2ed; color: #255942; border-radius: 20px; padding: 7px 12px; white-space: nowrap; font-size: .85rem; }
-#letter-workspace { border: 0; margin: 0; padding: 0; min-width: 0; }
-#letter-workspace:disabled { opacity: .7; }
+#letter-workspace, #interview-workspace { border: 0; margin: 0; padding: 0; min-width: 0; }
+#letter-workspace:disabled, #interview-workspace:disabled { opacity: .7; }
 .letter-grid { display: grid; grid-template-columns: minmax(240px, 1fr) minmax(0, 2fr); gap: 28px; margin-top: 20px; }
 .letter-setup { background: #f5f7f9; border-radius: 10px; padding: 22px; align-self: start; }
 .letter-paper { border: 1px solid #d9e0e7; background: white; border-radius: 10px; padding: 28px; box-shadow: 0 3px 14px #182a3d08; min-width: 0; }
-#letters-section label { display: block; margin: 15px 0 6px; font-weight: 600; }
-#letters-section input:not([type=file]), #letters-section select, #letters-section textarea { width: 100%; box-sizing: border-box; font: inherit; border: 1px solid #bcc7d2; border-radius: 6px; padding: 10px; background: #fff; color: #1b2733; }
-#letters-section textarea { resize: vertical; line-height: 1.65; }
-#letters-section input:focus, #letters-section select:focus, #letters-section textarea:focus { outline: 2px solid #407568; outline-offset: 2px; }
+#letters-section label, #interview-section label { display: block; margin: 15px 0 6px; font-weight: 600; }
+#letters-section input:not([type=file]), #letters-section select, #letters-section textarea, #interview-section select, #interview-section textarea { width: 100%; box-sizing: border-box; font: inherit; border: 1px solid #bcc7d2; border-radius: 6px; padding: 10px; background: #fff; color: #1b2733; }
+#letters-section textarea, #interview-section textarea { resize: vertical; line-height: 1.65; }
+#letters-section input:focus, #letters-section select:focus, #letters-section textarea:focus, #interview-section select:focus, #interview-section textarea:focus { outline: 2px solid #407568; outline-offset: 2px; }
 .letter-hint { font-size: .85rem; margin: 8px 0 14px; }
 .letter-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 18px; }
 .letter-style { margin-top: 28px; border-top: 1px solid #d9e0e7; padding-top: 20px; }
@@ -1305,9 +1305,19 @@ footer {
 #letter-examples button { margin-left: 10px; }
 .letter-warnings:empty { display: none; }
 .letter-warnings { background: #fff7e6; color: #684500; padding: 14px 14px 14px 32px; border-radius: 6px; line-height: 1.5; }
-#letter-status { padding: 12px 16px; border-radius: 6px; background: #eef3f7; overflow-wrap: anywhere; }
-#letter-status[data-error=true] { background: #fff0ef; color: #a52b21; }
+#letter-status, #interview-status { padding: 12px 16px; border-radius: 6px; background: #eef3f7; overflow-wrap: anywhere; }
+#letter-status[data-error=true], #interview-status[data-error=true] { background: #fff0ef; color: #a52b21; }
 @media (max-width: 850px) { .letter-grid { grid-template-columns: 1fr; } .letter-paper { padding: 18px; } .letter-heading { flex-direction: column; } }
+
+/* Interview questions: one block per theme, each question carrying its reason. */
+#interview-missing { padding-left: 14px; margin-bottom: 18px; }
+.interview-theme + .interview-theme { margin-top: 24px; }
+.interview-theme h4 { margin: 0 0 10px; font-size: .78rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: #396784; }
+.interview-questions { margin: 0; padding-left: 22px; }
+.interview-questions li { margin-bottom: 16px; padding-left: 4px; overflow-wrap: anywhere; }
+.interview-question { margin: 0; font-weight: 600; color: #1b2733; line-height: 1.55; }
+.interview-why, .interview-grounded { margin: 5px 0 0; font-size: .87rem; color: #586579; line-height: 1.55; }
+.interview-why span, .interview-grounded span { font-weight: 600; color: #435569; }
 
 /* Group functions by the task they support. */
 .tabs.grouped-tabs { display: flex; flex-direction: column; gap: 0; padding: 8px 0; }

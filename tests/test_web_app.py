@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import tempfile
 import threading
 from collections.abc import Generator
@@ -963,6 +964,26 @@ class TestStaticFiles:
         response = client.get("/style.css")
         assert response.status_code == 200
         assert "css" in response.headers["content-type"]
+
+    def test_every_script_the_page_loads_is_actually_served(
+        self, client: TestClient
+    ) -> None:
+        """A dashboard tab whose script 404s looks present but does nothing.
+
+        The Interview Questions tab shipped that way once: the section rendered,
+        the fieldset stayed disabled forever, and every test passed because none
+        of them loaded the page. Asserting over the real <script> tags catches the
+        next one too, instead of needing a new assertion per file.
+        """
+        page = (
+            Path(__file__).parent.parent / "src/job_scout/web/static/index.html"
+        ).read_text(encoding="utf-8")
+        sources = re.findall(r'<script src="(/[^"]+\.js)"', page)
+        assert sources, "no scripts found; the page markup changed shape"
+        for src in sources:
+            assert client.get(src).status_code == 200, (
+                f"{src} is referenced but not served"
+            )
 
     def test_serve_icon_svg(self, client: TestClient) -> None:
         """Test serving the brand mark used in the dashboard header."""

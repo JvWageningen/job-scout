@@ -72,6 +72,7 @@ logs directory regardless of this setting; `-v` only affects what reaches your t
 | [`profile get-answers`](#profile-get-answers) | Print stored screening answers |
 | [`profile star-story`](#profile-star-story) | Manage the STAR story bank |
 | [`profile interview-prep`](#profile-interview-prep) | Match likely questions to your STAR stories |
+| [`interview questions`](#interview-questions) | Write the questions to ask the employer |
 | [`cv list`](#cv-list) | List the stored CV profiles |
 | [`cv serve`](#cv-serve) | Run the CV editor on its own |
 | [`cv render`](#cv-render) | Render a stored CV profile to PDF |
@@ -699,6 +700,39 @@ stories that best answer it. Exits 1 when no STAR stories exist, so build the ba
 |---|---|---|
 | `JOB_ID` | required | Numeric job id |
 | `--user TEXT` | none | User preparing |
+
+### `interview questions`
+
+```bash
+uv run job-scout interview questions 42 --user alex
+uv run job-scout interview questions 42 --user alex --language en --cv default
+uv run job-scout interview questions 42 --user alex --notes "Second round with the team lead."
+```
+
+The inverse of `profile interview-prep`: instead of rehearsing what the employer will
+ask you, this writes the questions *you* ask *them*. It reads the vacancy, the cached
+company research and review and a saved CV Builder profile — not the parsed CV PDF the
+rest of this section uses — and prints the questions grouped by theme (8 to 12 are asked
+for), each with one line on why it matters for you and one naming the source it came
+from.
+
+Nothing is researched on demand. Whatever grounding is absent is listed at the end under
+*Not seen, so nothing above is based on it* rather than guessed at, so run
+[`company research`](#company-research) and [`company-review`](#company-review) first if
+you want research-backed questions. Salary, holiday and benefit questions are omitted
+unless your `--notes` raise them. Nothing is saved.
+
+| Argument / option | Default | Description |
+|---|---|---|
+| `JOB_ID` | required | Numeric job id |
+| `--user TEXT` | the only user | User preparing |
+| `--language [auto\|nl\|en]` | `auto` | Language to write the questions in; `auto` reads it from the vacancy |
+| `--cv TEXT` | matched to the language | CV Builder profile slug to ground the questions in |
+| `--notes TEXT` | empty | Context only you know, e.g. what you want to raise |
+
+Exits 1 when the vacancy, the user or a usable CV profile is missing, or when the model
+returns nothing usable. The full feature guide is
+[INTERVIEW_QUESTIONS.md](INTERVIEW_QUESTIONS.md).
 
 ---
 

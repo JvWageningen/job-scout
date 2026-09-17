@@ -10,9 +10,8 @@ from loguru import logger
 from pydantic import BaseModel, Field
 from starlette.responses import Response
 
-from job_scout.config import build_effective_config, user_cv_dir, user_db_path
+from job_scout.config import build_effective_config, user_cv_dir
 from job_scout.cv.storage import ProfileStore, StorageError
-from job_scout.database import Database
 from job_scout.letters.examples import (
     MAX_BYTES,
     ExampleError,
@@ -43,11 +42,7 @@ from job_scout.letters.writer import (
 )
 from job_scout.llm.base import LLMError
 from job_scout.llm.factory import get_llm_client
-from job_scout.web.vacancies import find_vacancies
-
-# A dropdown, not a browser: enough room for every realistic shortlist without
-# loading a whole library into the page.
-_JOB_CHOICE_LIMIT = 200
+from job_scout.web.vacancies import open_vacancy_choices
 
 
 class StyleBody(BaseModel):
@@ -93,31 +88,14 @@ def build_api_router() -> APIRouter:
     def context(user: User) -> dict[str, object]:
         """List usable vacancies and CVs without returning their private contents.
 
-        Only vacancies still worth applying to are offered, using the same
-        definition the vacancy library calls "matches": nothing rejected by the
-        pipeline, nothing expired, nothing the applicant has closed. Listing every
-        vacancy ever seen buried the handful that matter under hundreds that did
-        not. Best match first, so the top of the list is the obvious place to start.
+        Only vacancies still worth applying to are offered, best match first, so
+        the top of the list is the obvious place to start. The shortlist itself
+        is built by ``open_vacancy_choices``, which the interview tab calls too:
+        one definition, so the two lists cannot drift apart.
         """
         store = ProfileStore(user_cv_dir(user))
-        page = find_vacancies(
-            Database(user_db_path(user)),
-            scope="matches",
-            sort="score_desc",
-            limit=_JOB_CHOICE_LIMIT,
-        )
         return {
-            "jobs": [
-                {
-                    "id": j.id,
-                    "title": j.title,
-                    "company": j.company,
-                    "status": j.status.value,
-                    "fit_score": j.fit_score,
-                }
-                for j in page.items
-                if j.description
-            ],
+            "jobs": open_vacancy_choices(user),
             "profiles": [
                 {"slug": s, "language": store.load(s).language}
                 for s in store.list_profiles()

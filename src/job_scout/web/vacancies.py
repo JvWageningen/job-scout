@@ -27,6 +27,9 @@ _SORTS = {
     "date_desc": "seen_at DESC",
     "date_asc": "seen_at ASC",
 }
+# A dropdown, not a browser: enough room for every realistic shortlist without
+# loading a whole library into the page.
+_CHOICE_LIMIT = 200
 _LEGACY = {
     ApplicationStage.TO_REVIEW: "matched",
     ApplicationStage.INTERESTED: "approved",
@@ -175,6 +178,44 @@ def _filters(
         parts.append("source = ?")
         params.append(source)
     return " AND ".join(parts), params
+
+
+def open_vacancy_choices(
+    user: str, limit: int = _CHOICE_LIMIT
+) -> list[dict[str, object]]:
+    """List the vacancies still worth working on, best match first.
+
+    One definition, shared by every tool that asks the applicant to pick a
+    vacancy, so the letter writer and the interview preparation can never
+    disagree about which vacancies are still live. It is the library's
+    "matches" scope -- nothing the pipeline rejected, nothing expired, nothing
+    the applicant closed -- ordered by fit score. Vacancies without a
+    description are dropped: there is nothing to ground a letter or a question
+    in. Listing every vacancy ever seen buried the handful that matter.
+
+    Args:
+        user: Name of an existing user. Callers behind the API have already
+            validated it; this revalidates rather than trusting them.
+        limit: Largest shortlist to return.
+
+    Returns:
+        One entry per offerable vacancy, with its id, title, company, status
+        and fit score. Never the description or any other private content.
+    """
+    page = find_vacancies(
+        _database(user), scope="matches", sort="score_desc", limit=limit
+    )
+    return [
+        {
+            "id": job.id,
+            "title": job.title,
+            "company": job.company,
+            "status": job.status.value,
+            "fit_score": job.fit_score,
+        }
+        for job in page.items
+        if job.description
+    ]
 
 
 def update_vacancy(db: Database, job_id: int, body: VacancyUpdate) -> JobListing:

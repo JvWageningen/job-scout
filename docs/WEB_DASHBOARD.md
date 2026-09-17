@@ -87,7 +87,8 @@ that mode.
 Navigation is grouped by purpose:
 
 - **Find & track jobs:** Dashboard and Analytics.
-- **Prepare applications:** CV Builder, Cover Letter Writer and Document Review.
+- **Prepare applications:** CV Builder, Cover Letter Writer, Document Review and
+  Interview Questions.
 - **Settings:** Profile & Filters, Keywords, Custom Sites, Notifications, Schedule,
   LLM Settings and Secrets.
 
@@ -187,6 +188,33 @@ profile. Add private example letters and an editable style guide, then review th
 wording, save separate language versions, and export PDF or text. Generation does
 not submit applications. See [Cover Letter Writer](LETTER_WRITER.md) for the complete
 workflow, privacy details and review limitations.
+
+### Interview Questions
+
+The questions you ask them, for the moment the interviewer asks whether you have any.
+Choose a vacancy, a question language and a CV, add anything you want raised, and the
+tab writes questions built from the vacancy text, the company research and review
+already cached for it, and the factual sections of your CV. They arrive grouped by
+theme — the role, the team, the company, growth and future, ways of working, and what
+is worth probing — each with one line on why it matters for you and one naming what it
+was based on. **Copy all** takes the set as plain text.
+
+Two things this tab is not. It is not Document Review, which critiques a document you
+already have. And it is not interview prep: that rehearses the behavioural questions
+the *employer* is likely to ask *you*, matched to your STAR stories, and lives in
+`profile interview-prep` on the CLI.
+
+The vacancy dropdown offers the vacancies still worth working on — nothing rejected,
+expired, closed by you, or lacking a description — best match first, with each fit
+score shown. It is built by the same code as the Cover Letter Writer's dropdown, so
+the two can never disagree about which vacancies are live. **Refresh vacancies & CVs**
+re-reads it without disturbing questions already on screen.
+
+Nothing is researched when you press the button, and nothing is saved: if the company
+research or review is missing, the tab says so under the questions instead of filling
+the gap in. Read the questions before you use them. See
+[Interview questions](INTERVIEW_QUESTIONS.md) for the grounding, the themes and the
+honest limits.
 
 ### Keywords
 
@@ -396,5 +424,6 @@ default, not a control this project implements — do not rely on it.
 - [CONFIGURATION.md](CONFIGURATION.md) — every config key, secret and environment variable
 - [NOTIFICATIONS.md](NOTIFICATIONS.md) — channels, modes and delivery
 - [LLM_PROVIDERS.md](LLM_PROVIDERS.md) — backends and per-stage routing
+- [INTERVIEW_QUESTIONS.md](INTERVIEW_QUESTIONS.md) — the questions you ask the employer
 - [DEPLOY.md](DEPLOY.md) — Docker, NAS and update procedures
 - [SECURITY.md](../SECURITY.md) — reporting a vulnerability

@@ -32,6 +32,7 @@ from job_scout.config import (
     user_logs_dir,
 )
 from job_scout.cv.cli import cv as cv_group
+from job_scout.cv.storage import StorageError
 from job_scout.database import Database, _dedup_key
 from job_scout.evaluator import (
     check_llm_available,
@@ -41,7 +42,14 @@ from job_scout.evaluator import (
     quick_evaluate_fit,
     quick_evaluate_tracks,
 )
+from job_scout.interview_questions import (
+    InterviewQuestionError,
+    InterviewQuestionSet,
+    QuestionTheme,
+    generate_interview_questions,
+)
 from job_scout.letters.cli import letter as letter_group
+from job_scout.letters.models import LetterLanguage
 from job_scout.llm.base import LLMClient, LLMError
 from job_scout.llm.factory import get_llm_client
 from job_scout.models import (
@@ -3621,6 +3629,78 @@ def mcp_start(host: str, port: int) -> None:
         logger.error(f"MCP server failed to start: {e}")
         click.echo(f"Error: Failed to start MCP server: {e}", err=True)
         sys.exit(1)
+
+
+@cli.group()
+def interview() -> None:
+    """Prepare for an interview you have been invited to."""
+
+
+def _print_interview_questions(result: InterviewQuestionSet) -> None:
+    """Print one interview's questions grouped by theme, with their grounding.
+
+    Args:
+        result: The generated question set.
+    """
+    click.echo(
+        f"\nQuestions to ask {result.company} "
+        f"(job #{result.job_id}, {result.language.value}):"
+    )
+    for theme in QuestionTheme:
+        picked = [q for q in result.questions if q.theme is theme]
+        if not picked:
+            continue
+        click.echo(f"\n{theme.value.replace('_', ' ').upper()}")
+        for question in picked:
+            click.echo(f"  - {question.question}")
+            click.echo(f"    why:  {question.why}")
+            click.echo(f"    from: {question.grounded_in}")
+    if result.missing_context:
+        click.echo("\nNot seen, so nothing above is based on it:")
+        for gap in result.missing_context:
+            click.echo(f"  - {gap}")
+
+
+@interview.command("questions")
+@click.argument("job_id", type=int)
+@click.option("--user", "user_name", default=None, help="User preparing")
+@click.option(
+    "--language",
+    type=click.Choice(["auto", "nl", "en"]),
+    default="auto",
+    help="Language to write the questions in; auto reads it from the vacancy",
+)
+@click.option("--cv", "cv_slug", default=None, help="CV profile to ground them in")
+@click.option("--notes", default="", help="Context only you know, e.g. what to raise")
+def interview_questions(
+    job_id: int,
+    user_name: str | None,
+    language: str,
+    cv_slug: str | None,
+    notes: str,
+) -> None:
+    """Write the questions to ask THIS employer, from the company and your CV.
+
+    The inverse of 'profile interview-prep', which rehearses the questions the
+    employer is likely to ask you. Nothing is researched on demand: the vacancy,
+    the cached company research and review and your saved CV are used as they
+    are, and whatever is missing is reported rather than invented.
+    """
+    target = _require_single_user(user_name)
+    _require_llm()
+    chosen = None if language == "auto" else LetterLanguage(language)
+    try:
+        result = generate_interview_questions(
+            target,
+            job_id,
+            get_llm_client(build_effective_config(target)),
+            language=chosen,
+            cv_slug=cv_slug,
+            notes=notes,
+        )
+    except (InterviewQuestionError, LLMError, StorageError, ValueError, OSError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    _print_interview_questions(result)
 
 
 def main() -> None:
