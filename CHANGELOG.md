@@ -4,6 +4,19 @@ Format: [Keep a Changelog](https://keepachangelog.com)
 
 <!-- version list -->
 
+## v2.5.1 (2026-09-17)
+
+### Bug Fixes
+
+- **interview**: Give the long-form calls a timeout that fits the work
+  ([`a9fd5bd`](https://github.com/JvWageningen/job-scout/commit/a9fd5bd2f2901d5d416c46092961be7c1f20baed))
+
+### Chores
+
+- Sync uv.lock to 2.5.0 [skip ci]
+  ([`cb05639`](https://github.com/JvWageningen/job-scout/commit/cb05639ae4d9f0576617424228ce98146581e591))
+
+
 ## v2.5.0 (2026-09-17)
 
 ### Chores
