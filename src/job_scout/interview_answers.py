@@ -226,6 +226,12 @@ _NO_STORIES = (
     "competence gap.\n"
 )
 
+# These calls are long-form: a dozen questions, each with a spoken-length
+# answer, plus whatever reasoning the model emits before it commits. The
+# provider default of 120s was measured failing on exactly this prompt, and a
+# timeout here costs the whole retry budget before anything is shown.
+_ANSWER_TIMEOUT = 360.0
+
 _PUNCTUATION = re.compile(r"[^\w\s]|_", re.UNICODE)
 
 
@@ -659,7 +665,9 @@ def generate_interview_answers(
         f"{len(stories)} STAR stories; missing: {', '.join(missing) or 'nothing'}"
     )
     raw = client.complete(
-        _prompt(block, chosen, missing), purpose="behavioral_questions"
+        _prompt(block, chosen, missing),
+        purpose="behavioral_questions",
+        timeout=_ANSWER_TIMEOUT,
     )
     questions = _parse_questions(raw)
     _check_citations(questions, stories)

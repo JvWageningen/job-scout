@@ -216,6 +216,12 @@ _LANGUAGE_RULE = {
     ),
 }
 
+# These calls are long-form: a dozen questions, each with a spoken-length
+# answer, plus whatever reasoning the model emits before it commits. The
+# provider default of 120s was measured failing on exactly this prompt, and a
+# timeout here costs the whole retry budget before anything is shown.
+_QUESTION_TIMEOUT = 240.0
+
 _PUNCTUATION = re.compile(r"[^\w\s]|_", re.UNICODE)
 
 
@@ -629,7 +635,9 @@ def generate_interview_questions(
         f"missing: {', '.join(missing) or 'nothing'}"
     )
     raw = client.complete(
-        _prompt(block, chosen, missing, notes), purpose="behavioral_questions"
+        _prompt(block, chosen, missing, notes),
+        purpose="behavioral_questions",
+        timeout=_QUESTION_TIMEOUT,
     )
     questions = _parse_questions(raw)
     questions = _drop_unsupported(questions, missing)
