@@ -20,11 +20,13 @@ found out by the person sitting opposite you, while you are saying it.
 | **Questions to ask them** | You → employer | Questions grouped by theme, each with why it matters for you and what it was based on. | Vacancy, company research, company review, your CV. |
 | **Questions they may ask you** | Employer → you | Likely questions grouped by what they probe, each with why it is coming, a draft answer, and how much real evidence stands behind it. | The same four, plus your STAR story bank. |
 
-Neither half saves the questions or answers it writes, and running one has no effect on
-the other. The one thing either half may store is company material: when a vacancy's
-company has not been researched yet, or its review is missing or rests on little
-evidence, it is looked up on the web first and the result is kept for next time (see
-[How the company is looked up](#how-the-company-is-looked-up)).
+Each half saves what it writes, per vacancy and language, so the next visit shows it
+without generating again, and both halves download as a Word or text file you can edit
+(see [Saving and downloading](#saving-and-downloading)). Running one half has no effect
+on the other. Besides that, the only thing either half may store is company material:
+when a vacancy's company has not been researched yet, or its review is missing or rests
+on little evidence, it is looked up on the web first and the result is kept for next
+time (see [How the company is looked up](#how-the-company-is-looked-up)).
 
 ## This is not interview prep, and not Document Review
 
@@ -173,7 +175,7 @@ exists so you can see at a glance which answers are standing on something real.
 | --- | --- | --- | --- |
 | `strong` | Backed by your CV | *your CV or a STAR story carries this* | The material is there. Make the wording yours and move on. |
 | `partial` | Partly covered | *only adjacent experience, so it has to be framed* | You have something near it. Check that the framing is one you would defend if pushed. |
-| `gap` | Gap — rehearse this | *you do not have this; rehearse saying so plainly* | **This is the one to rehearse.** |
+| `gap` | Gap: rehearse this | *you do not have this; rehearse saying so plainly* | **This is the one to rehearse.** |
 
 A `gap` answer says so in its first sentence, then says what is adjacent and how you
 would close it. No bluffing, no padding, no changing the subject. Said straight — "my
@@ -315,32 +317,88 @@ the heading says which half you are in: *You ask the employer* or *The employer 
 you*.
 
 1. Select a single user. The tab needs one user, not **all**.
-2. Choose the vacancy. The dropdown offers the vacancies still worth working on —
+2. Choose the vacancy. The dropdown offers the vacancies still worth working on:
    nothing the pipeline rejected, nothing expired, nothing you closed, and nothing
-   without a description — best match first, with the fit score beside each one. The
-   Cover Letter Writer offers the same shortlist from the same code.
+   without a description. The best match is on top, with the fit score beside each
+   one. The Cover Letter Writer offers the same shortlist from the same code. Whatever
+   you saved for that vacancy appears straight away, in both halves, with the date it
+   was generated.
 3. Choose the language and the CV, or leave both on *Automatic*.
 4. Add anything the model should know, then press the generate button for the half you
    are in: **Generate questions to ask** or **Generate questions & draft answers**. It
    can take a minute or more, and two to four minutes when the company still has to be
-   looked up.
+   looked up. When a set is already saved, the button reads **Generate the questions
+   again** or **Generate questions & answers again**, and nothing is generated until
+   you press it.
 
-The setup — vacancy, language, CV, notes — is shared, so you can prepare one half and
-then the other without re-entering anything, and switching halves leaves a generated
-result standing.
+The setup (vacancy, language, CV and notes) is shared, so you can prepare one half and
+then the other without entering anything twice, and switching halves leaves a result
+standing.
 
 **Questions to ask them** appear grouped by theme, each with why it matters and what it
 was based on. **Questions they may ask you** appear grouped by kind, each as a block
 with its footing chip, why they may ask it, an **editable answer box** and its *based
-on* line. The box is the point: edit the draft until it sounds like you. **Copy all**
-takes what is on screen — your edits, not the original draft — as plain text.
+on* line. The box is the point: edit the draft until it sounds like you. Your edits are
+saved with the vacancy as you type. **Copy all** takes what is on screen, your edits
+included, as plain text.
+
+Under each half, **Download Word file** and **Download text file** save what is on
+screen as a file you can keep editing; see
+[Saving and downloading](#saving-and-downloading).
 
 **Refresh vacancies & CVs** re-reads both dropdowns without touching anything already
 generated. Switching user resets the whole tab.
 
-Nothing here is saved. Both results, and your edits to an answer, live in the page until
-you copy them or regenerate. There is no saved-version store as there is for letters,
-and generating changes no vacancy's progress and sends nothing to anyone.
+Generating changes no vacancy's progress and sends nothing to anyone.
+
+### Saving and downloading
+
+**What is saved.** Every set you generate is saved in your own data folder, one per
+vacancy, half and language:
+
+```
+data/users/<name>/interview/<vacancy id>-ask-nl.json      questions to ask them
+data/users/<name>/interview/<vacancy id>-answer-en.json   questions they may ask you
+```
+
+Generating again replaces the saved set for that vacancy, half and language, and
+leaves the other half and the other language alone. The answers half asks before it
+replaces a set on screen, because the saved answers hold your edits. Edits to an answer
+are saved as you type, so they are there on your next visit. The questions half has
+nothing to edit on the page; edit those in the downloaded file.
+
+With the language on *Automatic* the tab shows the newest saved set of each half.
+Choose Nederlands or English to see the set in that language, or to generate one.
+Nobody else's sets are ever shown: each user has their own folder, and every file
+name is built from the vacancy number and two fixed words, so a request cannot point
+anywhere else.
+
+**What the download holds.** Both buttons give the same content in the same order, in
+the language of the set:
+
+- a title with the vacancy and the employer (*Meetspecialist bij Deltameet Institute*),
+  which half this is, and the date the set was generated;
+- for the questions to ask: the questions grouped by theme, each as its own paragraph
+  with *why this matters for you* and *based on* on the lines after it;
+- for the questions they may ask: each question with why it is asked, then your answer
+  as its own paragraph, then the footing in words (*Strong*, *Partial* or *Gap*, with
+  what that means) and what the answer draws on;
+- at the end, what was missing when the set was written and which of your sources were
+  used.
+
+The Word file opens in Word, LibreOffice and Google Docs. Headings use Word's own
+heading styles, and every question and answer is a plain paragraph, not a table or a
+text box, so you can rewrite, reorder or delete anything. The spelling check is set to
+the language of the set. The text file holds the same content with headings in
+capitals, for any editor. The downloads take what is on screen, so a rewritten answer
+is in the file as you wrote it.
+
+The file is named by date, content and employer, for example
+`20260918 Interviewvragen Findwhere.docx` or
+`20260918 Interview answers Findwhere.txt`. The name uses plain letters only, so an
+employer name with accents or odd characters is simplified rather than breaking the
+download. The export adds no dashes, emoji or decorative marks of its own; the words
+the model wrote, and the words you rewrote, are exported as they are.
 
 ### CLI
 
@@ -361,6 +419,23 @@ entry showing the kind, `asked because:`, `footing:` with a plain-language note,
 on:` where there is one, and the draft answer wrapped to 88 columns. Gaps are prefixed
 `!!` and counted at the end. Both list any missing grounding last.
 
+Both commands save the set exactly as the dashboard does, so it shows up in the
+Interview Questions tab. `interview export` writes a saved set to a file without
+generating anything:
+
+```bash
+uv run job-scout interview export 42 --user alex
+uv run job-scout interview export 42 --user alex --mode answer --format txt
+uv run job-scout interview export 42 --user alex --mode answer --output ~/Documents
+```
+
+`--mode ask` (the default) exports the questions to ask them and `--mode answer` the
+questions they may ask you, with your answers as last saved. `--language auto|nl|en`
+picks the saved language, and *auto* takes the newest. `--format docx|txt` chooses
+Word (the default) or plain text. `--output` names a file or an existing folder; without
+it the file lands in the current folder under the same name the dashboard gives it. If
+nothing is saved for that vacancy yet, the command says so and writes nothing.
+
 ### Privacy
 
 One model call writes the questions or answers, routed through the existing
@@ -376,9 +451,10 @@ listed above; your notes; and, for the answers half, your STAR stories. What it 
 carry: the contact details and personal-detail sections of a CV Builder profile, which
 `applicant.cv_facts` excludes on purpose, and anything from another user's data.
 
-The questions and answers are not written anywhere. The only thing either generator
-stores is company research or a company review it has just looked up; it updates no
-vacancy.
+The questions and answers are saved only in your own data folder
+(`data/users/<name>/interview/`), next to your letters, and a download goes straight to
+your browser. Besides those sets, the only thing either generator stores is company
+research or a company review it has just looked up; it updates no vacancy.
 The `/api/interview/*` routes sit behind the dashboard's optional shared bearer token
 like every other `/api/` route — see
 [Authentication](WEB_DASHBOARD.md#authentication).
@@ -405,8 +481,9 @@ Read this before you take a printout into a room.
 - **The review can be up to a year old.** Cached reviews are accepted within that window,
   which is the same window the vacancy list uses, so the preparation sees exactly what
   you see — including when it is stale.
-- **Your questions and answers are not saved.** Copy what you want to keep before you
-  regenerate or switch user.
+- **One saved set per vacancy, half and language.** Generating again replaces the
+  saved one, your rewritten answers included. Download a set first if you want to keep
+  the old version next to the new one.
 
 #### The questions you ask them
 

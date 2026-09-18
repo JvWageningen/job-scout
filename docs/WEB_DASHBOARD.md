@@ -200,39 +200,55 @@ costs nothing, and switching leaves a result already on screen standing.
 
 **Questions to ask them** is for the moment the interviewer asks whether you have any.
 The questions are built from the vacancy text, the company research and review (looked
-up on the web first when they are missing), and the factual sections of your CV, and
-arrive grouped by theme — the role, the team, the company, growth and future, ways of
-working, and what is worth probing — each with one line on why it matters for you and
+up on the web first when they are missing), and the factual sections of your CV. They
+arrive grouped by theme (the role, the team, the company, growth and future, ways of
+working, and what is worth probing), each with one line on why it matters for you and
 one naming what it was based on.
 
 **Questions they may ask you** predicts what this interviewer is likely to put to you
-and drafts an answer for each. They arrive grouped by what the question probes —
+and drafts an answer for each. They arrive grouped by what the question probes:
 motivation and fit, your experience, technical depth, how you work with others, gaps
-they will probe, practical matters — and every block carries a footing chip saying how
+they will probe and practical matters. Every block carries a footing chip saying how
 much real evidence stands behind the answer: *Backed by your CV*, *Partly covered*, or
-*Gap — rehearse this*, which is marked in amber and counted in the summary line. The
+*Gap: rehearse this*, which is marked in amber and counted in the summary line. The
 answers are drawn only from your CV, your saved STAR stories and your notes; a gap is
 answered honestly rather than bluffed, because an invented achievement is found out in
-the room. Each draft sits in an editable box — rewrite it until it sounds like you, and
-**Copy all** takes your edited text rather than the original draft.
+the room. Each draft sits in an editable box. Rewrite it until it sounds like you; your
+edits are saved as you type, and **Copy all** takes your edited text rather than the
+original draft.
+
+**Saved per vacancy.** Every set you generate is saved in your own data folder, one per
+vacancy, half and language. Choosing a vacancy shows what is saved for it straight
+away, with the date it was generated, and the generate button then reads as generating
+again. Nothing is generated until you press it. Generating again replaces the saved
+set in that language; the answers half asks first, because the saved answers hold your
+edits. With the language on *Automatic* the newest saved set is shown.
+
+**Downloads.** Both halves have **Download Word file** and **Download text file**. The
+Word file opens in Word, LibreOffice and Google Docs, uses real heading styles, and
+keeps every question and answer as a plain paragraph you can rewrite or delete. It
+holds the vacancy and employer, the date, the questions with their reasons and sources
+or the answers with their footing, and at the end what was missing and which of your
+sources were used. The text file holds the same in the same order. Both take what is
+on screen, so your rewritten answers are in the file. Files are named like
+`20260918 Interviewvragen Findwhere.docx`, and downloads go through the dashboard token
+like every other request.
 
 Two things this tab is not. It is not Document Review, which critiques a document you
 already have. And it is not `profile interview-prep`, the older CLI-only feature that
 derives behavioural questions from the job description alone and points at the STAR
 stories that fit, without company research, your CV, or drafted answers.
 
-The vacancy dropdown offers the vacancies still worth working on — nothing rejected,
-expired, closed by you, or lacking a description — best match first, with each fit
-score shown. It is built by the same code as the Cover Letter Writer's dropdown, so
+The vacancy dropdown offers the vacancies still worth working on: nothing rejected,
+expired, closed by you, or lacking a description. The best match is on top, with each
+fit score shown. It is built by the same code as the Cover Letter Writer's dropdown, so
 the two can never disagree about which vacancies are live. **Refresh vacancies & CVs**
 re-reads it without disturbing anything already on screen.
 
-Nothing is researched when you press either button, and nothing is saved: if the company
-research, the review or your story bank is missing, the tab says so under the result
-instead of filling the gap in. Your edits to a draft answer live in the page too, so
-copy what you want to keep before you regenerate or switch user. Read everything before
-you use it. See [Interview questions and answers](INTERVIEW_QUESTIONS.md) for the
-grounding, the themes and footings, and the honest limits.
+If the company research, the review or your story bank is missing, the tab says so under
+the result instead of filling the gap in. Read everything before you use it. See
+[Interview questions and answers](INTERVIEW_QUESTIONS.md) for the grounding, the themes
+and footings, saving and downloading, and the honest limits.
 
 ### Keywords
 

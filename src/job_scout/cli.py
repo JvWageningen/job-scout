@@ -50,12 +50,20 @@ from job_scout.interview_answers import (
     LikelyQuestion,
     generate_interview_answers,
 )
+from job_scout.interview_export import ExportFormat, export_interview
 from job_scout.interview_questions import (
     THIN_REVIEW,
     InterviewQuestionError,
     InterviewQuestionSet,
     QuestionTheme,
     generate_interview_questions,
+)
+from job_scout.interview_store import (
+    InterviewMode,
+    InterviewSet,
+    latest_interview_set,
+    mode_of,
+    save_interview_set,
 )
 from job_scout.letters.cli import letter as letter_group
 from job_scout.letters.models import LetterLanguage
@@ -3764,6 +3772,29 @@ def interview_questions(
     except (InterviewQuestionError, LLMError, StorageError, ValueError, OSError) as exc:
         raise click.ClickException(str(exc)) from exc
     _print_interview_questions(result)
+    _keep_for_dashboard(target, result)
+
+
+def _keep_for_dashboard(user: str, result: InterviewSet) -> None:
+    """Save a generated set, so the dashboard shows it and it can be exported.
+
+    A failed save is reported but does not fail the command: the set has
+    already been printed.
+
+    Args:
+        user: The user it was generated for.
+        result: The generated set.
+    """
+    try:
+        save_interview_set(user, result)
+    except (OSError, ValueError) as exc:
+        click.echo(f"\nThis set could not be saved: {exc}", err=True)
+        return
+    click.echo(
+        "\nSaved. The dashboard's Interview Questions tab shows it, and "
+        f"'job-scout interview export {result.job_id} --user {user} "
+        f"--mode {mode_of(result).value}' writes it to a Word file."
+    )
 
 
 # What each footing actually means for the candidate, spelled out beside the
@@ -3893,6 +3924,85 @@ def interview_answers(
     except (InterviewAnswerError, LLMError, StorageError, ValueError, OSError) as exc:
         raise click.ClickException(str(exc)) from exc
     _print_interview_answers(result)
+    _keep_for_dashboard(target, result)
+
+
+def _export_destination(output: Path | None, filename: str) -> Path:
+    """Decide where an exported file goes.
+
+    Args:
+        output: A file or an existing folder named by the user, or None.
+        filename: The export's own file name.
+
+    Returns:
+        The file to write: inside the folder, the named file, or the
+        export's own name in the current folder.
+    """
+    if output is None:
+        return Path(filename)
+    if output.is_dir():
+        return output / filename
+    return output
+
+
+@interview.command("export")
+@click.argument("job_id", type=int)
+@click.option("--user", "user_name", default=None, help="User whose set to export")
+@click.option(
+    "--mode",
+    type=click.Choice([mode.value for mode in InterviewMode]),
+    default=InterviewMode.ASK.value,
+    help="ask: the questions you ask them; answer: what they may ask you",
+)
+@click.option(
+    "--language",
+    type=click.Choice(["auto", "nl", "en"]),
+    default="auto",
+    help="Which saved language to export; auto takes the newest",
+)
+@click.option(
+    "--format",
+    "file_format",
+    type=click.Choice([choice.value for choice in ExportFormat]),
+    default=ExportFormat.DOCX.value,
+    help="docx for Word, LibreOffice or Google Docs; txt for plain text",
+)
+@click.option(
+    "--output",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="File or existing folder to write to; the current folder by default",
+)
+def interview_export(
+    job_id: int,
+    user_name: str | None,
+    mode: str,
+    language: str,
+    file_format: str,
+    output: Path | None,
+) -> None:
+    """Write a saved interview set to a Word or text file you can edit.
+
+    Nothing is generated. This exports what 'interview questions', 'interview
+    answers' or the dashboard saved for this vacancy, edited answers included.
+    """
+    target = _require_single_user(user_name)
+    chosen = None if language == "auto" else LetterLanguage(language)
+    half = InterviewMode(mode)
+    try:
+        saved = latest_interview_set(target, job_id, half, chosen)
+        if saved is None:
+            command = "questions" if half is InterviewMode.ASK else "answers"
+            raise click.ClickException(
+                f"Nothing saved for vacancy {job_id} yet. Generate it first with "
+                f"'job-scout interview {command} {job_id} --user {target}'."
+            )
+        exported = export_interview(target, saved, ExportFormat(file_format))
+        destination = _export_destination(output, exported.filename)
+        destination.write_bytes(exported.content)
+    except (ValueError, OSError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(f"Wrote {destination}")
 
 
 def main() -> None:

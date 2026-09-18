@@ -90,6 +90,8 @@ Everything under `src/job_scout/`. Roughly in pipeline order.
 | `interview_prep.py` | Derives likely behavioural questions for a job and matches each to the best STAR story from the saved bank. |
 | `interview_questions.py` | The inverse direction: the questions the *candidate* asks the employer. Reads the vacancy, the stored `CompanyResearch` and `CompanyReview` and the applicant's facts, and returns a themed `InterviewQuestionSet` that names every grounding source it did not have. `company_context` fills company gaps first, once per generation: research that is missing or cites no source is looked up, and a review that is missing or rests on fewer than three web sources is rewritten; what is found is stored, nothing is stored on failure or when the web has nothing, and an unreachable `evaluation` provider stops further lookups. The questions themselves are not stored. |
 | `interview_answers.py` | The mirror of `interview_questions.py`: what the *interviewer* asks the candidate, each prediction carrying a draft answer. Same grounding plus the saved STAR stories, the same `company_context` lookups, the same single `behavioral_questions` generation call, and an `InterviewAnswerSet` of `LikelyQuestion` objects with a `kind`, a `why_asked`, the draft, the sources it drew on and an `AnswerFooting` of `strong`, `partial` or `gap`. The hard rule lives in the prompt: an answer may use only the CV facts, the STAR stories and the applicant's notes, and a gap is stated rather than filled. |
+| `interview_store.py` | Keeps every generated interview set under `data/users/<name>/interview/`, one JSON file per vacancy, half (`ask` or `answer`) and language, written atomically like a letter draft. Generating again replaces that file; edited answers are saved over it. Paths are built from a checked user, a positive vacancy id and two enums, and must sit directly in the user's folder. |
+| `interview_export.py` | Turns a set, as it is on screen, into an editable Word file (python-docx) or plain text. Both formats are rendered from one list of blocks, so they hold the same content in the same order; fixed labels are Dutch or English to match the set and follow the house style in `writing_style.py`. |
 | `letters/` | Per-user examples, style guides, CV-grounded letter generation, structured draft storage, PDF rendering, and the `/api/letters` router and `letter` CLI group. See [Cover Letter Writer](docs/LETTER_WRITER.md). |
 | `cv/` | The CV builder — a self-contained subpackage with its own document model, storage, renderer, FastAPI router, Click group and front end. See [the CV subpackage](#the-cv-subpackage) below. |
 
@@ -111,7 +113,10 @@ invention — but they share no prompt, no enum and no output model, and the ans
 additionally reads `Database.get_star_stories()` and enforces its own evidence rule.
 Both are exposed through one `/api/interview` router and one dashboard tab
 (`web/static/interview.js`) with a shared request body and a shared vacancy shortlist, so
-neither direction can be prepared for a vacancy the other would refuse. The older
+neither direction can be prepared for a vacancy the other would refuse. The router, not
+the generators, saves each result through `interview_store.py`, so the generators stay
+free of storage; `/saved/{job_id}` reads the sets back and `/export/{questions|answers}`
+renders the body it is sent, the way the letter PDF route does. The older
 `/api/interview-prep/{job_id}` route and `profile interview-prep` command are untouched.
 
 ### Delivery, scheduling and integration

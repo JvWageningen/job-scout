@@ -316,6 +316,10 @@ def test_both_directions_share_one_context_endpoint(job_id: int) -> None:
         "/api/interview/context",
         "/api/interview/questions",
         "/api/interview/answers",
+        "/api/interview/saved/{job_id}",
+        "/api/interview/saved/answers/{job_id}",
+        "/api/interview/export/questions",
+        "/api/interview/export/answers",
     }
     assert "/api/interview-prep/{job_id}" in documented
 

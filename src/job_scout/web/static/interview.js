@@ -1,7 +1,9 @@
 /* Both halves of the interview: the questions the candidate asks the employer,
    and the questions the employer is likely to ask back with a draft answer.
    Sibling of the letter writer: same token helper, same staleness guard, same
-   disabled-fieldset pattern. One setup, one epoch, one status line for both. */
+   disabled-fieldset pattern. One setup, one epoch, one status line for both.
+   Every generated set is saved per vacancy, half and language, so choosing a
+   vacancy shows what was saved and nothing is generated again unasked. */
 (() => {
     'use strict';
     const el = id => document.getElementById('interview-' + id);
@@ -23,16 +25,33 @@
     // has to rehearse, so it is the one the page marks in amber.
     const FOOTINGS = {
         strong: 'Backed by your CV', partial: 'Partly covered',
-        gap: 'Gap — rehearse this',
+        gap: 'Gap: rehearse this',
     };
     const NO_USER = 'Select a single user to prepare interview questions.';
     // Must match THIN_REVIEW in interview_questions.py. A thin review is still
     // in the prompt, so it must not be described as absent like the others.
     const THIN_REVIEW = 'company review is based on little evidence';
+    // The button says whether pressing it writes something new or replaces
+    // what is already saved for this vacancy.
+    const GENERATE = {
+        ask: 'Generate questions to ask', answer: 'Generate questions & draft answers',
+    };
+    const AGAIN = {
+        ask: 'Generate the questions again', answer: 'Generate questions & answers again',
+    };
+    // How long typing may pause before an edited answer is saved.
+    const SAVE_DELAY = 1500;
     let epoch = 0, loadedUser = null, latest = null, keepInterviewTab = false;
     // The answer half keeps its set and the textareas holding it, because the
-    // user's edits live in the DOM and Copy all must take them, not the draft.
-    let answers = null, drafts = [];
+    // user's edits live in the DOM and every copy, save and download must take
+    // them, not the draft.
+    let answers = null, drafts = [], lastSaved = '';
+    // Everything saved for the chosen vacancy: both halves, every language,
+    // newest first. Switching half or language picks from it without a request.
+    let saved = null;
+    // Edits are saved one after another, and a vacancy is only read once they
+    // have landed, so reading it back never returns the text before an edit.
+    let saving = Promise.resolve(), saveTimer = null;
     const validUser = () => currentUser && currentUser !== 'all' ? currentUser : null;
     const status = (text, error = false) => {
         el('status').textContent = text;
@@ -62,19 +81,35 @@
         catch (error) { if (error.message !== 'stale' && ctx.epoch === epoch) status(error.message, true); }
         finally { if (ctx.epoch === epoch) el('workspace').disabled = false; }
     }
+    function buttons() {
+        el('generate').textContent = latest ? AGAIN.ask : GENERATE.ask;
+        el('answers-generate').textContent = answers ? AGAIN.answer : GENERATE.answer;
+    }
+    function clearQuestions() {
+        latest = null;
+        el('results').hidden = true; el('empty').hidden = false;
+        el('themes').replaceChildren();
+        el('source').textContent = ''; el('missing').textContent = '';
+        buttons();
+    }
+    function clearAnswers() {
+        clearTimeout(saveTimer);
+        answers = null; drafts = []; lastSaved = '';
+        el('answers-results').hidden = true; el('answers-empty').hidden = false;
+        el('answers-list').replaceChildren();
+        el('answers-source').textContent = ''; el('answers-missing').textContent = '';
+        buttons();
+    }
     // Both halves are cleared together: they share one vacancy and one CV, so
     // leaving one behind would show the previous user's material. Which half is
     // on screen is a view choice and survives, like an open tab does.
     function reset() {
         epoch++;
-        loadedUser = null; latest = null; answers = null; drafts = [];
+        loadedUser = null; saved = null;
+        clearQuestions(); clearAnswers();
         el('workspace').disabled = true;
-        el('results').hidden = true; el('empty').hidden = false;
-        el('answers-results').hidden = true; el('answers-empty').hidden = false;
-        ['job', 'cv', 'themes', 'answers-list'].forEach(id => el(id).replaceChildren());
+        ['job', 'cv'].forEach(id => el(id).replaceChildren());
         el('notes').value = ''; el('language').value = 'auto';
-        el('source').textContent = ''; el('missing').textContent = '';
-        el('answers-source').textContent = ''; el('answers-missing').textContent = '';
         status(NO_USER);
     }
     // The two halves are one tab: the setup, the status line and the epoch are
@@ -100,7 +135,7 @@
     function choices(data) {
         el('job').replaceChildren(new Option('Choose a vacancy', ''));
         byScore(data.jobs).forEach(j => el('job').add(new Option(
-            `${j.title} — ${j.company}${j.fit_score == null ? '' : ` · ${j.fit_score}/100`}`, j.id)));
+            `${j.title} · ${j.company}${j.fit_score == null ? '' : ` · ${j.fit_score}/100`}`, j.id)));
         fillCvs(data.profiles);
     }
     // Same as the letter tab: CV Builder is one source among several, so a
@@ -108,9 +143,9 @@
     // profiles stay visible but cannot be chosen, so it is clear why they are
     // not used.
     function fillCvs(profiles) {
-        el('cv').replaceChildren(new Option('Automatic — all your sources', ''));
+        el('cv').replaceChildren(new Option('Automatic: all your sources', ''));
         profiles.forEach(p => {
-            const skip = p.example ? ' — example CV, not used' : p.empty ? ' — empty, not used' : '';
+            const skip = p.example ? ' (example CV, not used)' : p.empty ? ' (empty, not used)' : '';
             const option = new Option(`CV Builder: ${p.slug} (${p.language})${skip}`, p.slug);
             option.disabled = Boolean(skip);
             el('cv').add(option);
@@ -123,7 +158,7 @@
     async function load() {
         reset();
         if (!validUser()) return;
-        await run('Loading your vacancies and CVs…', async ctx => {
+        await run('Loading your vacancies and CVs...', async ctx => {
             const data = await (await api('/context', ctx)).json();
             fresh(ctx);
             choices(data);
@@ -137,6 +172,15 @@
     // traced to the CV, the import or the profile that said it.
     const factsLine = set => set.sources_used && set.sources_used.length
         ? ` Your facts came from: ${set.sources_used.join(', ')}.` : '';
+    // The day a set was generated, so an old set is recognisable as old.
+    // Written out by hand: the same words in every browser and locale.
+    const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July',
+        'August', 'September', 'October', 'November', 'December'];
+    function generatedOn(set) {
+        const date = new Date(set.generated_at);
+        return Number.isNaN(date.getTime()) ? '' :
+            ` · generated on ${date.getDate()} ${MONTHS[date.getMonth()]} ${date.getFullYear()}`;
+    }
     // A missing source was not in the prompt at all; a thin review was, with a
     // warning. Saying "written without it" about the second would be false.
     function missingLine(missing, what) {
@@ -190,12 +234,13 @@
             block.append(heading, ol);
             el('themes').append(block);
         });
-        el('source').textContent = `Vacancy #${set.job_id} · ${set.company} · ${String(set.language).toUpperCase()} · ${set.questions.length} questions.${factsLine(set)}`;
+        el('source').textContent = `Vacancy #${set.job_id} · ${set.company} · ${String(set.language).toUpperCase()} · ${set.questions.length} questions${generatedOn(set)}.${factsLine(set)}`;
         el('missing').textContent = missingLine(set.missing_context, 'questions');
         el('results').hidden = false; el('empty').hidden = true;
+        buttons();
     }
     function plainText(set) {
-        return [`Questions to ask — ${set.company}`, ...grouped(set.questions, 'theme', THEMES).map(([theme, list]) =>
+        return [`Questions to ask ${set.company}`, ...grouped(set.questions, 'theme', THEMES).map(([theme, list]) =>
             [label(theme, THEMES).toUpperCase(), ...list.map((item, index) => [
                 `${index + 1}. ${item.question}`,
                 item.why ? `   Why this matters for you: ${item.why}` : '',
@@ -208,6 +253,14 @@
         span.className = 'interview-footing';
         span.textContent = text;
         return span;
+    }
+    // Typing pauses save the answers; leaving the box saves them at once.
+    function watch(area) {
+        area.addEventListener('input', () => {
+            clearTimeout(saveTimer);
+            saveTimer = setTimeout(saveEdits, SAVE_DELAY);
+        });
+        area.addEventListener('change', saveEdits);
     }
     // Same rule as the half above: everything here came from a scraped page or
     // a model, so it becomes text nodes and textarea values, never markup.
@@ -228,7 +281,7 @@
         const caption = document.createElement('label');
         caption.className = 'interview-draft-label';
         caption.htmlFor = id;
-        caption.textContent = 'Your answer — edit it until it sounds like you';
+        caption.textContent = 'Your answer: edit it until it sounds like you';
         const area = document.createElement('textarea');
         area.id = id;
         area.className = 'interview-draft';
@@ -236,6 +289,7 @@
         area.maxLength = 2500;
         area.value = item.draft_answer;
         drafts.push({item, area});
+        watch(area);
         article.append(caption, area);
         if (item.based_on && item.based_on.length) {
             article.append(line('interview-grounded', 'Based on:', item.based_on.join('; ')));
@@ -243,7 +297,8 @@
         return article;
     }
     function renderAnswers(set) {
-        answers = set; drafts = [];
+        clearTimeout(saveTimer);
+        answers = set; drafts = []; lastSaved = JSON.stringify(set);
         el('answers-list').replaceChildren();
         grouped(set.questions, 'kind', KINDS).forEach(([kind, list]) => {
             const block = document.createElement('div');
@@ -254,14 +309,26 @@
             el('answers-list').append(block);
         });
         const gaps = set.questions.filter(q => q.footing === 'gap').length;
-        el('answers-source').textContent = `Vacancy #${set.job_id} · ${set.company} · ${String(set.language).toUpperCase()} · ${set.questions.length} questions · ${gaps} marked as a gap.${factsLine(set)}`;
+        el('answers-source').textContent = `Vacancy #${set.job_id} · ${set.company} · ${String(set.language).toUpperCase()} · ${set.questions.length} questions · ${gaps} marked as a gap${generatedOn(set)}.${factsLine(set)}`;
         el('answers-missing').textContent = missingLine(set.missing_context, 'answers');
         el('answers-results').hidden = false; el('answers-empty').hidden = true;
+        buttons();
+    }
+    // The answer set as it is on screen: the user's edits, not the drafts.
+    function editedAnswers() {
+        const questions = answers.questions.map(item => {
+            const draft = drafts.find(d => d.item === item);
+            return draft ? {...item, draft_answer: draft.area.value} : item;
+        });
+        if (questions.some(q => !String(q.draft_answer).trim())) {
+            throw new Error('One of your answers is empty. Write something in it first; an empty answer cannot be saved or downloaded.');
+        }
+        return {...answers, questions};
     }
     // What is copied is what is on screen: the user's edits, not the draft.
     function plainTextAnswers(set) {
         const indent = text => String(text).split('\n').map(l => '   ' + l).join('\n');
-        return [`Questions they may ask — ${set.company}`, ...grouped(set.questions, 'kind', KINDS).map(([kind, list]) =>
+        return [`Questions ${set.company} may ask you`, ...grouped(set.questions, 'kind', KINDS).map(([kind, list]) =>
             [label(kind, KINDS).toUpperCase(), ...list.map((item, index) => {
                 const draft = drafts.find(d => d.item === item);
                 return [
@@ -273,6 +340,107 @@
                     item.based_on && item.based_on.length ? `   Based on: ${item.based_on.join('; ')}` : '',
                 ].filter(Boolean).join('\n');
             })].join('\n'))].join('\n\n') + '\n';
+    }
+    // --- What is saved for the chosen vacancy. ---
+    // Automatic shows the newest saved set; a chosen language shows that one.
+    function pick(sets) {
+        const language = el('language').value;
+        return (language === 'auto' ? sets[0] : sets.find(s => s.language === language)) || null;
+    }
+    function showSaved() {
+        const asked = saved ? pick(saved.questions) : null;
+        const answered = saved ? pick(saved.answers) : null;
+        if (asked) render(asked); else clearQuestions();
+        if (answered) renderAnswers(answered); else clearAnswers();
+    }
+    function savedStatus() {
+        if (latest || answers) {
+            return 'Showing what is saved for this vacancy. Nothing is generated again unless you press the button.';
+        }
+        return saved && (saved.questions.length || saved.answers.length)
+            ? 'Nothing is saved for this vacancy in this language. Choose Automatic to see the newest saved set, or generate one.'
+            : 'Nothing generated for this vacancy yet. Choose the half you need and press its button.';
+    }
+    // A new or edited set takes the place of the saved one in its language.
+    function remember(half, set) {
+        if (!saved || saved.job_id !== set.job_id) saved = {job_id: set.job_id, questions: [], answers: []};
+        saved[half] = [set, ...saved[half].filter(s => s.language !== set.language)]
+            .sort((a, b) => new Date(b.generated_at) - new Date(a.generated_at));
+    }
+    async function loadSaved() {
+        const job = el('job').value;
+        if (!job) {
+            saved = null; showSaved();
+            status('Choose the vacancy you are being interviewed for.');
+            return;
+        }
+        await run('Opening what is saved for this vacancy...', async ctx => {
+            await saving;
+            const data = await (await api(`/saved/${job}`, ctx)).json();
+            fresh(ctx);
+            if (el('job').value !== job) return;
+            saved = data; showSaved();
+            status(savedStatus());
+        });
+    }
+    // Quiet by design: it runs while the user types, so it neither disables
+    // the page nor waits for anything but the save before it.
+    function saveEdits() {
+        clearTimeout(saveTimer);
+        const user = validUser();
+        if (!answers || !user) return;
+        let body;
+        try { body = editedAnswers(); } catch (error) { status(error.message, true); return; }
+        const text = JSON.stringify(body);
+        if (text === lastSaved) return;
+        lastSaved = text;
+        remember('answers', body);
+        const ctx = {user, epoch};
+        saving = saving.then(async () => {
+            try {
+                await api('/saved/answers/' + body.job_id, ctx, json('PUT', body));
+                status('Your edited answers are saved with this vacancy.');
+            } catch (error) {
+                if (error.message !== 'stale' && ctx.epoch === epoch) status(error.message, true);
+            }
+        });
+    }
+    // --- Downloads: the server renders the file, the page hands it over. ---
+    function download(blob, name) {
+        const url = URL.createObjectURL(blob), link = document.createElement('a');
+        link.href = url; link.download = name; link.click();
+        setTimeout(() => URL.revokeObjectURL(url), 30000);
+    }
+    // The server names the file; the fallback only matters if a proxy drops it.
+    function fileName(response, fallback) {
+        const match = /filename="([^"]+)"/.exec(response.headers.get('Content-Disposition') || '');
+        return match ? match[1] : fallback;
+    }
+    function exportSet(half, body, format) {
+        const word = format === 'docx';
+        return run(`Preparing the ${word ? 'Word' : 'text'} file...`, async ctx => {
+            const response = await api(`/export/${half}?format=${format}`, ctx, json('POST', body()));
+            const blob = await response.blob();
+            fresh(ctx);
+            download(blob, fileName(response, `interview-${half}.${format}`));
+            status(word
+                ? 'Downloaded as a Word file. Word, LibreOffice and Google Docs open it, and every line can be changed.'
+                : 'Downloaded as a text file. Any editor opens it.');
+        });
+    }
+    const shownQuestions = () => {
+        if (!latest) throw new Error('Generate questions first.');
+        return latest;
+    };
+    const shownAnswers = () => {
+        if (!answers) throw new Error('Generate their questions first.');
+        return editedAnswers();
+    };
+    // Whether the server kept what it just generated; if not, say so plainly.
+    function ready(response, what, advice) {
+        return response.headers.get('X-Interview-Saved') === 'false'
+            ? `Your ${what} are ready, but they could not be saved. Download them to keep them. ${advice}`
+            : `Your ${what} are ready and saved with this vacancy. ${advice}`;
     }
     async function copy(button, text) {
         const original = button.textContent;
@@ -308,13 +476,18 @@
             reset();
             if (keepInterviewTab) { switchTab('interview'); load(); }
         });
-        el('refresh').onclick = () => run('Refreshing vacancies and CVs…', async ctx => {
+        el('refresh').onclick = () => run('Refreshing vacancies and CVs...', async ctx => {
             const data = await (await api('/context', ctx)).json(); fresh(ctx);
             const selectedJob = el('job').value, selectedCv = el('cv').value;
             choices(data);
             el('job').value = selectedJob; el('cv').value = selectedCv;
             if (el('cv').selectedIndex < 0) el('cv').selectedIndex = 0;
             status('Vacancies and CVs refreshed. Everything already generated is unchanged.');
+        });
+        el('job').addEventListener('change', loadSaved);
+        el('language').addEventListener('change', () => {
+            if (!saved) return;
+            showSaved(); status(savedStatus());
         });
         const halves = [...document.querySelectorAll('#interview-section .interview-mode')];
         halves.forEach((button, index) => {
@@ -328,25 +501,25 @@
                 next.focus();
             };
         });
-        el('generate').onclick = () => run('Writing your questions… If the company has not been researched yet, it is looked up on the web first, so this can take two to four minutes.', async ctx => {
-            const set = await (await api('/questions', ctx, json('POST', request()))).json();
-            fresh(ctx); render(set);
-            status('Your questions are ready. Read them before you use them, and drop any that no longer fit.');
+        el('generate').onclick = () => run('Writing your questions... If the company has not been researched yet, it is looked up on the web first, so this can take two to four minutes.', async ctx => {
+            const response = await api('/questions', ctx, json('POST', request()));
+            const set = await response.json();
+            fresh(ctx); remember('questions', set); render(set);
+            status(ready(response, 'questions', 'Read them before you use them, and drop any that no longer fit.'));
         });
         el('answers-generate').onclick = () => {
-            // Regenerating replaces every textarea, and the drafts only ever lived
-            // on the page. Losing eight answers rewritten in your own words, after
-            // a call that itself takes a minute, is not something to do silently.
-            const edited = drafts.filter(d => d.area.value.trim() !== (d.item.draft_answer || '').trim());
-            if (edited.length && !window.confirm(
-                `You have rewritten ${edited.length} answer${edited.length === 1 ? '' : 's'}. `
-                + 'Generating again replaces every draft and your edits are lost. Continue?')) {
+            // Generating again replaces the saved set in that language, and the
+            // saved set holds the user's rewritten answers. Losing those after a
+            // call that itself takes minutes is not something to do silently.
+            if (answers && !window.confirm('Generating again replaces the saved answers in this language, '
+                + 'including the ones you rewrote. Download them first if you want to keep them. Continue?')) {
                 return;
             }
-            run('Predicting their questions and drafting your answers… If the company has not been researched yet, it is looked up on the web first, so this can take two to four minutes.', async ctx => {
-                const set = await (await api('/answers', ctx, json('POST', request()))).json();
-                fresh(ctx); renderAnswers(set);
-                status('Your draft answers are ready. Rewrite each one in your own words, starting with the ones marked as a gap.');
+            run('Predicting their questions and drafting your answers... If the company has not been researched yet, it is looked up on the web first, so this can take two to four minutes.', async ctx => {
+                const response = await api('/answers', ctx, json('POST', request()));
+                const set = await response.json();
+                fresh(ctx); remember('answers', set); renderAnswers(set);
+                status(ready(response, 'draft answers', 'Rewrite each one in your own words, starting with the ones marked as a gap.'));
             });
         };
         el('copy').onclick = () => latest
@@ -355,5 +528,9 @@
         el('answers-copy').onclick = () => answers
             ? copy(el('answers-copy'), plainTextAnswers(answers))
             : status('Generate their questions first.', true);
+        el('docx').onclick = () => exportSet('questions', shownQuestions, 'docx');
+        el('txt').onclick = () => exportSet('questions', shownQuestions, 'txt');
+        el('answers-docx').onclick = () => exportSet('answers', shownAnswers, 'docx');
+        el('answers-txt').onclick = () => exportSet('answers', shownAnswers, 'txt');
     });
 })();
