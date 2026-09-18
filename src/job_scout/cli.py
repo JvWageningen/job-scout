@@ -3474,7 +3474,19 @@ def company_group() -> None:
 @click.argument("job_id", type=int)
 @click.option("--user", "user_name", default=None, help="User researching")
 def company_research_cmd(job_id: int, user_name: str | None) -> None:
-    """Research a company and suggest hiring managers for a job."""
+    """Research a company and suggest hiring managers for a job.
+
+    Always looks the company up now, even when a recent lookup is remembered:
+    asking for it is the way to refresh. It works in the user's own database,
+    the one interview preparation reads, and the attempt is remembered there
+    like any other, so interview preparation reuses what it found.
+    """
+    from job_scout.company_lookups import (  # noqa: PLC0415
+        LookupKind,
+        LookupOutcome,
+        remember,
+        store_research,
+    )
     from job_scout.company_research import (  # noqa: PLC0415
         CompanyResearchError,
         research_company,
@@ -3482,7 +3494,7 @@ def company_research_cmd(job_id: int, user_name: str | None) -> None:
 
     user_name = _require_single_user(user_name)
     config = _require_llm()
-    db = _get_db()
+    db = Database(user_db_path(user_name))
 
     job = db.get_job(job_id)
     if not job:
@@ -3493,14 +3505,13 @@ def company_research_cmd(job_id: int, user_name: str | None) -> None:
     try:
         research = research_company(job, config, suggest_managers=True)
     except (CompanyResearchError, LLMError) as exc:
+        remember(db, job.company, LookupKind.RESEARCH, LookupOutcome.FAILED)
         click.echo(f"Research failed: {exc}", err=True)
         return
+    store_research(db, job_id, job.company, research)
     if research is None:
         click.echo(f"No public web information about {job.company} found.", err=True)
         return
-
-    # model_dump_json, not json.dumps(model_dump()): the timestamp is a datetime.
-    db.save_company_research(job_id, research.model_dump_json())
     _print_research(research)
 
 
@@ -3508,11 +3519,12 @@ def company_research_cmd(job_id: int, user_name: str | None) -> None:
 @click.argument("job_id", type=int)
 @click.option("--user", "user_name", default=None, help="User viewing")
 def company_view_cmd(job_id: int, user_name: str | None) -> None:
-    """View saved company research for a job."""
+    """View saved company research for a job, from the user's own database."""
+    from job_scout.company_research import tidy_research  # noqa: PLC0415
     from job_scout.models import CompanyResearch  # noqa: PLC0415
 
     user_name = _require_single_user(user_name)
-    db = _get_db()
+    db = Database(user_db_path(user_name))
 
     job = db.get_job(job_id)
     if not job:
@@ -3524,7 +3536,7 @@ def company_view_cmd(job_id: int, user_name: str | None) -> None:
         click.echo(f"No research found for job {job_id}", err=True)
         return
 
-    _print_research(CompanyResearch.model_validate_json(research_json))
+    _print_research(tidy_research(CompanyResearch.model_validate_json(research_json)))
 
 
 def _print_research(research: CompanyResearch) -> None:

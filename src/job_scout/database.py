@@ -34,8 +34,61 @@ def _dedup_key(title: str, company: str) -> str:
         Lowercased, whitespace-collapsed "title||company" key.
     """
     title_norm = " ".join(title.lower().split())
-    company_norm = " ".join(company.lower().split())
-    return f"{title_norm}||{company_norm}"
+    return f"{title_norm}||{company_key(company)}"
+
+
+def company_key(company: str) -> str:
+    """Normalise a company name into the key everything about a company shares.
+
+    Reviews, research and lookup attempts describe the employer, not one
+    vacancy, so two vacancies at "Voorbeeld  BV" and "voorbeeld bv" must find
+    the same rows.
+
+    Args:
+        company: Company name as a vacancy gives it.
+
+    Returns:
+        The name lower-cased with its whitespace collapsed.
+    """
+    return " ".join(company.lower().split())
+
+
+# Company keys that stand for "no company given", not for an employer: blank,
+# the "Unknown" the scrapers and save_company_research fall back to when a
+# listing has no company, and the "nan" that str() makes of a missing pandas
+# value. Two vacancies under one of these are two different employers, so
+# nothing is looked up, shared or remembered under them.
+_PLACEHOLDER_KEYS = frozenset({"", "unknown", "nan"})
+
+
+def names_company(company: str) -> bool:
+    """Tell whether a vacancy's company name names an actual employer.
+
+    Args:
+        company: Company name as a vacancy gives it.
+
+    Returns:
+        False for a blank name or a placeholder such as "Unknown".
+    """
+    return company_key(company) not in _PLACEHOLDER_KEYS
+
+
+def _parse_time(value: object) -> datetime | None:
+    """Read a stored ISO timestamp, assuming UTC when it carries no zone.
+
+    Args:
+        value: The stored value.
+
+    Returns:
+        An aware datetime, or None when the value is not a readable timestamp.
+    """
+    if not isinstance(value, str):
+        return None
+    try:
+        moment = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return moment if moment.tzinfo else moment.replace(tzinfo=UTC)
 
 
 def _dump_track_scores(scores: list[TrackScore]) -> str | None:
@@ -281,6 +334,7 @@ class Database:
                 "CREATE INDEX IF NOT EXISTS idx_job_id_research ON "
                 "company_research(job_id)"
             )
+            self._migrate_company_research(conn)
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS company_reviews (
                     company_key TEXT PRIMARY KEY,
@@ -288,6 +342,7 @@ class Database:
                     reviewed_at TEXT NOT NULL
                 )
             """)
+            self._create_company_lookups(conn)
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS person_search_cache (
                     person_key TEXT PRIMARY KEY,
@@ -317,6 +372,55 @@ class Database:
                     updated_at TEXT NOT NULL
                 )
             """)
+
+    def _migrate_company_research(self, conn: sqlite3.Connection) -> None:
+        """Give every research row the company key it can be found by.
+
+        Research is stored per vacancy but describes the employer, so it is
+        also read by company. Rows written before the column existed get their
+        key from the vacancy's company, or from the name stored with the row
+        when the vacancy is gone. Nothing is rewritten or removed.
+
+        Args:
+            conn: Open connection to use for the migration.
+        """
+        with contextlib.suppress(sqlite3.OperationalError):
+            conn.execute("ALTER TABLE company_research ADD COLUMN company_key TEXT")
+        rows = conn.execute(
+            "SELECT r.id, COALESCE(j.company, r.company_name) FROM company_research r "
+            "LEFT JOIN jobs j ON j.id = r.job_id WHERE r.company_key IS NULL"
+        ).fetchall()
+        conn.executemany(
+            "UPDATE company_research SET company_key = ? WHERE id = ?",
+            [(company_key(row[1] or ""), row[0]) for row in rows],
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_company_key_research ON "
+            "company_research(company_key)"
+        )
+
+    @staticmethod
+    def _create_company_lookups(conn: sqlite3.Connection) -> None:
+        """Create the memory of company lookups, if it does not exist yet.
+
+        One row per company, kind of lookup ("research", "review") and
+        outcome ("found", "nothing_found", "failed"), holding when that outcome
+        last happened. Every attempt updates its row, so the table stays at
+        most three rows per company and kind while still answering both "when
+        was this last tried" and "when did it last complete".
+
+        Args:
+            conn: Open connection to use.
+        """
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS company_lookups (
+                company_key TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                outcome TEXT NOT NULL,
+                looked_up_at TEXT NOT NULL,
+                PRIMARY KEY (company_key, kind, outcome)
+            )
+        """)
 
     def _backfill_dedup_keys(self, conn: sqlite3.Connection) -> None:
         """Populate dedup_key for rows written before the column existed.
@@ -1398,47 +1502,44 @@ class Database:
     def save_company_research(self, job_id: int, research_json: str) -> None:
         """Save or update company research for a job.
 
+        The row also carries the company key, so research found for one
+        vacancy serves every vacancy at the same company.
+
         Args:
             job_id: ID of the job.
             research_json: JSON string of CompanyResearch object.
         """
-        from datetime import UTC, datetime
-
         now_iso = datetime.now(UTC).isoformat()
         with self._conn() as conn:
-            # Check if research already exists
-            cursor = conn.execute(
-                "SELECT id FROM company_research WHERE job_id = ?",
-                (job_id,),
-            )
-            existing = cursor.fetchone()
-
+            existing = conn.execute(
+                "SELECT id FROM company_research WHERE job_id = ?", (job_id,)
+            ).fetchone()
             if existing:
                 conn.execute(
-                    """
-                    UPDATE company_research
-                    SET research_json = ?, updated_at = ?
-                    WHERE job_id = ?
-                    """,
+                    "UPDATE company_research SET research_json = ?, updated_at = ? "
+                    "WHERE job_id = ?",
                     (research_json, now_iso, job_id),
                 )
-            else:
-                # Get company name from job
-                cursor = conn.execute(
-                    "SELECT company FROM jobs WHERE id = ?", (job_id,)
-                )
-                row = cursor.fetchone()
-                company_name = row[0] if row else "Unknown"
-
-                conn.execute(
-                    """
-                    INSERT INTO company_research
-                    (job_id, company_name, research_json, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?)
-                    """,
-                    (job_id, company_name, research_json, now_iso, now_iso),
-                )
-            conn.commit()
+                return
+            row = conn.execute(
+                "SELECT company FROM jobs WHERE id = ?", (job_id,)
+            ).fetchone()
+            company_name = row[0] if row else "Unknown"
+            conn.execute(
+                """
+                INSERT INTO company_research (job_id, company_name, company_key,
+                    research_json, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    job_id,
+                    company_name,
+                    company_key(company_name),
+                    research_json,
+                    now_iso,
+                    now_iso,
+                ),
+            )
 
     def get_company_research(self, job_id: int) -> str | None:
         """Get company research JSON for a job.
@@ -1457,6 +1558,77 @@ class Database:
             row = cursor.fetchone()
             return row[0] if row else None
 
+    def get_company_research_for_company(
+        self, company: str, *, job_id: int | None = None
+    ) -> list[str]:
+        """Return all research stored for any vacancy at a company, newest first.
+
+        Research describes the employer, not one vacancy, so what was found
+        for one vacancy is just as true for the next one at the same company.
+        A placeholder name such as "Unknown" names no employer, so under one
+        only the vacancy's own research is returned.
+
+        Args:
+            company: Company name; matched on :func:`company_key`.
+            job_id: A vacancy whose own research is included even if it was
+                stored under a differently written company name.
+
+        Returns:
+            The research JSON strings, most recently updated first.
+        """
+        # -1 is never a row id, so the job_id condition matches nothing.
+        vacancy = job_id if job_id is not None else -1
+        key = company_key(company) if names_company(company) else None
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT research_json FROM company_research "
+                "WHERE company_key = ? OR job_id = ? "
+                "ORDER BY updated_at DESC, id DESC",
+                (key, vacancy),
+            ).fetchall()
+        return [row[0] for row in rows]
+
+    def record_company_lookup(
+        self, company: str, kind: str, outcome: str, *, at: datetime | None = None
+    ) -> None:
+        """Remember that a company was looked up, and how that went.
+
+        Args:
+            company: Company name; stored as :func:`company_key`.
+            kind: What was looked up, e.g. "research" or "review".
+            outcome: How it went, e.g. "found", "nothing_found" or "failed".
+            at: When it happened; now when omitted.
+        """
+        moment = (at or datetime.now(UTC)).isoformat()
+        with self._conn() as conn:
+            conn.execute(
+                """INSERT INTO company_lookups
+                       (company_key, kind, outcome, looked_up_at)
+                   VALUES (?, ?, ?, ?)
+                   ON CONFLICT(company_key, kind, outcome) DO UPDATE SET
+                       looked_up_at = excluded.looked_up_at""",
+                (company_key(company), str(kind), str(outcome), moment),
+            )
+
+    def get_company_lookups(self, company: str, kind: str) -> dict[str, datetime]:
+        """Return when each outcome of looking a company up last happened.
+
+        Args:
+            company: Company name; matched on :func:`company_key`.
+            kind: What was looked up, e.g. "research" or "review".
+
+        Returns:
+            Outcome to the time it last happened. Unreadable times are left out.
+        """
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT outcome, looked_up_at FROM company_lookups "
+                "WHERE company_key = ? AND kind = ?",
+                (company_key(company), str(kind)),
+            ).fetchall()
+        times = {row[0]: _parse_time(row[1]) for row in rows}
+        return {outcome: when for outcome, when in times.items() if when is not None}
+
     def save_company_review(self, company: str, review_json: str) -> None:
         """Cache a company work-quality review, keyed by normalised name.
 
@@ -1465,7 +1637,6 @@ class Database:
             review_json: Serialised CompanyReview JSON.
         """
         now = datetime.now(UTC).isoformat()
-        key = " ".join(company.lower().split())
         with self._conn() as conn:
             conn.execute(
                 """INSERT INTO company_reviews (company_key, review_json, reviewed_at)
@@ -1473,7 +1644,7 @@ class Database:
                    ON CONFLICT(company_key) DO UPDATE SET
                        review_json = excluded.review_json,
                        reviewed_at = excluded.reviewed_at""",
-                (key, review_json, now),
+                (company_key(company), review_json, now),
             )
 
     def get_company_review(self, company: str, max_age_days: int = 30) -> str | None:
@@ -1486,12 +1657,11 @@ class Database:
         Returns:
             The cached review JSON, or None if absent or stale.
         """
-        key = " ".join(company.lower().split())
         with self._conn() as conn:
             row = conn.execute(
                 "SELECT review_json, reviewed_at FROM company_reviews "
                 "WHERE company_key = ?",
-                (key,),
+                (company_key(company),),
             ).fetchone()
         if not row:
             return None

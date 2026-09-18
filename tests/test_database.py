@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from job_scout.database import Database
+import pytest
+
+from job_scout.database import Database, names_company
 from job_scout.models import JobListing, JobStatus, TravelMode, TravelTime
 
 
@@ -1120,3 +1122,137 @@ class TestCommuteFilteredStat:
         # failing to load.
         assert entry.commute_filtered == 0
         assert entry.scraped == 320
+
+
+class TestCompanyResearchByCompany:
+    """Research is stored per vacancy and read per company."""
+
+    @staticmethod
+    def _job(db: Database, slug: str, company: str) -> int:
+        """Save one vacancy and return its id."""
+        return db.save_job(
+            JobListing(
+                title="Kwaliteitsadviseur",
+                company=company,
+                url=f"https://vacatures.example/{slug}",
+                source="test",
+            )
+        )
+
+    def test_any_vacancy_at_the_company_finds_its_research(self, tmp_path) -> None:  # noqa: ANN001
+        """A differently written name of the same company finds the same rows."""
+        db = Database(tmp_path / "jobs.db")
+        first = self._job(db, "a", "Ravelijn Zorggroep")
+        second = self._job(db, "b", "  ravelijn   ZORGGROEP")
+        other = self._job(db, "c", "Kwadrant Meetlab")
+        db.save_company_research(first, '{"company_name": "old"}')
+        db.save_company_research(second, '{"company_name": "new"}')
+        db.save_company_research(other, '{"company_name": "other"}')
+
+        rows = db.get_company_research_for_company("Ravelijn Zorggroep")
+
+        assert rows == ['{"company_name": "new"}', '{"company_name": "old"}']
+        assert db.get_company_research(first) == '{"company_name": "old"}'
+
+    def test_a_vacancys_own_row_counts_whatever_name_it_was_stored_under(
+        self,
+        tmp_path,  # noqa: ANN001
+    ) -> None:
+        """Research saved for a vacancy that no longer exists is still its own."""
+        db = Database(tmp_path / "jobs.db")
+        db.save_company_research(99, '{"company_name": "orphan"}')
+        assert db.get_company_research_for_company("Ravelijn Zorggroep") == []
+        assert db.get_company_research_for_company("Ravelijn Zorggroep", job_id=99) == [
+            '{"company_name": "orphan"}'
+        ]
+
+    def test_a_placeholder_name_shares_nothing(self, tmp_path) -> None:  # noqa: ANN001
+        """Two "Unknown" vacancies are two employers; each keeps its own research."""
+        db = Database(tmp_path / "jobs.db")
+        first = self._job(db, "a", "Unknown")
+        second = self._job(db, "b", "unknown")
+        db.save_company_research(first, '{"company_name": "first"}')
+        db.save_company_research(second, '{"company_name": "second"}')
+        # The orphan fallback name save_company_research writes is one too.
+        db.save_company_research(99, '{"company_name": "orphan"}')
+
+        assert db.get_company_research_for_company("Unknown") == []
+        assert db.get_company_research_for_company("Unknown", job_id=second) == [
+            '{"company_name": "second"}'
+        ]
+
+    @pytest.mark.parametrize(
+        ("company", "named"),
+        [
+            ("Ravelijn Zorggroep", True),
+            ("Unknown Industries", True),
+            ("Unknown", False),
+            (" UNKNOWN ", False),
+            ("nan", False),
+            ("   ", False),
+        ],
+    )
+    def test_names_company(self, company: str, named: bool) -> None:
+        """Only a blank name or a scraper placeholder names no employer."""
+        assert names_company(company) is named
+
+
+class TestCompanyLookupMigration:
+    """Databases on the NAS upgrade in place and keep what they hold."""
+
+    def test_a_database_from_before_company_keys_keeps_its_research_and_reviews(
+        self,
+        tmp_path,  # noqa: ANN001
+    ) -> None:
+        """Old research gains its company key; nothing stored is lost."""
+        import sqlite3
+
+        path = tmp_path / "old.db"
+        job_id = Database(path).save_job(
+            JobListing(
+                title="Kwaliteitsadviseur",
+                company="Ravelijn  Zorggroep",
+                url="https://vacatures.example/ravelijn",
+                source="test",
+            )
+        )
+        research = '{"company_name": "Ravelijn Zorggroep", "sources": ["u"]}'
+        review = '{"company": "Ravelijn Zorggroep", "summary": "Prima."}'
+        conn = sqlite3.connect(path)
+        conn.executescript(
+            """
+            DROP TABLE company_research;
+            DROP TABLE company_lookups;
+            CREATE TABLE company_research (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                job_id INTEGER NOT NULL,
+                company_name TEXT NOT NULL,
+                research_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (job_id) REFERENCES jobs(id)
+            );
+            """
+        )
+        conn.execute(
+            "INSERT INTO company_research (job_id, company_name, research_json, "
+            "created_at, updated_at) VALUES (?, 'Unknown', ?, ?, ?)",
+            (job_id, research, "2026-09-01T10:00:00+00:00", "2026-09-01T10:00:00"),
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO company_reviews VALUES (?, ?, ?)",
+            ("ravelijn zorggroep", review, datetime.now(UTC).isoformat()),
+        )
+        conn.commit()
+        conn.close()
+
+        db = Database(path)
+        Database(path)  # opening twice must not fail or duplicate anything
+
+        assert db.get_company_research(job_id) == research
+        assert db.get_company_research_for_company("ravelijn zorggroep") == [research]
+        assert db.get_company_review("Ravelijn Zorggroep", max_age_days=365) == review
+        db.record_company_lookup("Ravelijn Zorggroep", "research", "found")
+        assert set(db.get_company_lookups("Ravelijn Zorggroep", "research")) == {
+            "found"
+        }

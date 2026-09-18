@@ -365,9 +365,8 @@ URL.
 |---|---|---|
 | `--user TEXT` | none | User whose queue to show (see the caveat below) |
 
-> **Known limitation.** `approval queue`, `approval approve`, `company research` and
-> `company view` validate `--user` but then read the legacy global `data/jobs.db` rather
-> than that user's database. On a multi-user install they will not see the jobs the
+> **Known limitation.** `approval queue` and `approval approve` validate `--user` but
+> then read the legacy global `data/jobs.db` rather than that user's database. On a multi-user install they will not see the jobs the
 > per-user pipeline wrote. Until that is fixed, use **Your progress** on a vacancy in the dashboard, or
 > `jobs update-status`, to track progress in a per-user database.
 
@@ -473,13 +472,20 @@ lists hiring managers — only people a search result actually names, each with 
 that names them; an email or LinkedIn URL is shown only when that page prints it. When no
 result names the company it says no public web information was found and stores nothing.
 
+It always searches now, even when the company was looked up recently, so it is also the
+way to refresh research on purpose. It reads the vacancy from, and stores the research
+in, that user's own database, the one interview preparation reads, and the attempt is
+remembered there like the ones interview preparation makes (see
+[How the company is looked up](INTERVIEW_QUESTIONS.md#how-the-company-is-looked-up)).
+When web search brings back no result at all, it says the research failed rather than
+that nothing was found: the search was down, and nothing is stored.
+
 | Argument / option | Default | Description |
 |---|---|---|
-| `JOB_ID` | required | Numeric job id |
-| `--user TEXT` | none | User researching (see the global-database caveat) |
+| `JOB_ID` | required | Numeric job id, as the dashboard shows it for that user |
+| `--user TEXT` | none | User researching; required when there is more than one user |
 
-Failures are reported without a non-zero exit, and the global-database caveat from
-[`approval queue`](#approval-queue) applies here too.
+Failures are reported without a non-zero exit.
 
 ### `company view`
 
@@ -487,12 +493,13 @@ Failures are reported without a non-zero exit, and the global-database caveat fr
 uv run job-scout company view 42 --user alex
 ```
 
-Re-prints previously saved company research without calling the LLM again.
+Re-prints previously saved company research from that user's database without calling
+the LLM again.
 
 | Argument / option | Default | Description |
 |---|---|---|
-| `JOB_ID` | required | Numeric job id |
-| `--user TEXT` | none | User viewing (see the global-database caveat) |
+| `JOB_ID` | required | Numeric job id, as the dashboard shows it for that user |
+| `--user TEXT` | none | User viewing; required when there is more than one user |
 
 ---
 
@@ -730,7 +737,9 @@ asked for follows the grounding: 8 to 12 with both research and a review, 6 to 9
 one of them, 4 to 6 with neither.
 
 When the company has not been researched yet, or its review is missing or rests on fewer
-than three web sources, it is looked up on the web first and the result is stored (see
+than three web sources, it is looked up on the web first and the result is stored. Each
+lookup is remembered per company, so the next run, or another vacancy at the same
+employer, does not search again (see
 [How the company is looked up](INTERVIEW_QUESTIONS.md#how-the-company-is-looked-up)).
 Whatever grounding is still absent is listed at the end under *Not seen, so nothing above
 is based on it* rather than guessed at. Salary, holiday and benefit questions are omitted
@@ -905,8 +914,8 @@ and are shared; per-user keys such as `profile_description`, `fit_score_threshol
 `ntfy_topic` and the commute limits are per user. Which is which is listed in
 [CONFIGURATION.md](CONFIGURATION.md); `config show --user alex` prints the merged result.
 
-Remember that `approval queue`, `approval approve`, `company research` and `company view`
-accept `--user` but read the global database anyway. Every other user-scoped command
+Remember that `approval queue` and `approval approve` accept `--user` but read the
+global database anyway. Every other user-scoped command
 resolves the correct per-user database.
 
 ---

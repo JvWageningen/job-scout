@@ -17,12 +17,15 @@ from click.testing import CliRunner
 from fastapi.testclient import TestClient
 
 import job_scout.config as app_config
-from job_scout import company_research
+from job_scout import company_research, company_review
 from job_scout.cli import cli
+from job_scout.company_lookups import LookupKind, LookupOutcome, recall, remember
 from job_scout.company_research import (
     FENCE_CLOSE,
     FENCE_OPEN,
     CompanyResearchError,
+    SearchUnavailableError,
+    _build_managers_prompt,
     _build_research_prompt,
     _extract_json,
     _research_queries,
@@ -31,17 +34,22 @@ from job_scout.company_research import (
     gather_research_evidence,
     mentions_company,
     research_company,
+    snippet_line,
+    tidy_research,
 )
 from job_scout.database import Database
+from job_scout.interview_questions import company_context
 from job_scout.llm.base import LLMClient, LLMError
 from job_scout.models import (
     CompanyResearch,
+    CompanyReview,
     Config,
     HiringManagerSuggestion,
     JobListing,
 )
 from job_scout.web.app import create_app
 from job_scout.websearch import SearchResult
+from job_scout.writing_style import HOUSE_STYLE
 from tests.helpers import FakeLLMClient
 
 _COMPANY = "Voorbeeld Robotica B.V."
@@ -396,21 +404,28 @@ class TestResearchCompany:
         assert restored.evidence == research.evidence
         assert "45 medewerkers" in restored.evidence[1].snippet
 
-    def test_no_evidence_returns_none_without_asking_the_model(
+    def test_a_search_that_returns_nothing_at_all_is_a_failure(
         self,
         no_search: _SearchRecorder,
         sample_job: JobListing,
         sample_config: Config,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """With no web evidence nothing is asked, so no hiring manager is invented."""
+        """No result for any query means the search was down, not an empty web.
+
+        web_search returns an empty list when every backend errors or blocks,
+        and a loose web search always returns something for a real query.
+        Nothing is asked of the model either way.
+        """
         _forbid_client_factory(monkeypatch)
         client = FakeLLMClient([_RESEARCH_JSON, _MANAGERS_JSON])
 
-        assert research_company(sample_job, sample_config, client) is None
-        assert research_company(sample_job, sample_config) is None
+        with pytest.raises(SearchUnavailableError):
+            research_company(sample_job, sample_config, client)
+        with pytest.raises(CompanyResearchError):
+            gather_research_evidence(_COMPANY)
         assert client.calls == []
-        assert no_search.calls
+        assert len(no_search.calls) == 2 * len(_research_queries(_COMPANY))
 
     def test_namesake_only_evidence_returns_none_without_asking_the_model(
         self,
@@ -592,6 +607,20 @@ class TestResearchCompany:
         assert research_company(job, sample_config) is None
         assert no_search.calls == []
 
+    @pytest.mark.parametrize("placeholder", ["Unknown", " unknown ", "nan"])
+    def test_a_placeholder_company_is_not_searched(
+        self, no_search: _SearchRecorder, sample_config: Config, placeholder: str
+    ) -> None:
+        """The scrapers write "Unknown" when a listing names nobody."""
+        job = JobListing(
+            title="Engineer",
+            company=placeholder,
+            url="https://vacatures.example/1",
+            source="x",
+        )
+        assert research_company(job, sample_config) is None
+        assert no_search.calls == []
+
 
 _NAMED = SearchResult(
     url="https://nieuws.example/voorbeeld-robotica-benoemt-cto",
@@ -760,6 +789,14 @@ _RESEARCHED = CompanyResearch(
     research_timestamp=datetime(2026, 9, 1, 12, 0, tzinfo=UTC),
 )
 _USER = "Sam"
+# Six sources: sound enough that company_context has no reason to refresh it.
+_SOUND_REVIEW = CompanyReview(
+    company=_COMPANY,
+    summary="Collegiaal team.",
+    confidence="high",
+    sources=[f"https://reviews{n}.example/voorbeeld-robotica" for n in range(6)],
+    reviewed_at=datetime(2026, 9, 1, 12, 0, tzinfo=UTC),
+)
 
 
 class _ResearchStub:
@@ -786,20 +823,32 @@ class _ResearchStub:
 @pytest.fixture
 def entry_env(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sample_job: JobListing
-) -> tuple[int, int]:
-    """One user and the vacancy, saved where the CLI and the API each look.
+) -> int:
+    """One user and the vacancy, saved in the user's own database.
+
+    The shared ``data/jobs.db`` gets a different vacancy under the same id, so
+    an entry point that opened it instead would research the wrong company.
 
     Returns:
-        The vacancy's id in the shared database (CLI) and in the user's (API).
+        The vacancy's id in the user's database.
     """
     monkeypatch.setattr(app_config, "DATA_DIR", tmp_path)
     monkeypatch.setattr(app_config, "CONFIG_PATH", tmp_path / "config.yaml")
     app_config.write_global_config({"llm_provider": "local"})
     app_config.save_user_config(_USER, {})
     monkeypatch.setattr("job_scout.cli.check_llm_available", lambda _c: (True, None))
-    shared = Database(app_config.get_data_dir() / "jobs.db").save_job(sample_job)
+    other = sample_job.model_copy(
+        update={"company": "Andere Werkgever", "url": "https://vacatures.example/9"}
+    )
+    shared = Database(app_config.get_data_dir() / "jobs.db").save_job(other)
     private = Database(app_config.user_db_path(_USER)).save_job(sample_job)
-    return shared, private
+    assert shared == private
+    return private
+
+
+def _user_db() -> Database:
+    """Open the user's database, the one interview preparation reads."""
+    return Database(app_config.user_db_path(_USER))
 
 
 def _use(monkeypatch: pytest.MonkeyPatch, stub: _ResearchStub) -> None:
@@ -811,12 +860,12 @@ class TestCompanyResearchCommand:
     """``job-scout company research`` stores and prints what was found."""
 
     def test_research_with_a_timestamp_is_stored_and_printed(
-        self, entry_env: tuple[int, int], monkeypatch: pytest.MonkeyPatch
+        self, entry_env: int, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """The datetime used to crash json.dumps after the research succeeded."""
         stub = _ResearchStub(_RESEARCHED)
         _use(monkeypatch, stub)
-        job_id = entry_env[0]
+        job_id = entry_env
 
         result = CliRunner().invoke(cli, ["company", "research", str(job_id)])
 
@@ -824,7 +873,7 @@ class TestCompanyResearchCommand:
         assert "Agricultural robotics" in result.output
         assert _ABOUT_URL in result.output
         assert stub.suggest_managers == [True]
-        db = Database(app_config.get_data_dir() / "jobs.db")
+        db = _user_db()
         stored = db.get_company_research(job_id)
         assert stored is not None
         assert CompanyResearch.model_validate_json(stored) == _RESEARCHED
@@ -832,17 +881,17 @@ class TestCompanyResearchCommand:
         assert "Agricultural robotics" in viewed.output
 
     def test_nothing_found_says_so_and_stores_nothing(
-        self, entry_env: tuple[int, int], monkeypatch: pytest.MonkeyPatch
+        self, entry_env: int, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """An empty web is not a failure or a timeout, and is not stored."""
         _use(monkeypatch, _ResearchStub(None))
-        job_id = entry_env[0]
+        job_id = entry_env
 
         result = CliRunner().invoke(cli, ["company", "research", str(job_id)])
 
         assert "No public web information" in result.output
         assert "failed or timed out" not in result.output
-        db = Database(app_config.get_data_dir() / "jobs.db")
+        db = _user_db()
         assert db.get_company_research(job_id) is None
 
     @pytest.mark.parametrize(
@@ -850,14 +899,14 @@ class TestCompanyResearchCommand:
     )
     def test_a_failed_lookup_is_reported_as_a_failure(
         self,
-        entry_env: tuple[int, int],
+        entry_env: int,
         monkeypatch: pytest.MonkeyPatch,
         error: Exception,
     ) -> None:
         """A failure reads differently from finding nothing."""
         _use(monkeypatch, _ResearchStub(error))
 
-        result = CliRunner().invoke(cli, ["company", "research", str(entry_env[0])])
+        result = CliRunner().invoke(cli, ["company", "research", str(entry_env)])
 
         assert "Research failed" in result.output
         assert "No public web information" not in result.output
@@ -867,12 +916,12 @@ class TestCompanyResearchEndpoint:
     """POST /api/company/research stores and returns what was found."""
 
     def test_research_with_a_timestamp_is_stored_and_returned(
-        self, entry_env: tuple[int, int], monkeypatch: pytest.MonkeyPatch
+        self, entry_env: int, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """The datetime used to turn a successful lookup into a 500."""
         stub = _ResearchStub(_RESEARCHED)
         _use(monkeypatch, stub)
-        job_id = entry_env[1]
+        job_id = entry_env
         client = TestClient(create_app())
 
         response = client.post(f"/api/company/research/{job_id}?user={_USER}")
@@ -890,11 +939,11 @@ class TestCompanyResearchEndpoint:
         assert saved.json()["sources"] == [_ABOUT_URL]
 
     def test_nothing_found_is_a_404_that_says_so(
-        self, entry_env: tuple[int, int], monkeypatch: pytest.MonkeyPatch
+        self, entry_env: int, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """An empty web is reported as such and nothing is stored."""
         _use(monkeypatch, _ResearchStub(None))
-        job_id = entry_env[1]
+        job_id = entry_env
 
         response = TestClient(create_app()).post(
             f"/api/company/research/{job_id}?user={_USER}"
@@ -906,14 +955,277 @@ class TestCompanyResearchEndpoint:
         assert db.get_company_research(job_id) is None
 
     def test_a_failed_lookup_is_a_502(
-        self, entry_env: tuple[int, int], monkeypatch: pytest.MonkeyPatch
+        self, entry_env: int, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """A model failure is not reported as an empty web."""
         _use(monkeypatch, _ResearchStub(LLMError("host unreachable at 10.0.0.9")))
 
         response = TestClient(create_app()).post(
-            f"/api/company/research/{entry_env[1]}?user={_USER}"
+            f"/api/company/research/{entry_env}?user={_USER}"
         )
 
         assert response.status_code == 502
         assert "10.0.0.9" not in response.json()["detail"]
+
+
+def _research_memory(db: Database) -> dict[LookupOutcome, datetime]:
+    """Return what the database remembers about researching the company."""
+    return recall(db, _COMPANY, LookupKind.RESEARCH).last
+
+
+class TestExplicitResearchBypassesTheCooldown:
+    """Asking for research is how to refresh it, whatever was remembered."""
+
+    @pytest.mark.parametrize(
+        "remembered", [LookupOutcome.NOTHING_FOUND, LookupOutcome.FAILED]
+    )
+    def test_the_command_looks_up_and_remembers_it(
+        self,
+        entry_env: int,
+        monkeypatch: pytest.MonkeyPatch,
+        remembered: LookupOutcome,
+    ) -> None:
+        """A lookup remembered a minute ago does not stop the command."""
+        stub = _ResearchStub(_RESEARCHED)
+        _use(monkeypatch, stub)
+        db = _user_db()
+        remember(db, _COMPANY, LookupKind.RESEARCH, remembered)
+
+        result = CliRunner().invoke(cli, ["company", "research", str(entry_env)])
+
+        assert result.exit_code == 0, result.output
+        assert stub.suggest_managers == [True]
+        assert LookupOutcome.FOUND in _research_memory(db)
+
+    @pytest.mark.parametrize(
+        ("outcome", "remembered"),
+        [
+            (None, LookupOutcome.NOTHING_FOUND),
+            (LLMError("host unreachable"), LookupOutcome.FAILED),
+            (SearchUnavailableError("no result at all"), LookupOutcome.FAILED),
+        ],
+    )
+    def test_the_command_remembers_every_outcome(
+        self,
+        entry_env: int,
+        monkeypatch: pytest.MonkeyPatch,
+        outcome: Exception | None,
+        remembered: LookupOutcome,
+    ) -> None:
+        """Nothing found and a failure are remembered too, not only a find."""
+        _use(monkeypatch, _ResearchStub(outcome))
+        CliRunner().invoke(cli, ["company", "research", str(entry_env)])
+        db = _user_db()
+        assert set(_research_memory(db)) == {remembered}
+
+    def test_the_endpoint_looks_up_and_remembers_it(
+        self, entry_env: int, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """POST /api/company/research runs even inside a cooldown."""
+        stub = _ResearchStub(_RESEARCHED)
+        _use(monkeypatch, stub)
+        db = Database(app_config.user_db_path(_USER))
+        remember(db, _COMPANY, LookupKind.RESEARCH, LookupOutcome.NOTHING_FOUND)
+
+        response = TestClient(create_app()).post(
+            f"/api/company/research/{entry_env}?user={_USER}"
+        )
+
+        assert response.status_code == 200, response.text
+        assert stub.suggest_managers == [True]
+        assert LookupOutcome.FOUND in _research_memory(db)
+
+    @pytest.mark.parametrize(
+        ("outcome", "status", "remembered"),
+        [
+            (None, 404, LookupOutcome.NOTHING_FOUND),
+            (CompanyResearchError("not JSON"), 502, LookupOutcome.FAILED),
+            (SearchUnavailableError("no result"), 502, LookupOutcome.FAILED),
+        ],
+    )
+    def test_the_endpoint_remembers_every_outcome(
+        self,
+        entry_env: int,
+        monkeypatch: pytest.MonkeyPatch,
+        outcome: Exception | None,
+        status: int,
+        remembered: LookupOutcome,
+    ) -> None:
+        """What the endpoint found, or failed to find, is remembered."""
+        _use(monkeypatch, _ResearchStub(outcome))
+        response = TestClient(create_app()).post(
+            f"/api/company/research/{entry_env}?user={_USER}"
+        )
+        assert response.status_code == status
+        db = Database(app_config.user_db_path(_USER))
+        assert set(_research_memory(db)) == {remembered}
+
+    def test_a_search_outage_is_not_blamed_on_the_llm_settings(
+        self, entry_env: int, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The endpoint says the search is down; it does not blame the LLM settings."""
+        _use(monkeypatch, _ResearchStub(SearchUnavailableError("no result")))
+        response = TestClient(create_app()).post(
+            f"/api/company/research/{entry_env}?user={_USER}"
+        )
+        assert response.status_code == 502
+        assert "Web search" in response.json()["detail"]
+        assert "LLM settings" not in response.json()["detail"]
+
+    def test_the_command_refreshes_what_interview_preparation_reads(
+        self, entry_env: int, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The command works in the user's database, not the shared data/jobs.db.
+
+        Interview preparation reads only the user's database, so research the
+        command stores anywhere else is never seen, and the same id there can
+        be another vacancy.
+        """
+        _use(monkeypatch, _ResearchStub(_RESEARCHED))
+        web = _SearchRecorder([])
+        monkeypatch.setattr(company_research, "web_search", web)
+        monkeypatch.setattr(company_review, "web_search", web)
+        db = _user_db()
+        remember(db, _COMPANY, LookupKind.RESEARCH, LookupOutcome.NOTHING_FOUND)
+
+        result = CliRunner().invoke(cli, ["company", "research", str(entry_env)])
+
+        assert result.exit_code == 0, result.output
+        assert "Researching Voorbeeld Robotica B.V." in result.output
+        shared = Database(app_config.get_data_dir() / "jobs.db")
+        assert shared.get_company_research(entry_env) is None
+        for company in (_COMPANY, "Andere Werkgever"):
+            assert recall(shared, company, LookupKind.RESEARCH).last == {}
+        db.save_company_review(_COMPANY, _SOUND_REVIEW.model_dump_json())
+        job = db.get_job(entry_env)
+        assert job is not None
+        client = FakeLLMClient([], repeat_last=False)
+        context = company_context(db, job, entry_env, client)
+        assert context.research == _RESEARCHED
+        assert context.missing == []
+        assert client.calls == []
+        assert web.calls == []
+
+
+def _outside_the_evidence(prompt: str) -> str:
+    """Return the prompt's own text, without the fenced search snippets."""
+    return prompt[: prompt.rindex(FENCE_OPEN)] + prompt[prompt.rindex(FENCE_CLOSE) :]
+
+
+class TestHouseStyle:
+    """Research prose follows the house style, from the prompt to the store."""
+
+    def test_both_prompts_carry_the_style_and_none_of_its_dashes(
+        self, sample_job: JobListing
+    ) -> None:
+        """A model copies the punctuation of the instructions it is given."""
+        for prompt in (
+            _build_research_prompt(sample_job, _EVIDENCE),
+            _build_managers_prompt(sample_job, _EVIDENCE),
+        ):
+            assert HOUSE_STYLE in prompt
+            own = _outside_the_evidence(prompt)
+            for dash in ("\u2014", "\u2013", " - "):
+                assert dash not in own
+
+    def test_a_title_and_its_snippet_are_joined_with_a_colon(
+        self, sample_job: JobListing
+    ) -> None:
+        """The join was an em dash, which the model then echoed."""
+        prompt = _build_research_prompt(sample_job, _EVIDENCE)
+        assert f"{_EVIDENCE[1].title}: {_EVIDENCE[1].snippet}" in prompt
+        assert snippet_line("", "alleen tekst") == "alleen tekst"
+        assert snippet_line("Titel", " ") == "Titel"
+
+    def test_prose_is_cleaned_but_names_urls_and_snippets_are_not(
+        self,
+        search: _SearchRecorder,
+        sample_job: JobListing,
+        sample_config: Config,
+    ) -> None:
+        """Dashes and markup go; what was read and what things are called stay."""
+        answer = json.dumps(
+            {
+                "industry": "Robotica \u2013 landbouw",
+                "company_size": "45 medewerkers",
+                "culture_indicators": ["**korte lijnen**", "\u2014"],
+                "tech_stack_hints": ["C++ - ROS"],
+                "growth_signals": "Tweede fabriek \u2014 45 medewerkers",
+                "research_notes": "Bouwt sorteerrobots \u2014 voor kassen \U0001f331.",
+            }
+        )
+        research = research_company(sample_job, sample_config, FakeLLMClient([answer]))
+        assert research is not None
+        assert research.industry == "Robotica, landbouw"
+        assert research.company_size == "45 medewerkers"
+        assert research.growth_signals == "Tweede fabriek, 45 medewerkers"
+        assert research.research_notes == "Bouwt sorteerrobots, voor kassen."
+        assert research.culture_indicators == ["korte lijnen"]
+        assert research.tech_stack_hints == ["C++ - ROS"]
+        assert research.evidence[0].title == _EVIDENCE[0].title
+        assert research.sources == [_ABOUT_URL, _NEWS_URL]
+
+    def test_a_figure_is_checked_before_the_prose_is_cleaned(
+        self,
+        search: _SearchRecorder,
+        sample_job: JobListing,
+        sample_config: Config,
+    ) -> None:
+        """Cleaning never turns an invented figure into one that passes."""
+        answer = json.dumps(
+            {
+                "research_notes": "Bouwt sorteerrobots.",
+                "company_size": "40 \u2013 45 medewerkers",
+            }
+        )
+        research = research_company(sample_job, sample_config, FakeLLMClient([answer]))
+        assert research is not None
+        assert research.company_size is None
+
+    def test_research_stored_before_the_style_is_cleaned_when_read(self) -> None:
+        """Old research is reused for months, so its dashes are cleaned on reading.
+
+        The stored copy is not rewritten, and names, sources and snippets stay
+        exactly as they were read.
+        """
+        stored = CompanyResearch(
+            company_name=_COMPANY,
+            industry="Robotica \u2013 landbouw",
+            company_size="40\u201345 medewerkers",
+            culture_indicators=["korte lijnen \u2014 weinig lagen"],
+            tech_stack_hints=["C++ - ROS"],
+            research_notes="Bouwt sorteerrobots \u2014 vooral voor kassen.",
+            sources=[_ABOUT_URL],
+        )
+        tidy = tidy_research(stored)
+        assert tidy.industry == "Robotica, landbouw"
+        assert tidy.company_size == "40-45 medewerkers"
+        assert tidy.culture_indicators == ["korte lijnen, weinig lagen"]
+        assert tidy.research_notes == "Bouwt sorteerrobots, vooral voor kassen."
+        assert tidy.tech_stack_hints == ["C++ - ROS"]
+        assert tidy.sources == [_ABOUT_URL]
+        assert stored.research_notes == "Bouwt sorteerrobots \u2014 vooral voor kassen."
+
+    def test_the_saved_research_endpoint_returns_it_cleaned(
+        self, entry_env: int
+    ) -> None:
+        """What the dashboard reads back follows the style too."""
+        stored = _RESEARCHED.model_copy(
+            update={"research_notes": "Bouwt sorteerrobots \u2014 voor kassen."}
+        )
+        _user_db().save_company_research(entry_env, stored.model_dump_json())
+        response = TestClient(create_app()).get(
+            f"/api/company/research/{entry_env}?user={_USER}"
+        )
+        assert response.status_code == 200
+        assert response.json()["research_notes"] == "Bouwt sorteerrobots, voor kassen."
+
+    def test_a_managers_reasoning_is_cleaned(self, sample_job: JobListing) -> None:
+        """The reasoning is shown to the applicant, so it follows the style too."""
+        entry = _manager(
+            "Anouk van Dijkhuis", reasoning="Genoemd in [1] \u2014 leidt de techniek."
+        )
+        client = FakeLLMClient([json.dumps([entry])])
+        suggestions = _suggest_hiring_managers(sample_job, [_NAMED], client)
+        assert suggestions[0].reasoning == "Genoemd in [1], leidt de techniek."
+        assert HOUSE_STYLE in client.calls[0][0]

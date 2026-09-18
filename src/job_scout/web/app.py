@@ -3227,6 +3227,10 @@ def create_app() -> FastAPI:
     ) -> dict[str, Any]:
         """Research a company and discover hiring managers.
 
+        Always looks the company up now, even when a recent lookup is
+        remembered: asking for it is the way to refresh. The attempt is
+        remembered like any other, so interview preparation reuses it.
+
         Args:
             job_id: ID of the job to research.
             user: User name (required).
@@ -3236,7 +3240,8 @@ def create_app() -> FastAPI:
 
         Raises:
             HTTPException: 400/404 for a bad user or job, 404 when no public web
-                information names the company, 502 when the model failed.
+                information names the company, 502 when the model or the web
+                search failed.
         """
         if not user:
             raise HTTPException(status_code=400, detail="User is required")
@@ -3244,8 +3249,15 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail=f"User '{user}' not found")
 
         try:
+            from job_scout.company_lookups import (  # noqa: PLC0415
+                LookupKind,
+                LookupOutcome,
+                remember,
+                store_research,
+            )
             from job_scout.company_research import (  # noqa: PLC0415
                 CompanyResearchError,
+                SearchUnavailableError,
                 research_company,
             )
             from job_scout.config import (  # noqa: PLC0415
@@ -3264,21 +3276,24 @@ def create_app() -> FastAPI:
             try:
                 research = research_company(job, config, suggest_managers=True)
             except (CompanyResearchError, LLMError) as exc:
+                remember(db, job.company, LookupKind.RESEARCH, LookupOutcome.FAILED)
                 logger.warning(f"Company research failed for job {job_id}: {exc}")
-                raise HTTPException(
-                    status_code=502,
-                    detail="Company research failed. Check LLM settings and retry.",
-                ) from exc
+                detail = (
+                    "Web search returned nothing at all, so it is probably down. "
+                    "Nothing was stored; retry later."
+                    if isinstance(exc, SearchUnavailableError)
+                    else "Company research failed. Check LLM settings and retry."
+                )
+                raise HTTPException(status_code=502, detail=detail) from exc
+            store_research(db, job_id, job.company, research)
             if research is None:
                 raise HTTPException(
                     status_code=404,
                     detail=f"No public web information about {job.company} "
                     "was found; nothing was stored.",
                 )
-
-            # model_dump_json / mode="json": the timestamp is a datetime, which
-            # json.dumps cannot serialise.
-            db.save_company_research(job_id, research.model_dump_json())
+            # mode="json": the timestamp is a datetime, which json.dumps cannot
+            # serialise.
             return research.model_dump(mode="json")
         except HTTPException:
             raise
@@ -3307,6 +3322,7 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail=f"User '{user}' not found")
 
         try:
+            from job_scout.company_research import tidy_research  # noqa: PLC0415
             from job_scout.config import user_db_path  # noqa: PLC0415
             from job_scout.database import Database  # noqa: PLC0415
             from job_scout.models import CompanyResearch  # noqa: PLC0415
@@ -3324,7 +3340,8 @@ def create_app() -> FastAPI:
                     detail=f"No research found for job {job_id}",
                 )
 
-            research = CompanyResearch.model_validate_json(research_json)
+            # Research stored before the house style is cleaned on the way out.
+            research = tidy_research(CompanyResearch.model_validate_json(research_json))
             return research.model_dump(mode="json")
         except HTTPException:
             raise
