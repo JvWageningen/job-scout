@@ -4,6 +4,24 @@ Format: [Keep a Changelog](https://keepachangelog.com)
 
 <!-- version list -->
 
+## v2.6.0 (2026-09-18)
+
+### Bug Fixes
+
+- **letters**: Never write from the example CV that CV Builder seeds
+  ([`72e8004`](https://github.com/JvWageningen/job-scout/commit/72e8004d5b948a4020ddfe9f4be67bb296202d29))
+
+### Chores
+
+- Sync uv.lock to 2.5.1 [skip ci]
+  ([`1ae8fde`](https://github.com/JvWageningen/job-scout/commit/1ae8fde5ec02145d85336b3e349fd69c31c798aa))
+
+### Features
+
+- Write from every applicant source, import your own CV, research from evidence
+  ([`43fa152`](https://github.com/JvWageningen/job-scout/commit/43fa152c69816716618fd1ccbcd5abe85c685f88))
+
+
 ## v2.5.1 (2026-09-17)
 
 ### Bug Fixes
