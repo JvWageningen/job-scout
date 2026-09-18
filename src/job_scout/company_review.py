@@ -20,8 +20,10 @@ name or a placeholder such as "Unknown" is never reviewed.
 
 The prompt carries the house style (:data:`job_scout.writing_style.HOUSE_STYLE`)
 and the prose the model returns is cleaned with
-:func:`job_scout.writing_style.humanise` before the review is built. Reviews
-stored before the house style are cleaned when read, by :func:`tidy_review`.
+:func:`job_scout.prose.clean_prose` before the review is built, so a salary
+range or a period keeps its hyphen and a quoted employee keeps their words.
+Reviews stored before the house style are cleaned whenever they are read, by
+:func:`tidy_review` or :func:`load_review`.
 
 The model call uses the ``evaluation`` purpose, which the LLM factory routes to
 its own provider when ``evaluation_provider`` is configured.
@@ -34,13 +36,15 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from loguru import logger
+from pydantic import ValidationError
 
 from job_scout.company_research import fenced_evidence, mentions_company, snippet_line
 from job_scout.database import names_company
 from job_scout.evaluator import _extract_json
 from job_scout.models import CompanyReview
+from job_scout.prose import clean_prose
 from job_scout.websearch import web_search
-from job_scout.writing_style import HOUSE_STYLE, humanise
+from job_scout.writing_style import HOUSE_STYLE
 
 if TYPE_CHECKING:
     from job_scout.llm.base import LLMClient
@@ -277,8 +281,9 @@ def tidy_review(review: CompanyReview) -> CompanyReview:
     """Return a stored review with its prose cleaned into the house style.
 
     Reviews stored before the house style still carry their dashes and are
-    read for up to a year, so their prose is cleaned again whenever it is read
-    for a prompt. Scores, confidence and sources stay as stored.
+    read for up to a year, so their prose is cleaned again whenever it is
+    read: for a prompt, the dashboard, a notification or the command line.
+    Scores, confidence and sources stay as stored.
 
     Args:
         review: The review as read from the database.
@@ -288,7 +293,7 @@ def tidy_review(review: CompanyReview) -> CompanyReview:
     """
     return review.model_copy(
         update={
-            "summary": humanise(review.summary),
+            "summary": _prose(review.summary) or "",
             "pros": _prose_list(review.pros),
             "cons": _prose_list(review.cons),
             "employee_sentiment": _prose(review.employee_sentiment),
@@ -297,6 +302,28 @@ def tidy_review(review: CompanyReview) -> CompanyReview:
             "company_age": _prose(review.company_age),
         }
     )
+
+
+def load_review(raw: str | None) -> CompanyReview | None:
+    """Read a stored review, cleaned into the house style.
+
+    Every reader that shows a stored review goes through here, so the vacancy
+    cards, a notification and the command line show the same cleaned text the
+    interview prompts get.
+
+    Args:
+        raw: The review JSON as stored, or None when nothing is stored.
+
+    Returns:
+        The cleaned review, or None when nothing readable is stored.
+    """
+    if not raw:
+        return None
+    try:
+        return tidy_review(CompanyReview.model_validate_json(raw))
+    except ValidationError:
+        logger.warning("Ignoring an unreadable stored company review")
+        return None
 
 
 def _coerce_score(value: object) -> int | None:
@@ -328,7 +355,7 @@ def _prose(value: object) -> str | None:
     text = _opt_str(value)
     if text is None:
         return None
-    return humanise(text) or None
+    return clean_prose(text, keep_quotes=True) or None
 
 
 def _prose_list(value: object) -> list[str]:
@@ -340,7 +367,11 @@ def _prose_list(value: object) -> list[str]:
     Returns:
         The non-empty items after cleaning.
     """
-    return [text for item in _as_str_list(value) if (text := humanise(item))]
+    return [
+        text
+        for item in _as_str_list(value)
+        if (text := clean_prose(item, keep_quotes=True))
+    ]
 
 
 def _opt_str(value: object) -> str | None:

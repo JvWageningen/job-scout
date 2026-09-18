@@ -385,7 +385,8 @@ def _add_self_description(facts: ApplicantFacts, config: Config) -> None:
     ][:_MAX_TRACKS]
     if tracks:
         facts.sources["career_directions"] = tracks
-        facts.used.append(f"{len(tracks)} career track(s)")
+        noun = "track" if len(tracks) == 1 else "tracks"
+        facts.used.append(f"{len(tracks)} career {noun}")
 
 
 def star_story_payload(db: Database) -> list[dict[str, Any]]:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from job_scout.writing_style import HOUSE_STYLE, ai_tells, humanise
+from job_scout.writing_style import HOUSE_STYLE, ai_tells, humanise, strip_emphasis
 
 
 @pytest.mark.parametrize(
@@ -89,3 +89,40 @@ def test_the_house_style_does_not_use_the_dashes_it_forbids() -> None:
     assert "\u2014" not in HOUSE_STYLE
     assert "\u2013" not in HOUSE_STYLE
     assert " - " not in HOUSE_STYLE
+    assert " -- " not in HOUSE_STYLE
+
+
+def test_the_house_style_names_the_double_hyphen() -> None:
+    """Asked for plain text, a model types two hyphens where it means a dash."""
+    assert "double hyphen (--)" in HOUSE_STYLE
+
+
+@pytest.mark.parametrize(
+    ("generated", "cleaned"),
+    [
+        ("Strong fit -- but the role is senior", "Strong fit, but the role is senior"),
+        ("Strong fit--but senior", "Strong fit, but senior"),
+        ("a --- b", "a, b"),
+        ("2019--2021", "2019-2021"),
+        ("pages 10--20", "pages 10-20"),
+        ("- item -- note", "- item, note"),
+    ],
+)
+def test_a_double_hyphen_is_a_dash_too(generated: str, cleaned: str) -> None:
+    """Between words it joins clauses; between digits it is a range."""
+    assert humanise(generated) == cleaned
+
+
+@pytest.mark.parametrize(
+    "kept", ["run it with --verbose", "---", "e-commerce B2B-klanten", "- item"]
+)
+def test_a_flag_or_a_rule_line_is_not_a_dash(kept: str) -> None:
+    """Two hyphens before a word, or a line of hyphens, join no clauses."""
+    assert humanise(kept) == kept
+
+
+def test_strip_emphasis_removes_only_the_markdown() -> None:
+    """A line that belongs to the applicant keeps its own dashes."""
+    line = "Hewlett Packard Enterprise \u2013 **Amstelveen** - *team*"
+
+    assert strip_emphasis(line) == "Hewlett Packard Enterprise \u2013 Amstelveen - team"

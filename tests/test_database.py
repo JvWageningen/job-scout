@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from job_scout.database import Database, names_company
+from job_scout.database import Database, company_share_key, names_company
 from job_scout.models import JobListing, JobStatus, TravelMode, TravelTime
 
 
@@ -1256,3 +1256,118 @@ class TestCompanyLookupMigration:
         assert set(db.get_company_lookups("Ravelijn Zorggroep", "research")) == {
             "found"
         }
+
+    def test_rows_stored_per_spelling_are_merged_once(
+        self,
+        tmp_path,  # noqa: ANN001
+    ) -> None:
+        """Keys written before legal forms were dropped meet on one key.
+
+        The latest time of each lookup outcome and the newest review win, so
+        nothing learnt is lost and no key is written twice.
+        """
+        import sqlite3
+
+        path = tmp_path / "old.db"
+        Database(path)
+        conn = sqlite3.connect(path)
+        conn.execute("DELETE FROM meta WHERE key = 'company_key_version'")
+        conn.executemany(
+            "INSERT INTO company_lookups VALUES (?, ?, ?, ?)",
+            [
+                ("kwadrant meetlab", "research", "failed", "2026-09-10T10:00:00+00:00"),
+                ("kwadrant meetlab b.v.", "research", "failed", "2026-09-12T10:00:00"),
+                (
+                    "kwadrant meetlab bv",
+                    "research",
+                    "found",
+                    "2026-09-01T10:00:00+00:00",
+                ),
+                (
+                    "kwadrant meetlab b.v.",
+                    "review",
+                    "nothing_found",
+                    "2026-09-05T10:00",
+                ),
+            ],
+        )
+        conn.executemany(
+            "INSERT INTO company_reviews VALUES (?, ?, ?)",
+            [
+                ("kwadrant meetlab", "old", "2026-08-01T10:00:00+00:00"),
+                ("kwadrant meetlab b.v.", "new", "2026-09-01T10:00:00+00:00"),
+            ],
+        )
+        conn.commit()
+        conn.close()
+
+        db = Database(path)
+        Database(path)  # the merge runs once
+
+        assert db.get_company_lookups("Kwadrant Meetlab", "research") == {
+            "failed": datetime(2026, 9, 12, 10, tzinfo=UTC),
+            "found": datetime(2026, 9, 1, 10, tzinfo=UTC),
+        }
+        assert set(db.get_company_lookups("Kwadrant Meetlab BV", "review")) == {
+            "nothing_found"
+        }
+        assert db.get_company_review("Kwadrant Meetlab", max_age_days=10**6) == "new"
+        conn = sqlite3.connect(path)
+        stored = conn.execute("SELECT company_key FROM company_reviews").fetchall()
+        conn.close()
+        assert stored == [("kwadrant meetlab",)]
+
+
+class TestCompanyShareKey:
+    """Research, reviews and lookups are shared by every spelling of an employer."""
+
+    @pytest.mark.parametrize(
+        ("company", "key"),
+        [
+            ("Kwadrant Meetlab", "kwadrant meetlab"),
+            ("Kwadrant Meetlab B.V.", "kwadrant meetlab"),
+            ("Kwadrant  Meetlab BV", "kwadrant meetlab"),
+            ("Kwadrant Meetlab, b. v.", "kwadrant meetlab"),
+            ("Ravelijn N.V.", "ravelijn"),
+            ("Findwhere GmbH", "findwhere"),
+            ("Findwhere Ltd.", "findwhere"),
+            ("Voorbeeld V.O.F.", "voorbeeld"),
+            ("Ravelijn Holding B.V.", "ravelijn holding"),
+            ("B.V.", "b.v."),
+            ("Unknown", "unknown"),
+        ],
+    )
+    def test_a_trailing_legal_form_is_dropped(self, company: str, key: str) -> None:
+        """Group words stay: a holding can be another company of the group."""
+        assert company_share_key(company) == key
+
+    @pytest.mark.parametrize(
+        "spelling", ["Kwadrant Meetlab B.V.", "Kwadrant Meetlab BV", "KWADRANT MEETLAB"]
+    )
+    def test_every_spelling_of_one_employer_finds_the_same_rows(
+        self,
+        tmp_path,  # noqa: ANN001
+        spelling: str,
+    ) -> None:
+        db = Database(tmp_path / "jobs.db")
+        job_id = db.save_job(
+            JobListing(
+                title="Kwaliteitsadviseur",
+                company="Kwadrant Meetlab",
+                url="https://vacatures.example/kwadrant",
+                source="test",
+            )
+        )
+        db.save_company_research(job_id, '{"company_name": "Kwadrant Meetlab"}')
+        db.record_company_lookup("Kwadrant Meetlab", "research", "found")
+        db.save_company_review("Kwadrant Meetlab", '{"summary": "Prima."}')
+
+        assert db.get_company_research_for_company(spelling) == [
+            '{"company_name": "Kwadrant Meetlab"}'
+        ]
+        assert set(db.get_company_lookups(spelling, "research")) == {"found"}
+        assert (
+            db.get_company_review(spelling, max_age_days=365) == '{"summary": "Prima."}'
+        )
+        assert db.get_company_review("Kwadrant", max_age_days=365) is None
+        assert not names_company("Unknown")

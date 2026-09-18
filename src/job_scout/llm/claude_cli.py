@@ -52,7 +52,9 @@ class ClaudeCliClient:
             Stripped stdout from the CLI.
 
         Raises:
-            LLMError: If the binary is missing or exits non-zero.
+            LLMUnavailableError: If the binary is missing or cannot be started,
+                so a configured fallback provider can take over.
+            LLMError: If the CLI times out or exits non-zero.
         """
         ok, err = self.check_available()
         if not ok:
@@ -72,19 +74,7 @@ class ClaudeCliClient:
         if is_cheap:
             argv += ["--tools", ""]
         argv.append(prompt)
-
-        result = subprocess.run(
-            argv,
-            capture_output=True,
-            text=True,
-            timeout=effective_timeout,
-        )
-
-        if result.returncode != 0:
-            snip = result.stderr[:400]
-            raise LLMError(f"Claude CLI failed (exit {result.returncode}): {snip}")
-
-        return result.stdout.strip()
+        return _run(argv, effective_timeout)
 
     def check_available(self) -> tuple[bool, str | None]:
         """Check whether the 'claude' binary is on PATH.
@@ -95,3 +85,40 @@ class ClaudeCliClient:
         if shutil.which("claude") is None:
             return False, CLAUDE_NOT_FOUND_MSG
         return True, None
+
+
+def _run(argv: list[str], timeout: float) -> str:
+    """Run the Claude CLI once and return what it printed.
+
+    Every way the call can fail becomes an LLM error, so a caller that
+    remembers a failed lookup, or falls back to another provider, sees a
+    timeout like any other failure instead of an unexpected exception.
+
+    Args:
+        argv: The command line, prompt included.
+        timeout: Seconds before the process is killed.
+
+    Returns:
+        Stripped stdout from the CLI.
+
+    Raises:
+        LLMUnavailableError: If the binary is missing or cannot be started.
+        LLMError: If the CLI times out or exits non-zero.
+    """
+    try:
+        result = subprocess.run(
+            argv,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise LLMError(f"Claude CLI timed out after {timeout}s") from exc
+    except FileNotFoundError as exc:
+        raise LLMUnavailableError(CLAUDE_NOT_FOUND_MSG) from exc
+    except OSError as exc:
+        raise LLMUnavailableError(f"Claude CLI could not be started: {exc}") from exc
+    if result.returncode != 0:
+        snip = result.stderr[:400]
+        raise LLMError(f"Claude CLI failed (exit {result.returncode}): {snip}")
+    return result.stdout.strip()

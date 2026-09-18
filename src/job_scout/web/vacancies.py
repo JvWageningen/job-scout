@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
 from job_scout.config import list_users, user_db_path
 from job_scout.database import Database
-from job_scout.models import ApplicationStage, CompanyReview, JobListing
+from job_scout.models import ApplicationStage, JobListing
 
 # The same fallback as application_stage_for_status, evaluated before pagination.
 _STAGE_SQL = """COALESCE(application_stage, CASE
@@ -127,10 +127,12 @@ def find_vacancies(
                 "WHERE source IS NOT NULL AND source != '' ORDER BY source"
             )
         ]
+    from job_scout.company_review import load_review  # noqa: PLC0415
+
     jobs = [db._row_to_job(row) for row in rows]
     for job in jobs:
         raw = db.get_company_review(job.company.lower(), max_age_days=365)
-        job.company_review = CompanyReview.model_validate_json(raw) if raw else None
+        job.company_review = load_review(raw)
     return VacancyPage(items=jobs, total=total, sources=sources)
 
 

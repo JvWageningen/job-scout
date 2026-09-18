@@ -127,6 +127,16 @@ class InterviewAnswerSet(BaseModel):
         default_factory=list,
         description="Where the applicant facts came from, e.g. their own CV.",
     )
+    company_research_date: datetime | None = Field(
+        default=None,
+        description="When the company research the answers used was written; "
+        "None when no research was used.",
+    )
+    company_review_date: datetime | None = Field(
+        default=None,
+        description="When the company review the answers used was written; "
+        "None when no review was used.",
+    )
 
 
 class _Response(BaseModel):
@@ -538,9 +548,10 @@ def _json_object(raw: str) -> str:
     return text[start : end + 1]
 
 
-# Every field of a question the user reads. ``based_on`` is left alone: it
-# names sources, and :func:`_check_citations` compares it with the labels the
-# model was given.
+# Every field of a question the user reads. None of them is ever a list, so a
+# list the model writes anyway becomes sentences. ``based_on`` is left alone:
+# it names sources, and :func:`_check_citations` compares it with the labels
+# the model was given.
 _PROSE_FIELDS = ("question", "why_asked", "draft_answer")
 
 
@@ -565,7 +576,7 @@ def _parse_questions(raw: str) -> list[LikelyQuestion]:
     try:
         data = json.loads(_json_object(raw))
         if isinstance(data, dict):
-            clean_items(data.get("questions"), _PROSE_FIELDS)
+            clean_items(data.get("questions"), _PROSE_FIELDS, flatten_lists=True)
         response = _Response.model_validate(data)
     except (json.JSONDecodeError, ValidationError) as exc:
         raise InterviewAnswerError(
@@ -679,4 +690,6 @@ def generate_interview_answers(
         missing_context=missing,
         sources_used=facts.used,
         generated_at=now or datetime.now(UTC),
+        company_research_date=company.research_date,
+        company_review_date=company.review_date,
     )

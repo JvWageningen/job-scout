@@ -6,6 +6,7 @@ fixture may carry a real name, address or company.
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -27,6 +28,7 @@ from job_scout.interview_questions import (
 from job_scout.interview_store import (
     InterviewMode,
     InterviewStoreError,
+    StaleInterviewError,
     interview_set_path,
     latest_interview_set,
     load_interview_set,
@@ -273,6 +275,61 @@ def test_edited_answers_replace_the_drafts(job_id: int) -> None:
     saved = load_saved_interview(USER, job_id).answers
     assert saved[0].questions[0].draft_answer == "In mijn eigen woorden."
     assert saved[0].generated_at == answer_set(job_id).generated_at
+
+
+def test_an_edit_on_an_older_set_is_refused(job_id: int) -> None:
+    """A page left open must not undo answers generated since, elsewhere."""
+    newer = answer_set(job_id, "Nieuw.").model_copy(
+        update={"generated_at": datetime(2026, 3, 9, 9, tzinfo=UTC)}
+    )
+    save_interview_set(USER, newer)
+
+    with pytest.raises(StaleInterviewError, match="Newer answers"):
+        save_edited_answers(USER, answer_set(job_id, "Oud, een woord anders."))
+
+    saved = load_saved_interview(USER, job_id).answers
+    assert saved[0].questions[0].draft_answer == "Nieuw."
+
+
+def test_an_edit_without_a_zone_on_the_same_set_is_kept(job_id: int) -> None:
+    """The same moment written without a zone is the same set, not an older one."""
+    save_interview_set(USER, answer_set(job_id))
+    bare = answer_set(job_id, "Eigen woorden.").model_copy(
+        update={"generated_at": datetime(2026, 3, 2, 9)}
+    )
+
+    save_edited_answers(USER, bare)
+
+    saved = load_saved_interview(USER, job_id).answers
+    assert saved[0].questions[0].draft_answer == "Eigen woorden."
+
+
+def test_the_company_dates_are_kept_in_utc(job_id: int) -> None:
+    """Every timestamp a set carries is read back with its zone."""
+    dated = question_set(job_id).model_copy(
+        update={
+            "company_research_date": datetime(2026, 2, 1, 9),
+            "company_review_date": datetime(2026, 2, 2, 9, tzinfo=UTC),
+        }
+    )
+
+    save_interview_set(USER, dated)
+    saved = load_saved_interview(USER, job_id).questions[0]
+
+    assert saved.company_research_date == datetime(2026, 2, 1, 9, tzinfo=UTC)
+    assert saved.company_review_date == datetime(2026, 2, 2, 9, tzinfo=UTC)
+
+
+def test_a_set_saved_before_the_company_dates_still_loads(job_id: int) -> None:
+    path = save_interview_set(USER, question_set(job_id))
+    old = question_set(job_id).model_dump(mode="json")
+    del old["company_research_date"], old["company_review_date"]
+    path.write_text(json.dumps(old), encoding="utf-8")
+
+    saved = load_saved_interview(USER, job_id).questions
+
+    assert saved == [question_set(job_id)]
+    assert saved[0].company_research_date is None
 
 
 def test_edited_answers_need_a_vacancy_that_still_exists(job_id: int) -> None:

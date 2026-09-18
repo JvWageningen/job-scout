@@ -155,3 +155,83 @@ def test_clean_items_ignores_a_value_that_is_not_a_list() -> None:
     clean_items(items, ("question",))
 
     assert items == {"question": f"Waarom {EM} nu?"}
+
+
+@pytest.mark.parametrize(
+    ("generated", "cleaned"),
+    [
+        ("2019 -- heden", "2019-heden"),
+        (f"{EURO} 3.500 -- {EURO} 4.800", f"{EURO} 3.500-{EURO} 4.800"),
+        ("42k--55k", "42k-55k"),
+        ("jan 2019 -- dec 2021", "jan 2019-dec 2021"),
+        ("Strong fit -- but the role is senior", "Strong fit, but the role is senior"),
+        ("run it with --verbose", "run it with --verbose"),
+    ],
+)
+def test_a_double_hyphen_range_stays_a_range(generated: str, cleaned: str) -> None:
+    """Plain text writes a range with two hyphens as often as with one."""
+    assert clean_prose(generated) == cleaned
+
+
+@pytest.mark.parametrize(
+    ("generated", "cleaned"),
+    [
+        (
+            f"Groei van {EURO} 10 {EN} {EURO} 14 miljoen omzet",
+            f"Groei van {EURO} 10-{EURO} 14 miljoen omzet",
+        ),
+        (f"Omzet {EURO}3m {EN} {EURO}5m", f"Omzet {EURO}3m-{EURO}5m"),
+        (f"Omzet 3 mln {EN} 5 mln", "Omzet 3 mln-5 mln"),
+    ],
+)
+def test_a_revenue_range_stays_a_range(generated: str, cleaned: str) -> None:
+    """Research and reviews write revenue in millions, not only salaries in k."""
+    assert clean_prose(generated) == cleaned
+
+
+@pytest.mark.parametrize(
+    ("generated", "cleaned"),
+    [
+        (
+            "Twee dingen:\n- ik plande de audits\n\u2022 ik schreef de procedure",
+            "Twee dingen: ik plande de audits. Ik schreef de procedure.",
+        ),
+        ("* eerst dit\n* dan dat", "Eerst dit. Dan dat."),
+        (
+            "1. eerst dit\n2) dan dat\n\nNieuwe alinea.\n- met een punt.",
+            "Eerst dit. Dan dat.\n\nNieuwe alinea. Met een punt.",
+        ),
+        ("2019 was een goed jaar.\n2020 ook.", "2019 was een goed jaar.\n2020 ook."),
+        ("\u2022 company review: cons", "Company review: cons"),
+        (
+            f"Ik deed twee dingen.\n- plande audits {EM} vooruit;\n- schreef,",
+            "Ik deed twee dingen. Plande audits, vooruit; schreef.",
+        ),
+    ],
+)
+def test_a_list_becomes_sentences_where_no_list_belongs(
+    generated: str, cleaned: str
+) -> None:
+    """A spoken answer has no bullets; a paragraph break and a year stay."""
+    assert clean_prose(generated, flatten_lists=True) == cleaned
+
+
+def test_a_list_keeps_its_markers_by_default() -> None:
+    """A letter may hold a list on purpose, so flattening is asked for."""
+    assert clean_prose("* eerst dit\n* dan dat") == "- eerst dit\n- dan dat"
+
+
+def test_flattening_keeps_links_and_addresses_whole() -> None:
+    text = "Mail a-b@x.example\n- zie https://x.example/a-b"
+
+    assert clean_prose(text, flatten_lists=True) == (
+        "Mail a-b@x.example. Zie https://x.example/a-b."
+    )
+
+
+def test_clean_items_can_flatten_lists() -> None:
+    items: object = [{"draft_answer": "Twee dingen:\n- plannen\n- schrijven"}]
+
+    clean_items(items, ("draft_answer",), flatten_lists=True)
+
+    assert items == [{"draft_answer": "Twee dingen: plannen. Schrijven."}]

@@ -7,6 +7,7 @@ fixture may carry a real name, address or company.
 from __future__ import annotations
 
 import json
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -31,6 +32,12 @@ from job_scout.interview_answers import (
     LikelyQuestion,
     QuestionKind,
     generate_interview_answers,
+)
+from job_scout.interview_export import interview_blocks, render_text
+from job_scout.interview_store import (
+    InterviewMode,
+    load_interview_set,
+    save_interview_set,
 )
 from job_scout.letters.models import LetterLanguage
 from job_scout.models import (
@@ -562,6 +569,40 @@ def test_every_field_the_user_reads_comes_back_plain(
     for question in result.questions:
         assert_plain(question.question + question.why_asked + question.draft_answer)
     assert_styled_prompt(client.calls[0][0])
+
+
+def test_a_list_in_a_spoken_answer_becomes_sentences(
+    db: Database, dutch_job: int
+) -> None:
+    """Nobody speaks in bullets, so a list the model writes anyway is flattened.
+
+    It stays flattened in the saved set and in the file the applicant
+    downloads, while the answer's paragraph break survives.
+    """
+    answer = (
+        "Twee dingen:\n- ik plande de audits\n\u2022 ik schreef de procedure"
+        "\n\nDaarna liep het goed."
+    )
+    first = _item("- Hoe pak je een audit aan?", "experience", answer=answer)
+    first["why_asked"] = "1. De vacature noemt de audits."
+    others = [_item(text, kind) for text, kind in ASKED[1:]]
+    client = FakeLLMClient([_payload([first, *others])])
+
+    result = generate_interview_answers(USER, dutch_job, client)
+    save_interview_set(USER, result)
+    saved = load_interview_set(USER, dutch_job, InterviewMode.ANSWER, result.language)
+
+    item = result.questions[0]
+    assert item.draft_answer == (
+        "Twee dingen: ik plande de audits. Ik schreef de procedure."
+        "\n\nDaarna liep het goed."
+    )
+    assert item.question == "Hoe pak je een audit aan?"
+    assert item.why_asked == "De vacature noemt de audits."
+    assert saved is not None
+    text = render_text(interview_blocks(saved))
+    marker = re.compile(r"^\s*(?:[-*\u2022]|\d{1,2}[.)])\s")
+    assert not [line for line in text.splitlines() if marker.match(line)]
 
 
 def test_the_length_limit_holds_for_the_cleaned_answer(

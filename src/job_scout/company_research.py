@@ -17,8 +17,9 @@ URL. A name the model made up has nowhere to come from.
 
 The prompts carry the house style (:data:`job_scout.writing_style.HOUSE_STYLE`)
 and avoid the dashes it forbids, and the prose the model returns is cleaned with
-:func:`job_scout.writing_style.humanise` after the figure check. Names, URLs and
-the stored snippets are never changed.
+:func:`job_scout.prose.clean_prose` after the figure check, so a revenue range
+or a period keeps its hyphen. Names, URLs and the stored snippets are never
+changed.
 
 Outcomes are kept apart so callers can say which one happened: research, None
 when the web offered nothing to use, CompanyResearchError when the model's
@@ -56,8 +57,9 @@ from job_scout.models import (
     JobListing,
     ResearchEvidence,
 )
+from job_scout.prose import clean_prose
 from job_scout.websearch import SearchResult, web_search
-from job_scout.writing_style import HOUSE_STYLE, humanise
+from job_scout.writing_style import HOUSE_STYLE
 
 _RESULTS_PER_QUERY = 3
 _MAX_SNIPPET_CHARS = 400
@@ -78,7 +80,7 @@ _FINDING_FIELDS = {
 # Fields that carry figures the model could invent; each digit sequence in them
 # must appear in a snippet or the field is cleared.
 _FIGURE_FIELDS = ("company_size", "growth_signals")
-# Optional text fields the model writes in its own words, cleaned by humanise()
+# Optional text fields the model writes in its own words, cleaned by clean_prose()
 # after the figure check. research_notes and culture_indicators are cleaned too,
 # but they are not optional strings; tech_stack_hints are names and stay as is.
 _PROSE_FIELDS = ("industry", "company_size", "growth_signals")
@@ -594,10 +596,10 @@ def _humanise_findings(research: CompanyResearch) -> None:
     for field in _PROSE_FIELDS:
         value = getattr(research, field)
         if value:
-            setattr(research, field, humanise(value) or None)
-    research.research_notes = humanise(research.research_notes)
+            setattr(research, field, clean_prose(value) or None)
+    research.research_notes = clean_prose(research.research_notes)
     research.culture_indicators = [
-        text for item in research.culture_indicators if (text := humanise(item))
+        text for item in research.culture_indicators if (text := clean_prose(item))
     ]
 
 
@@ -763,7 +765,7 @@ def _named_in_evidence(
             email=_printed_in(item.get("email"), source),
             linkedin_url=_printed_in(item.get("linkedin_url"), source),
             confidence=item.get("confidence", 50),
-            reasoning=humanise(_opt_str(item.get("reasoning")) or ""),
+            reasoning=clean_prose(_opt_str(item.get("reasoning")) or ""),
             source_url=source.url,
         )
     except ValidationError:

@@ -9,6 +9,7 @@ network.
 from __future__ import annotations
 
 import json
+import subprocess
 from datetime import UTC, datetime, timedelta, tzinfo
 from pathlib import Path
 from typing import Any
@@ -43,6 +44,8 @@ from job_scout.interview_questions import (
     gap_kind,
     generate_interview_questions,
 )
+from job_scout.llm.claude_cli import ClaudeCliClient
+from job_scout.llm.retry import RetryingLLMClient
 from job_scout.models import CompanyResearch, CompanyReview, JobListing
 from job_scout.websearch import SearchResult
 from job_scout.writing_style import HOUSE_STYLE
@@ -661,6 +664,86 @@ def test_placeholder_companies_share_nothing(db: Database, web: Web) -> None:
     assert client.calls == []
     for kind in (LookupKind.RESEARCH, LookupKind.REVIEW):
         assert db.get_company_lookups("Unknown", kind) == {}
+
+
+def test_a_generated_set_carries_the_dates_of_the_company_facts_it_used(
+    db: Database, web: Web
+) -> None:
+    """Research is reused for as long as it is kept, so each set says its age."""
+    job_id = _job(db, "a")
+    questions = generate_interview_questions(
+        USER, job_id, FakeLLMClient([RESEARCH_ANSWER, REVIEW_ANSWER, QUESTIONS])
+    )
+    answers = generate_interview_answers(USER, job_id, FakeLLMClient([ANSWERS]))
+
+    for result in (questions, answers):
+        assert result.company_research_date == NOW
+        assert result.company_review_date == NOW
+
+
+def test_a_set_without_company_facts_carries_no_dates(db: Database, web: Web) -> None:
+    """A date with nothing behind it is the dated missing entry's job."""
+    web.results = list(NAMESAKES)
+    job_id = _job(db, "a")
+
+    result = generate_interview_questions(USER, job_id, FakeLLMClient([QUESTIONS]))
+
+    assert result.missing_context == [NO_PUBLIC_INFO, NO_REVIEW]
+    assert result.company_research_date is None
+    assert result.company_review_date is None
+
+
+def test_a_claude_cli_timeout_is_remembered_as_a_failed_lookup(
+    db: Database, web: Web, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A timeout used to escape as a raw exception, so every click waited again."""
+    runs: list[list[str]] = []
+
+    def too_slow(argv: list[str], **kwargs: Any) -> None:
+        runs.append(argv)
+        raise subprocess.TimeoutExpired(argv, kwargs.get("timeout", 0))
+
+    monkeypatch.setattr("job_scout.llm.claude_cli.shutil.which", lambda _: "claude")
+    monkeypatch.setattr("job_scout.llm.claude_cli.subprocess.run", too_slow)
+    client = RetryingLLMClient(
+        ClaudeCliClient(), attempts=2, base_delay=0, sleep=lambda _: None
+    )
+    job_id = _job(db, "a")
+    job = db.get_job(job_id)
+    assert job is not None
+
+    first = company_context(db, job, job_id, client, now=NOW)
+    searched, tried = len(web.research_queries()), len(runs)
+    later = NOW + FAILED_COOLDOWN - timedelta(minutes=5)
+    held = company_context(db, job, job_id, client, now=later)
+
+    assert first.missing == [RESEARCH_FAILED, NO_REVIEW]
+    assert set(recall(db, COMPANY, LookupKind.RESEARCH).last) == {LookupOutcome.FAILED}
+    assert tried == 2
+    assert len(web.research_queries()) == searched
+    assert len(runs) == tried
+    assert held.missing == [f"{RESEARCH_FAILED} (tried {CHECKED})", NO_REVIEW]
+
+
+@pytest.mark.parametrize("spelling", ["Kwadrant Meetlab B.V.", "Kwadrant Meetlab BV"])
+def test_a_legal_form_does_not_make_another_company(
+    db: Database, web: Web, spelling: str
+) -> None:
+    """Job boards add or drop "B.V."; the employer is looked up once either way."""
+    first = _job(db, "a")
+    generate_interview_questions(
+        USER, first, FakeLLMClient([RESEARCH_ANSWER, REVIEW_ANSWER, QUESTIONS])
+    )
+    searched = len(web.queries)
+    other = _job(db, "b", company=spelling)
+    client = FakeLLMClient([QUESTIONS])
+
+    result = generate_interview_questions(USER, other, client)
+
+    assert len(web.queries) == searched
+    assert _purposes(client) == ["behavioral_questions"]
+    assert NOTES in client.calls[0][0]
+    assert result.missing_context == [THIN_REVIEW]
 
 
 def test_prose_stored_before_the_house_style_is_cleaned_when_read(

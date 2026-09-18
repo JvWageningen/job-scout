@@ -162,6 +162,55 @@ def test_sort_unscored_dates_and_cached_company(tmp_db: Database) -> None:
         assert page.items[0].fit_score == 80
 
 
+def test_a_stored_review_reaches_every_reader_in_the_house_style(
+    tmp_db: Database,
+) -> None:
+    """Reviews are read for a year; the card, the jobs list and ntfy all tidy them.
+
+    Only the interview prompts used to, so the page and the notification kept
+    the dashes of reviews stored before the house style.
+    """
+    from job_scout.cli import _get_or_build_review  # noqa: PLC0415
+    from job_scout.notify.ntfy import _build_notification_payload  # noqa: PLC0415
+    from job_scout.web.app import _attach_company_reviews  # noqa: PLC0415
+
+    job_id = add_job(tmp_db, 1)
+    review = CompanyReview(
+        company="Example Instruments",
+        work_score=70,
+        summary="Solid employer \u2014 good pay, slow decisions.",
+        pros=["Good pay \u2014 above market"],
+        confidence="medium",
+    )
+    tmp_db.save_company_review("Example Instruments", review.model_dump_json())
+    tidy = "Solid employer, good pay, slow decisions."
+
+    card = find_vacancies(tmp_db).items[0]
+    job = tmp_db.get_job(job_id)
+    assert job is not None
+    _attach_company_reviews(tmp_db, [job])
+    cached = _get_or_build_review(
+        "Example Instruments",
+        tmp_db,
+        None,  # type: ignore[arg-type]
+        searxng_url=None,
+        api_key=None,
+        dry_run=True,
+    )
+    assert cached is not None
+    _, body = _build_notification_payload(
+        job.model_copy(update={"company_review": cached})
+    )
+
+    assert card.company_review is not None
+    assert card.company_review.summary == tidy
+    assert card.company_review.pros == ["Good pay, above market"]
+    assert job.company_review is not None
+    assert job.company_review.summary == tidy
+    assert tidy in body
+    assert "\u2014" not in body
+
+
 @pytest.mark.parametrize("batch", [False, True])
 def test_rescore_preserves_applicant_metadata(tmp_db: Database, batch: bool) -> None:
     """Both scraper upserts preserve pins, notes, stages and application dates."""

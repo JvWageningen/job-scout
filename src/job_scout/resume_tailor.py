@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from io import BytesIO
 from pathlib import Path
 from typing import Any
@@ -16,7 +17,14 @@ from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
 from job_scout.llm.base import LLMClient
 from job_scout.models import CvProfile
 from job_scout.prose import clean_prose
-from job_scout.writing_style import HOUSE_STYLE
+from job_scout.writing_style import HOUSE_STYLE, strip_emphasis
+
+# What may differ between a line of the applicant's CV and the same line as a
+# model copies it back: the dash it chose, the spacing around it, markdown
+# emphasis and the bullet sign in front.
+_ANY_DASH = re.compile(r"[ \t]*(?:[\u2013\u2014]|-+)[ \t]*")
+_EMPHASIS_MARKS = re.compile(r"\*\*|__")
+_LEADING_BULLET = re.compile(r"^\s*[-*\u2022\u00b7]\s+")
 
 
 def extract_resume_keywords(
@@ -127,11 +135,7 @@ def tailor_resume_text(
 
     try:
         response = client.complete(prompt, purpose="resume_tailoring")
-        # Every line is cleaned, date lines included: clean_prose writes a
-        # period that ends in a word or a month, joined by an en dash, as a
-        # plain-hyphen range ("jan 2019-heden") rather than splitting it with
-        # a comma.
-        tailored = clean_prose(response.strip())
+        tailored = _clean_reworded_lines(response.strip(), cv_text)
         logger.debug(
             f"Tailored resume: {len(tailored)} chars from original {len(cv_text)}"
         )
@@ -139,6 +143,53 @@ def tailor_resume_text(
     except Exception as e:
         logger.error(f"Failed to tailor resume: {e}")
         return cv_text  # Return original on failure
+
+
+def _line_key(text: str) -> str:
+    """Reduce a line to what stays the same when a model copies it.
+
+    Args:
+        text: A line, or the whole CV.
+
+    Returns:
+        The text with every dash written as one hyphen, emphasis marks gone
+        and whitespace collapsed.
+    """
+    text = _ANY_DASH.sub("-", _EMPHASIS_MARKS.sub("", text))
+    return " ".join(text.split())
+
+
+def _clean_reworded_lines(tailored: str, cv_text: str) -> str:
+    """Put the lines the model wrote in the house style, and leave the CV's own.
+
+    The prompt tells the model to keep the CV's headings, contact lines,
+    employer lines and date lines as they are, and the applicant's own
+    punctuation belongs to them: a dash between "Nederlands" and "moedertaal"
+    joins a language to its level, not two clauses a comma should split, and
+    a dash between an employer and its town is the applicant's choice. A line
+    whose words appear in the original CV, whatever dash or bullet sign the
+    model gave it, is the applicant's and only loses markdown emphasis. Every
+    other line was reworded and is cleaned; clean_prose keeps a period that
+    ends in a word or a month as a plain-hyphen range ("jan 2019-heden").
+
+    Args:
+        tailored: The model's tailored CV.
+        cv_text: The CV it was given.
+
+    Returns:
+        The tailored CV with only its reworded lines cleaned.
+    """
+    source = _line_key(cv_text)
+    lines: list[str] = []
+    for line in tailored.split("\n"):
+        key = _line_key(_LEADING_BULLET.sub("", line))
+        if not key:
+            lines.append(line)
+        elif any(char.isalnum() for char in key) and key in source:
+            lines.append(strip_emphasis(line))
+        else:
+            lines.append(clean_prose(line))
+    return "\n".join(lines)
 
 
 def _format_cv_profile_summary(profile: CvProfile) -> str:

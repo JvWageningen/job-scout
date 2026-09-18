@@ -9,9 +9,10 @@ the drafts read like something a capable person wrote on a normal working day.
 
 ## What the house style asks
 
-**Punctuation.** No em dash, no en dash, and no spaced hyphen joining two parts of a
-sentence. A full stop, a comma, a colon or brackets do that job. A hyphen belongs
-inside a word (e-commerce, B2B-klanten) or in a range of numbers (2019-2021).
+**Punctuation.** No em dash, no en dash, no double hyphen (`--`) and no spaced hyphen
+joining two parts of a sentence. A full stop, a comma, a colon or brackets do that
+job. A hyphen belongs inside a word (e-commerce, B2B-klanten) or in a range of
+numbers (2019-2021).
 
 **No formatting.** No bullet points or numbered lists unless the output itself is a
 list, no bold, no italics, no headings, no emoji and no exclamation marks.
@@ -45,6 +46,7 @@ other. English is plain international business English without sales language.
 | Career coach | The intake questions, the summary, each direction's description, what to rule out and the follow-up question |
 | Vacancy evaluation | The fit, search and compensation explanations on each vacancy card |
 | CV tailoring | The reworded profile text, descriptions and bullets, for both the CV Builder document and the plain-text CV |
+| Company research and review | The research findings, the review's summary, pros, cons and other text, wherever they are shown: the vacancy cards, notifications, the command line and the interview prompts |
 
 Text that is not prose is left alone: search keywords, scores, source labels, the
 copy the CV importer makes of your own CV (it has to keep your words exactly), and
@@ -59,24 +61,33 @@ the instructions it is given.
 **The clean-up floor.** After the model answers, a fixed rule repairs what it did
 anyway. A dash joining two parts of a sentence becomes a comma, bold and italic
 markers are removed, emoji and symbols such as rating stars are removed, and the
-typographic ellipsis becomes three full stops. Line breaks stay, and so does a line
-that starts with `- `. This is a floor, not a rewrite: a rule cannot turn
-"passionate" into what you actually mean.
+typographic ellipsis becomes three full stops. Two hyphens between words (`--`) are a
+dash too; two hyphens before a word, as in a command-line option, are not. Line breaks
+stay, and so does a line that starts with `- `, because a letter may hold a list on
+purpose. Interview questions and spoken draft answers never do, so there a list the
+model writes anyway becomes sentences: the markers (`-`, `*`, a bullet sign, `1.`) go
+and each item joins the line before it, while a blank line between paragraphs stays.
+This is a floor, not a rewrite: a rule cannot turn "passionate" into what you actually
+mean.
 
 A dash in a range stays a range, written with a plain hyphen: 2019-2021,
-€ 3.500-€ 4.800, 42k-55k, jan 2019-dec 2021 and 2019-heden. That matters for salary
-explanations and for the periods on a tailored CV, where a comma would split one
-range into two separate amounts or dates.
+€ 3.500-€ 4.800, 42k-55k, € 3m-€ 5m, jan 2019-dec 2021 and 2019-heden, whether the
+model wrote a dash or two hyphens. That matters for salary explanations, for revenue
+in company research and for the periods on a tailored CV, where a comma would split
+one range into two separate amounts or dates.
 
 The clean-up is not applied to fields that hold names, links or CV facts, and inside
-prose it leaves e-mail addresses and web links exactly as written. A name inside a
-sentence gets no such protection, so a double surname written with spaces around
-its hyphen would come out with a comma instead. Dutch double surnames are normally
-written without those spaces (Jansen-de Vries), so this rarely comes up.
+prose it leaves e-mail addresses and web links exactly as written. On a tailored CV
+only the lines the model reworded are cleaned: a line whose words are in your own CV
+(your contact details, an employer and its town, "Nederlands" and its level) keeps
+your punctuation and only loses bold or italic markers. A name inside a sentence
+gets no such protection, so a double surname written with spaces around its hyphen
+would come out with a comma instead. Dutch double surnames are normally written
+without those spaces (Jansen-de Vries), so this rarely comes up.
 
-Document feedback and the style guide learned from your letters often quote your
-own text. Whatever they put in quotation marks is kept exactly as it was, dashes
-included, so a quoted sentence is still the sentence in your document.
+Document feedback, the style guide learned from your letters and the company review
+often quote someone's own words. Whatever they put in quotation marks is kept exactly
+as it was, dashes included, so a quoted sentence is still the sentence it quotes.
 
 **The warning.** A rule cannot fix stock phrases, so the Cover Letter Writer names
 the ones it finds in the finished letter among its review warnings. Rewrite those in
@@ -101,9 +112,11 @@ The writer will not suggest one.
 ## Earlier text
 
 Nothing already saved is rewritten. A letter, answer or vacancy explanation written
-before this change keeps its old wording until it is generated again. One exception:
+before this change keeps its old wording until it is generated again. Two exceptions:
 when a new vacancy reuses the evaluation of an earlier one with the same title and
-company, the reused explanation is cleaned as it is copied.
+company, the reused explanation is cleaned as it is copied, and company research and
+reviews, which are kept and reused for months, are cleaned every time they are shown
+or used.
 
 The text job-scout wraps around generated prose follows the same rules: the
 notifications and the command line join a score and its explanation with a full stop

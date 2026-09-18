@@ -791,6 +791,23 @@ def test_every_field_the_user_reads_comes_back_plain(
     assert_styled_prompt(client.calls[0][0])
 
 
+def test_a_list_in_a_question_becomes_a_sentence(db: Database, dutch_job: int) -> None:
+    """A question is said out loud, so list markers the model adds go."""
+    first = _question(
+        "- Wie plant de audits?", "role", grounded="\u2022 company review: cons"
+    )
+    first["why"] = "Twee redenen:\n1. de werkdruk\n2. je ervaring"
+    others = [_question(text, theme) for text, theme in THEMED[1:]]
+    client = FakeLLMClient([_payload([first, *others])])
+
+    result = generate_interview_questions(USER, dutch_job, client)
+
+    question = result.questions[0]
+    assert question.question == "Wie plant de audits?"
+    assert question.why == "Twee redenen: de werkdruk. Je ervaring."
+    assert question.grounded_in == "Company review: cons"
+
+
 def test_the_length_limit_holds_for_the_cleaned_text(
     db: Database, dutch_job: int
 ) -> None:

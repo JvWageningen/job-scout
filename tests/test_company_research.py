@@ -1206,6 +1206,23 @@ class TestHouseStyle:
         assert tidy.sources == [_ABOUT_URL]
         assert stored.research_notes == "Bouwt sorteerrobots \u2014 vooral voor kassen."
 
+    def test_a_range_in_research_stays_a_range(self) -> None:
+        """A comma would turn a period or an amount into two separate things."""
+        en, em, euro = "\u2013", "\u2014", "\u20ac"
+        stored = CompanyResearch(
+            company_name=_COMPANY,
+            growth_signals=f"Omzet {euro} 10 {en} {euro} 14 miljoen, 2019 {en} heden",
+            culture_indicators=[f"salaris 42k{en}55k"],
+            research_notes=f"Reorganisatie jan 2023 {en} mrt 2024 {em} daarna stabiel.",
+            sources=[_ABOUT_URL],
+        )
+
+        tidy = tidy_research(stored)
+
+        assert tidy.growth_signals == "Omzet \u20ac 10-\u20ac 14 miljoen, 2019-heden"
+        assert tidy.culture_indicators == ["salaris 42k-55k"]
+        assert tidy.research_notes == "Reorganisatie jan 2023-mrt 2024, daarna stabiel."
+
     def test_the_saved_research_endpoint_returns_it_cleaned(
         self, entry_env: int
     ) -> None:

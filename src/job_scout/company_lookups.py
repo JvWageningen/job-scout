@@ -14,10 +14,12 @@ returned, and what is stored is used as it is. An explicit request (the
 ``company research`` command, ``POST /api/company/research``) always looks up
 and is remembered like any other attempt.
 
-Companies are matched on :func:`job_scout.database.company_key`, the same
-normalised name the review cache uses, so every vacancy at one employer shares
-one memory. A placeholder name such as "Unknown" names no employer, so nothing
-is remembered under it (see :func:`job_scout.database.names_company`).
+Companies are matched on :func:`job_scout.database.company_share_key`, the
+same normalised name the review cache and stored research use, without a
+trailing legal form, so every vacancy at one employer shares one memory
+whether a job board writes "Voorbeeld" or "Voorbeeld B.V.". A placeholder name
+such as "Unknown" names no employer, so nothing is remembered under it (see
+:func:`job_scout.database.names_company`).
 
 A search that returned no result for any query did not look at the company at
 all: the search was down or blocked. The research and review modules raise for

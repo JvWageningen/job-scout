@@ -348,7 +348,7 @@ CV (excerpt):
 JOB:
 {job_text}
 
-Score each direction independently -- a job that fits one direction well \
+Score each direction independently: a job that fits one direction well \
 should score high for it even if it is irrelevant to the others.
 0=irrelevant, 40-59=partial match, 60-79=good fit, 80-100=strong match.
 

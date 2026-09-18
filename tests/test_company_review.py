@@ -21,6 +21,7 @@ from job_scout.company_review import (
     _coerce_score,
     evidence_confidence,
     gather_company_evidence,
+    load_review,
     review_company,
     tidy_review,
 )
@@ -135,6 +136,67 @@ def test_a_stored_review_is_cleaned_when_read() -> None:
         stored.sources,
     )
     assert stored.summary == "Behulpzame collega's \u2014 hoge werkdruk."
+
+
+def test_a_range_in_a_review_stays_a_range() -> None:
+    """A salary or a period is one thing, not a list of two."""
+    answer = json.dumps(
+        {
+            "work_score": 64,
+            "summary": (
+                "Salaris \u20ac 3.500 \u2013 \u20ac 4.800 per maand \u2014 prima."
+            ),
+            "pros": ["Salary \u20ac42k\u201355k reported by employees"],
+            "cons": ["Reorganisatie jan 2023 \u2013 mrt 2024"],
+            "employee_sentiment": None,
+            "financial_health": "Omzet \u20ac 10 \u2013 \u20ac 14 miljoen",
+            "growth": "Gegroeid van 2019 \u2013 heden",
+            "company_age": None,
+        }
+    )
+    with patch("job_scout.company_review.web_search", return_value=_results(3)):
+        review = review_company(_COMPANY, client=FakeLLMClient([answer]))
+
+    assert review is not None
+    assert review.summary == "Salaris \u20ac 3.500-\u20ac 4.800 per maand, prima."
+    assert review.pros == ["Salary \u20ac42k-55k reported by employees"]
+    assert review.cons == ["Reorganisatie jan 2023-mrt 2024"]
+    assert review.financial_health == "Omzet \u20ac 10-\u20ac 14 miljoen"
+    assert review.growth == "Gegroeid van 2019-heden"
+
+
+def test_a_quoted_employee_keeps_their_words() -> None:
+    stored = CompanyReview(
+        company=_COMPANY,
+        summary='Een medewerker schrijft "druk \u2014 maar leuk" \u2014 vaker gehoord.',
+        confidence="medium",
+        sources=["https://reviews0.example/kwadrant-meetlab"],
+    )
+
+    tidy = tidy_review(stored)
+
+    assert tidy.summary == (
+        'Een medewerker schrijft "druk \u2014 maar leuk", vaker gehoord.'
+    )
+
+
+def test_a_stored_review_is_read_cleaned_or_not_at_all() -> None:
+    """Every reader that shows a stored review gets the same cleaned text."""
+    stored = CompanyReview(
+        company=_COMPANY,
+        summary="Solide werkgever \u2014 goed salaris, trage besluiten.",
+        pros=["Goed salaris \u2014 boven de markt"],
+        confidence="medium",
+        sources=["https://reviews0.example/kwadrant-meetlab"],
+    )
+
+    loaded = load_review(stored.model_dump_json())
+
+    assert loaded is not None
+    assert loaded.summary == "Solide werkgever, goed salaris, trage besluiten."
+    assert loaded.pros == ["Goed salaris, boven de markt"]
+    assert load_review(None) is None
+    assert load_review("{not json") is None
 
 
 def test_review_company_synthesises_from_evidence() -> None:

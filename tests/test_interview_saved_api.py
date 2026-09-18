@@ -395,13 +395,13 @@ def test_the_questions_download_as_a_word_file(job_id: int, client: TestClient) 
     assert response.status_code == 200, response.text
     assert response.headers["content-type"] == DOCX_TYPE
     assert response.headers["content-disposition"] == (
-        f'attachment; filename="20260918 Interviewvragen {COMPANY}.docx"'
+        f'attachment; filename="20260918 Interviewvragen {COMPANY} {TITLE}.docx"'
     )
     assert response.headers["cache-control"] == "no-store"
     text = [p.text for p in Document(io.BytesIO(response.content)).paragraphs]
     assert text[0] == f"{TITLE} bij {COMPANY}"
     assert QUESTION in text
-    assert "Gebaseerd op: company review: cons" in text
+    assert "Gebaseerd op: bedrijfsbeoordeling: nadelen" in text
 
 
 def test_the_answers_download_with_the_applicants_own_edits(
@@ -420,7 +420,7 @@ def test_the_answers_download_with_the_applicants_own_edits(
     assert EDITED in paragraphs and DRAFT not in paragraphs
     assert text.headers["content-type"] == "text/plain; charset=utf-8"
     assert text.headers["content-disposition"] == (
-        f'attachment; filename="20260918 Interviewantwoorden {COMPANY}.txt"'
+        f'attachment; filename="20260918 Interviewantwoorden {COMPANY} {TITLE}.txt"'
     )
     word_lines = [p.casefold() for p in paragraphs if p]
     text_lines = [line.casefold() for line in text.text.splitlines() if line]
@@ -609,7 +609,7 @@ def test_the_command_exports_a_saved_set_to_a_file(job_id: int, tmp_path: Path) 
     )
 
     assert result.exit_code == 0, result.output
-    written = folder / f"20260918 Interviewantwoorden {COMPANY}.docx"
+    written = folder / f"20260918 Interviewantwoorden {COMPANY} {TITLE}.docx"
     paragraphs = [p.text for p in Document(str(written)).paragraphs]
     assert EDITED in paragraphs
 
@@ -634,3 +634,194 @@ def test_the_command_says_when_nothing_is_saved(job_id: int, tmp_path: Path) -> 
     assert result.exit_code == 1
     assert "Nothing saved for vacancy" in result.output
     assert not (tmp_path / "vragen.txt").exists()
+
+
+@pytest.fixture
+def out(tmp_path: Path) -> Path:
+    """An empty folder to export into, apart from the data directory.
+
+    Args:
+        tmp_path: This test's own folder, which also holds the user data.
+
+    Returns:
+        The folder.
+    """
+    folder = tmp_path / "out"
+    folder.mkdir()
+    return folder
+
+
+def _export(job_id: int, folder: Path, *flags: str, reply: str | None = None) -> Any:
+    """Run 'interview export' for one saved answer set as text.
+
+    Args:
+        job_id: The vacancy.
+        folder: Where the file goes.
+        flags: Extra options.
+        reply: What is typed at a question, if anything.
+
+    Returns:
+        The click result.
+    """
+    command = ["interview", "export", str(job_id), "--user", USER, "--mode"]
+    command += ["answer", "--format", "txt", "--output", str(folder), *flags]
+    return CliRunner().invoke(cli, command, input=reply)
+
+
+def test_two_vacancies_at_one_employer_export_to_two_files(
+    job_id: int, out: Path
+) -> None:
+    """The vacancy is in the name, so the second export does not replace the first."""
+    other = Database(config.user_db_path(USER)).save_job(
+        JobListing(
+            title="Kwaliteitsingenieur",
+            company=COMPANY,
+            url="https://voorbeeld.example/vacatures/9",
+            source="board",
+            status=JobStatus.MATCHED,
+            seen_at=datetime(2026, 1, 1, tzinfo=UTC),
+        )
+    )
+    save_interview_set(USER, answer_set(job_id))
+    save_interview_set(USER, answer_set(other))
+
+    first = _export(job_id, out)
+    second = _export(other, out)
+
+    assert first.exit_code == 0, first.output
+    assert second.exit_code == 0, second.output
+    names = sorted(path.name for path in out.iterdir())
+    assert names == [
+        f"20260918 Interviewantwoorden {COMPANY} Kwaliteitsingenieur.txt",
+        f"20260918 Interviewantwoorden {COMPANY} {TITLE}.txt",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("flags", "reply", "replaced"),
+    [([], None, False), ([], "n\n", False), ([], "y\n", True), (["--yes"], None, True)],
+)
+def test_exporting_again_asks_before_it_replaces_a_file(
+    job_id: int,
+    out: Path,
+    flags: list[str],
+    reply: str | None,
+    replaced: bool,
+) -> None:
+    """The file on disk may hold the applicant's own edits."""
+    save_interview_set(USER, answer_set(job_id))
+    assert _export(job_id, out).exit_code == 0
+    written = next(out.iterdir())
+    written.write_text("MIJN EIGEN AANPASSINGEN\n", encoding="utf-8")
+
+    result = _export(job_id, out, *flags, reply=reply)
+
+    assert result.exit_code == (0 if replaced else 1), result.output
+    kept = written.read_text(encoding="utf-8") == "MIJN EIGEN AANPASSINGEN\n"
+    assert kept is not replaced
+    if not replaced:
+        assert "--yes" in result.output
+
+
+def test_exporting_a_language_that_is_not_saved_names_the_one_that_is(
+    job_id: int, out: Path
+) -> None:
+    """Generating takes minutes; the saved Dutch set can be exported right away."""
+    save_interview_set(USER, answer_set(job_id))
+
+    result = _export(job_id, out, "--language", "en")
+
+    assert result.exit_code == 1
+    assert "No English set is saved" in result.output
+    assert "a Dutch one is" in result.output
+    assert "--language nl" in result.output
+    assert f"interview answers {job_id} --user {USER} --language en'" in result.output
+    assert list(out.iterdir()) == []
+
+
+def test_an_edit_on_an_older_set_does_not_undo_a_newer_one(
+    job_id: int, client: TestClient
+) -> None:
+    """A page left open must not overwrite answers generated since, silently."""
+    older = answer_set(job_id, EDITED)
+    newer = answer_set(job_id, "Nieuw concept uit de terminal.").model_copy(
+        update={"generated_at": datetime(2026, 9, 19, 9, tzinfo=UTC)}
+    )
+    save_interview_set(USER, newer)
+    url = f"/api/interview/saved/answers/{job_id}?user={USER}"
+
+    stale = client.put(url, json=older.model_dump(mode="json"))
+    body = client.get(f"/api/interview/saved/{job_id}?user={USER}").json()
+
+    assert stale.status_code == 409
+    assert "Newer answers were generated" in stale.json()["detail"]
+    draft = body["answers"][0]["questions"][0]["draft_answer"]
+    assert draft == "Nieuw concept uit de terminal."
+
+
+def test_an_edit_on_a_set_newer_than_the_saved_one_is_kept(
+    job_id: int, client: TestClient
+) -> None:
+    """A fresh set the disk refused to keep may still be edited and saved."""
+    save_interview_set(USER, answer_set(job_id))
+    later = answer_set(job_id, EDITED).model_copy(
+        update={"generated_at": datetime(2026, 9, 19, 9, tzinfo=UTC)}
+    )
+
+    response = client.put(
+        f"/api/interview/saved/answers/{job_id}?user={USER}",
+        json=later.model_dump(mode="json"),
+    )
+    body = client.get(f"/api/interview/saved/{job_id}?user={USER}").json()
+
+    assert response.status_code == 200, response.text
+    assert body["answers"][0]["questions"][0]["draft_answer"] == EDITED
+
+
+def test_the_command_says_how_old_the_company_facts_are(
+    job_id: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Stored research is reused for months, so the command shows its date."""
+    dated = answer_set(job_id).model_copy(
+        update={
+            "company_research_date": datetime(2026, 3, 3, 12, tzinfo=UTC),
+            "company_review_date": datetime(2026, 9, 1, 12, tzinfo=UTC),
+        }
+    )
+    monkeypatch.setattr("job_scout.cli.check_llm_available", lambda _: (True, None))
+    monkeypatch.setattr("job_scout.cli.get_llm_client", lambda _: FakeLLMClient(["{}"]))
+    monkeypatch.setattr("job_scout.cli.generate_interview_answers", returning(dated))
+
+    result = CliRunner().invoke(
+        cli, ["interview", "answers", str(job_id), "--user", USER]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert (
+        "Company information used: company research from 3 March 2026; "
+        "company review from 1 September 2026."
+    ) in result.output
+
+
+def test_the_questions_help_says_the_company_is_looked_up_once() -> None:
+    """--help must say what the command does now, as USAGE.md does."""
+    result = CliRunner().invoke(cli, ["interview", "questions", "--help"])
+
+    assert result.exit_code == 0
+    text = " ".join(result.output.split())
+    assert "Nothing is researched on demand" not in text
+    assert "looked up on the web first" in text
+    assert "Each lookup is remembered per company" in text
+    assert "'interview export'" in text
+
+
+def test_the_page_shows_the_company_dates_and_guards_unsaved_edits(
+    client: TestClient,
+) -> None:
+    """The script reads the dates the sets carry and asks before a user switch."""
+    script = client.get("/interview.js").text
+
+    assert "company_research_date" in script
+    assert "company_review_date" in script
+    assert "stopImmediatePropagation" in script
+    assert "error.status === 409" in script

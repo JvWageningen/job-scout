@@ -225,7 +225,11 @@ screen; the answers half asks first and names the language, because the saved an
 hold your edits. With the language on *Automatic* the newest saved set is shown, and
 generating again keeps to that set's language. An edit counts as saved once the server
 has it: a failed save is sent again on your next change, and while an edit is unsaved
-the tab will not switch vacancy or language, and a reload asks first.
+the tab will not switch vacancy or language, and a reload or a switch to another user
+asks first. If newer answers were generated for the vacancy after the tab opened them
+(on the command line or in another tab), your edits are not saved over them: they stay
+on screen to download, and choosing the vacancy again shows the newer set. The line
+under each set also says when the company research and review it used were written.
 
 **Downloads.** Both halves have **Download Word file** and **Download text file**. The
 Word file opens in Word, LibreOffice and Google Docs, uses real heading styles, and
@@ -234,8 +238,8 @@ holds the vacancy and employer, the date, the questions with their reasons and s
 or the answers with their footing, and at the end what was missing and which of your
 sources were used. The text file holds the same in the same order. Both take what is
 on screen, so your rewritten answers are in the file. Files are named like
-`20260918 Interviewvragen Findwhere.docx`, and downloads go through the dashboard token
-like every other request.
+`20260918 Interviewvragen Findwhere Meetspecialist.docx`, and downloads go through the
+dashboard token like every other request.
 
 Two things this tab is not. It is not Document Review, which critiques a document you
 already have. And it is not `profile interview-prep`, the older CLI-only feature that

@@ -43,6 +43,14 @@ class InterviewStoreError(ValueError):
     """A saved set was asked for with an unusable vacancy, half or language."""
 
 
+class StaleInterviewError(RuntimeError):
+    """An edit was made on a set older than the one saved since.
+
+    Not a ValueError: the request is sound, the page is just behind, and the
+    dashboard answers it with a conflict rather than a bad request.
+    """
+
+
 class InterviewMode(StrEnum):
     """Which half of the interview a set belongs to."""
 
@@ -85,8 +93,13 @@ def mode_of(interview: InterviewSet) -> InterviewMode:
     return InterviewMode.ASK
 
 
+# Every timestamp a set carries: when it was generated, and when the company
+# research and review it used were written.
+_MOMENTS = ("generated_at", "company_research_date", "company_review_date")
+
+
 def _in_utc(interview: InterviewSet) -> InterviewSet:
-    """Give a set's timestamp a zone, taking a bare one as UTC.
+    """Give a set's timestamps a zone, taking a bare one as UTC.
 
     Sets are sorted on when they were generated, and a timestamp with a zone
     cannot be compared with one without.
@@ -95,12 +108,14 @@ def _in_utc(interview: InterviewSet) -> InterviewSet:
         interview: A question set or an answer set.
 
     Returns:
-        The same set, or a copy whose timestamp carries UTC.
+        The same set, or a copy whose timestamps carry UTC.
     """
-    if interview.generated_at.tzinfo is not None:
-        return interview
-    moment = interview.generated_at.replace(tzinfo=UTC)
-    return interview.model_copy(update={"generated_at": moment})
+    update = {
+        name: moment.replace(tzinfo=UTC)
+        for name in _MOMENTS
+        if (moment := getattr(interview, name)) is not None and moment.tzinfo is None
+    }
+    return interview.model_copy(update=update) if update else interview
 
 
 def interview_set_path(
@@ -176,7 +191,11 @@ def save_edited_answers(user: str, interview: InterviewAnswerSet) -> Path:
     """Keep the applicant's rewritten answers in place of the generated drafts.
 
     Unlike a freshly generated set, an edit arrives from the page, so the
-    vacancy is checked to still exist before anything is written for it.
+    vacancy is checked to still exist before anything is written for it. A
+    page left open on an older set must not undo a generation made since,
+    on the command line or in another tab, so an edit to a set older than the
+    saved one is refused. An edit to the same set, or to a newer one the
+    server could not save when it was generated, goes ahead.
 
     Args:
         user: Name of an existing user.
@@ -187,10 +206,21 @@ def save_edited_answers(user: str, interview: InterviewAnswerSet) -> Path:
 
     Raises:
         InterviewStoreError: If the vacancy no longer exists.
+        StaleInterviewError: If a newer set was generated after this one.
     """
     if Database(user_db_path(require_user(user))).get_job(interview.job_id) is None:
         raise InterviewStoreError("Vacancy no longer exists.")
-    return save_interview_set(user, interview)
+    edited = _in_utc(interview)
+    saved = load_interview_set(
+        user, edited.job_id, InterviewMode.ANSWER, edited.language
+    )
+    if saved is not None and saved.generated_at > edited.generated_at:
+        raise StaleInterviewError(
+            "Newer answers were generated for this vacancy after this page "
+            "opened them. Your edits are still on screen: download them, or "
+            "choose the vacancy again to see the newer set."
+        )
+    return save_interview_set(user, edited)
 
 
 def load_interview_set(

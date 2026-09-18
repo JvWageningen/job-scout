@@ -260,7 +260,10 @@ with caution. There is no need to run
 Before writing, both halves check what is stored about the company. Research and the
 review describe the employer, not one vacancy, so what was found for one vacancy is
 used for every vacancy at the same company. Names are compared lower-cased with their
-spaces collapsed, the same way the review cache has always matched them.
+spaces collapsed and without a trailing legal form, so *Voorbeeld*, *Voorbeeld B.V.*
+and *Voorbeeld BV* are one employer (B.V., N.V., V.O.F., C.V., GmbH, Ltd and Inc are
+dropped; words such as Holding or Nederland are not, since those can name another
+company of the group).
 
 - **No usable research** means none is stored for any vacancy at the company, or what
   is stored cites no web source (an older version wrote it from model memory). The
@@ -312,10 +315,11 @@ A few details:
   `POST /api/company/research/{job_id}`. Both always search now, whatever is
   remembered, and work in the user's own database, so the attempt is remembered where
   interview preparation looks and what they find is used from the next click on.
-- The lookup also hands back a date for each, so a page can say "company research from
-  <date>": when the research or review in use was written, or, with none in use, when
-  the last check found nothing. A later check that found nothing does not make older
-  research look newer.
+- Stored research is not looked up again however old it is, so every set carries the
+  date the research and the review it used were written. The tab shows it on the line
+  under the set (*Company research from 3 March 2026*), the CLI prints it after the
+  set and the download lists it at the end. A later check that found nothing does not
+  make older research look newer, and a set that used no research carries no date.
 - A vacancy without a company name (the scrapers write `Unknown` when a listing names
   nobody) is never looked up, nothing is remembered for it, and it shares no research or
   review with other such vacancies: they are different employers.
@@ -453,8 +457,17 @@ the language of the set:
 - for the questions they may ask: each question with why it is asked, then your answer
   as its own paragraph, then the footing in words (*Strong*, *Partial* or *Gap*, with
   what that means) and what the answer draws on;
-- at the end, what was missing when the set was written and which of your sources were
+- at the end, what was missing when the set was written, when the company research
+  and review it used were written (a review resting on little web evidence is noted
+  there as used with caution, not listed as missing), and which of your sources were
   used.
+
+A Dutch file says everything in Dutch, including the labels the generators record in
+English: a story cited as *STAR story 3* reads *STAR-verhaal 3*, a question based on
+the *vacancy* or on *company review: cons* reads *vacature* or *bedrijfsbeoordeling:
+nadelen*, and a dated note such as *checked 18 September 2026* reads *gecontroleerd op
+18 september 2026*. The saved set keeps the English labels, because the citation
+checks compare them.
 
 The Word file opens in Word, LibreOffice and Google Docs. Headings use Word's own
 heading styles, and every question and answer is a plain paragraph, not a table or a
@@ -463,11 +476,12 @@ the language of the set. The text file holds the same content with headings in
 capitals, for any editor. The downloads take what is on screen, so a rewritten answer
 is in the file as you wrote it.
 
-The file is named by date, content and employer, for example
-`20260918 Interviewvragen Findwhere.docx` or
-`20260918 Interview answers Findwhere.txt`. The name uses plain letters only, so an
-employer name with accents or odd characters is simplified rather than breaking the
-download. The export adds no dashes, emoji or decorative marks of its own; the words
+The file is named by date, content, employer and vacancy, for example
+`20260918 Interviewvragen Findwhere Meetspecialist.docx` or
+`20260918 Interview answers Findwhere Meetspecialist.txt`, so two vacancies at one
+employer never share a name; when the vacancy is gone its number stands in. The name
+uses plain letters only, so a name with accents or odd characters is simplified rather
+than breaking the download. The export adds no dashes, emoji or decorative marks of its own; the words
 the model wrote, and the words you rewrote, are exported as they are. The one thing
 removed is control characters a Word file cannot hold, which can come along with text
 pasted from Word; a line break of that kind becomes an ordinary one. Both files drop
@@ -509,8 +523,12 @@ uv run job-scout interview export 42 --user alex --mode answer --output ~/Docume
 questions they may ask you, with your answers as last saved. `--language auto|nl|en`
 picks the saved language, and *auto* takes the newest. `--format docx|txt` chooses
 Word (the default) or plain text. `--output` names a file or an existing folder; without
-it the file lands in the current folder under the same name the dashboard gives it. If
-nothing is saved for that vacancy yet, the command says so and writes nothing.
+it the file lands in the current folder under the same name the dashboard gives it. A
+file that already exists may hold your own edits, so the command asks before replacing
+it; without a terminal to answer on it leaves the file alone, and `--yes` replaces it
+without asking. If nothing is saved for that vacancy yet, the command says so and
+writes nothing; when you asked for a language that is not saved but the other one is,
+it says which one to export instead.
 
 ### Privacy
 

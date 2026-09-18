@@ -828,10 +828,14 @@ the same content in the same order.
 | `--language [auto\|nl\|en]` | `auto` | Which saved language to export; `auto` takes the newest |
 | `--format [docx\|txt]` | `docx` | Word or plain text |
 | `--output PATH` | the current folder | A file, or an existing folder to write into |
+| `--yes`, `-y` | off | Replace a file that already exists without asking |
 
 Without `--output` the file is named like the dashboard's download, for example
-`20260918 Interviewvragen Findwhere.docx`. Exits 1 when nothing is saved for that
-vacancy yet. See [Saving and downloading](INTERVIEW_QUESTIONS.md#saving-and-downloading).
+`20260918 Interviewvragen Findwhere Meetspecialist.docx`. A file that already exists
+may hold your own edits, so the command asks before replacing it; without a terminal to
+answer on it leaves the file as it is and exits 1. Exits 1 when nothing is saved for
+that vacancy yet; when the language you chose is not saved but the other one is, the
+message names it. See [Saving and downloading](INTERVIEW_QUESTIONS.md#saving-and-downloading).
 
 ---
 

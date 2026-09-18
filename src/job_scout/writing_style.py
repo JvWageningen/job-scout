@@ -26,10 +26,10 @@ HOUSE_STYLE = (
     "HOUSE STYLE. This applies to every sentence you write for the applicant and "
     "overrides your own habits. Write like a capable person writing plainly on a "
     "normal working day, not like a polished assistant.\n"
-    "1. Punctuation: never use an em dash or an en dash, and never a spaced "
-    "hyphen to join two parts of a sentence. Use a full stop, a comma, a colon or "
-    "brackets instead. A hyphen belongs only inside a word (e-commerce, "
-    "B2B-klanten) or in a range of numbers (2019-2021).\n"
+    "1. Punctuation: never use an em dash, an en dash or a double hyphen (--), "
+    "and never a spaced hyphen to join two parts of a sentence. Use a full stop, "
+    "a comma, a colon or brackets instead. A hyphen belongs only inside a word "
+    "(e-commerce, B2B-klanten) or in a range of numbers (2019-2021).\n"
     "2. No formatting. No bullet points or numbered lists unless the output format "
     "itself is a list, no bold, no italics, no headings, no emoji and no "
     "exclamation marks. Write sentences.\n"
@@ -111,11 +111,16 @@ _TELL_PATTERN = re.compile(
 )
 
 _EM_OR_EN = "\u2014\u2013"
-# A dash between two digits is a range, whatever dash the model chose.
-_DIGIT_RANGE = re.compile(rf"(\d)\s*[{_EM_OR_EN}]\s*(\d)")
+# A dash between two digits is a range, whatever dash the model chose; the
+# double hyphen a plain-text writer types for a dash included.
+_DIGIT_RANGE = re.compile(rf"(\d)\s*(?:[{_EM_OR_EN}]|-{{2,}})\s*(\d)")
 _DIGIT_SPACED_HYPHEN = re.compile(r"(\d) - (\d)")
 # A dash between words joins two parts of a sentence; a comma does that job.
-_CLAUSE_DASH = re.compile(rf"\s*[{_EM_OR_EN}]\s*")
+# Two or more hyphens are such a dash when spaced on both sides or when they
+# join two words, so a command-line flag such as "--verbose" is left alone.
+_CLAUSE_DASH = re.compile(
+    rf"\s*(?:[{_EM_OR_EN}]|(?<=\S)[ \t]+-{{2,}}[ \t]+(?=\S)|(?<=\w)-{{2,}}(?=\w))\s*"
+)
 _SPACED_HYPHEN = re.compile(r"(?<=\S) - (?=\S)")
 _BOLD = re.compile(r"(\*\*|__)(?=\S)(.+?)(?<=\S)\1", re.DOTALL)
 _ITALIC = re.compile(r"(?<![\w*])\*(?=\S)([^*\n]+?)(?<=\S)\*(?![\w*])")
@@ -175,6 +180,21 @@ def _humanise_line(line: str) -> str:
     body = body.replace("\u2026", "...")
     body = _tidy(body)
     return prefix + body if body else body.rstrip()
+
+
+def strip_emphasis(text: str) -> str:
+    """Remove markdown bold and italics, and change nothing else.
+
+    For text whose punctuation belongs to the applicant, such as a line copied
+    from their own CV, where :func:`humanise` would also rewrite the dashes.
+
+    Args:
+        text: Generated text.
+
+    Returns:
+        The text without markdown emphasis.
+    """
+    return _ITALIC.sub(r"\1", _BOLD.sub(r"\2", text))
 
 
 def _tidy(text: str) -> str:

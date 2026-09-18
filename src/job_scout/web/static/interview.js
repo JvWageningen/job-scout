@@ -57,7 +57,16 @@
     let shownJob = '', shownLanguage = 'auto';
     // Edits are saved one after another, and a vacancy is only read once they
     // have landed, so reading it back never returns the text before an edit.
-    let saving = Promise.resolve(), saveTimer = null;
+    // busy counts the runs in progress: while one owns the status line, a
+    // quiet save does not write over what it says.
+    let saving = Promise.resolve(), saveTimer = null, busy = 0;
+    // True once the server refused an edit because a newer set was generated
+    // after this one was shown (in another tab, or on the command line). The
+    // edits stay on screen, but are not sent again over the newer set.
+    let stale = false;
+    const STALE = 'Newer answers were generated for this vacancy after this page opened them, '
+        + 'so your edits here were not saved over them. They are still on screen: download them, '
+        + 'or choose the vacancy again to see the newer set.';
     const validUser = () => currentUser && currentUser !== 'all' ? currentUser : null;
     const status = (text, error = false) => {
         el('status').textContent = text;
@@ -72,7 +81,9 @@
         fresh(ctx);
         if (!response.ok) {
             const data = await response.json().catch(() => ({}));
-            throw new Error(typeof data.detail === 'string' ? data.detail : 'The request failed. Check your input and retry.');
+            const error = new Error(typeof data.detail === 'string' ? data.detail : 'The request failed. Check your input and retry.');
+            error.status = response.status;
+            throw error;
         }
         return response;
     }
@@ -82,10 +93,14 @@
         if (!user) { status(NO_USER); return; }
         const ctx = {user, epoch};
         el('workspace').disabled = true;
+        busy++;
         status(label);
         try { await action(ctx); }
         catch (error) { if (error.message !== 'stale' && ctx.epoch === epoch) status(error.message, true); }
-        finally { if (ctx.epoch === epoch) el('workspace').disabled = false; }
+        finally {
+            busy--;
+            if (ctx.epoch === epoch) el('workspace').disabled = false;
+        }
     }
     function buttons() {
         el('generate').textContent = latest ? AGAIN.ask : GENERATE.ask;
@@ -100,7 +115,7 @@
     }
     function clearAnswers() {
         clearTimeout(saveTimer);
-        answers = null; drafts = []; lastSaved = ''; queued = '';
+        answers = null; drafts = []; lastSaved = ''; queued = ''; stale = false;
         el('answers-results').hidden = true; el('answers-empty').hidden = false;
         el('answers-list').replaceChildren();
         el('answers-source').textContent = ''; el('answers-missing').textContent = '';
@@ -192,10 +207,22 @@
     // Written out by hand: the same words in every browser and locale.
     const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July',
         'August', 'September', 'October', 'November', 'December'];
+    function spokenDate(value) {
+        const date = new Date(value);
+        return !value || Number.isNaN(date.getTime()) ? ''
+            : `${date.getDate()} ${MONTHS[date.getMonth()]} ${date.getFullYear()}`;
+    }
     function generatedOn(set) {
-        const date = new Date(set.generated_at);
-        return Number.isNaN(date.getTime()) ? '' :
-            ` · generated on ${date.getDate()} ${MONTHS[date.getMonth()]} ${date.getFullYear()}`;
+        const day = spokenDate(set.generated_at);
+        return day ? ` · generated on ${day}` : '';
+    }
+    // Stored research is reused for as long as it is kept, so how old the
+    // company facts behind a set are is worth saying.
+    function companyLine(set) {
+        const research = spokenDate(set.company_research_date);
+        const review = spokenDate(set.company_review_date);
+        return (research ? ` Company research from ${research}.` : '')
+            + (review ? ` Company review from ${review}.` : '');
     }
     // A missing source was not in the prompt at all; a thin review was, with a
     // warning. Saying "written without it" about the second would be false.
@@ -250,7 +277,7 @@
             block.append(heading, ol);
             el('themes').append(block);
         });
-        el('source').textContent = `Vacancy #${set.job_id} · ${set.company} · ${String(set.language).toUpperCase()} · ${set.questions.length} questions${generatedOn(set)}.${factsLine(set)}`;
+        el('source').textContent = `Vacancy #${set.job_id} · ${set.company} · ${String(set.language).toUpperCase()} · ${set.questions.length} questions${generatedOn(set)}.${factsLine(set)}${companyLine(set)}`;
         el('missing').textContent = missingLine(set.missing_context, 'questions');
         el('results').hidden = false; el('empty').hidden = true;
         buttons();
@@ -314,7 +341,7 @@
     }
     function renderAnswers(set) {
         clearTimeout(saveTimer);
-        answers = set; drafts = []; lastSaved = queued = JSON.stringify(set);
+        answers = set; drafts = []; lastSaved = queued = JSON.stringify(set); stale = false;
         el('answers-list').replaceChildren();
         grouped(set.questions, 'kind', KINDS).forEach(([kind, list]) => {
             const block = document.createElement('div');
@@ -325,7 +352,7 @@
             el('answers-list').append(block);
         });
         const gaps = set.questions.filter(q => q.footing === 'gap').length;
-        el('answers-source').textContent = `Vacancy #${set.job_id} · ${set.company} · ${String(set.language).toUpperCase()} · ${set.questions.length} questions · ${gaps} marked as a gap${generatedOn(set)}.${factsLine(set)}`;
+        el('answers-source').textContent = `Vacancy #${set.job_id} · ${set.company} · ${String(set.language).toUpperCase()} · ${set.questions.length} questions · ${gaps} marked as a gap${generatedOn(set)}.${factsLine(set)}${companyLine(set)}`;
         el('answers-missing').textContent = missingLine(set.missing_context, 'answers');
         el('answers-results').hidden = false; el('answers-empty').hidden = true;
         buttons();
@@ -402,11 +429,11 @@
     function saveEdits() {
         clearTimeout(saveTimer);
         const user = validUser();
-        if (!answers || !user) return;
+        if (!answers || !user || stale) return;
         const {set, emptied} = onScreen();
         const text = JSON.stringify(set);
         if (text === queued) {
-            if (emptied) status(EMPTIED);
+            if (emptied && !busy) status(EMPTIED);
             return;
         }
         queued = text;
@@ -421,21 +448,30 @@
             await api('/saved/answers/' + set.job_id, ctx, json('PUT', set));
         } catch (error) {
             if (queued === text) queued = '';
-            if (error.message !== 'stale' && ctx.epoch === epoch) status(error.message, true);
+            if (error.message === 'stale' || ctx.epoch !== epoch) return;
+            const shown = answers && answers.job_id === set.job_id && answers.language === set.language;
+            if (error.status === 409 && shown) { stale = true; status(STALE, true); return; }
+            status(error.message, true);
             return;
         }
         if (answers && answers.job_id === set.job_id && answers.language === set.language) lastSaved = text;
         if (saved && saved.job_id === set.job_id) remember('answers', set);
-        status(emptied ? `Your edits are saved. ${EMPTIED}` : 'Your edited answers are saved with this vacancy.');
+        if (!busy) status(emptied ? `Your edits are saved. ${EMPTIED}` : 'Your edited answers are saved with this vacancy.');
     }
     // Before the answers on screen make way for another set, their last edits
     // are sent and have to land. If they did not, the answers stay on screen.
     async function settle() {
         saveEdits();
         await saving;
-        if (unsaved()) {
-            throw new Error('Your latest edits to the answers could not be saved, so they stay on screen. Try again, or download them first.');
+        if (!unsaved()) return;
+        // Edits that can never be saved must not hold the page forever: the
+        // applicant decides whether to leave them, after downloading them.
+        if (stale && window.confirm('Your edits to these answers were not saved, because newer answers '
+            + 'were generated for this vacancy. Leave them? Download them first if you want to keep them.')) {
+            return;
         }
+        throw new Error(stale ? STALE
+            : 'Your latest edits to the answers could not be saved, so they stay on screen. Try again, or download them first.');
     }
     async function loadSaved() {
         const job = el('job').value;
@@ -530,8 +566,15 @@
         document.querySelector('[data-tab="interview"].tab-btn').addEventListener('click', () => {
             if (loadedUser !== validUser()) load();
         });
-        document.getElementById('user-select').addEventListener('change', () => {
+        // Capture runs before app.js switches the user, so a declined switch
+        // can still put the previous user back and stop the reload.
+        document.getElementById('user-select').addEventListener('change', event => {
             keepInterviewTab = document.getElementById('interview-section').classList.contains('active');
+            if (unsaved() && !window.confirm('Switch users and discard the interview answers you edited? '
+                + 'Their latest edits are not saved yet. Download them first if you want to keep them.')) {
+                event.target.value = currentUser || '';
+                event.stopImmediatePropagation();
+            }
         }, true);
         document.getElementById('user-select').addEventListener('change', () => {
             reset();

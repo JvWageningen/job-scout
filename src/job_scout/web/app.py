@@ -71,6 +71,7 @@ from job_scout.interview_store import (
     InterviewSet,
     InterviewStoreError,
     SavedInterview,
+    StaleInterviewError,
     load_saved_interview,
     save_edited_answers,
     save_interview_set,
@@ -143,6 +144,7 @@ def _attach_company_reviews(db: Database, jobs: list[JobListing]) -> None:
         db: Database holding the company-review cache.
         jobs: Jobs to enrich in place.
     """
+    from job_scout.company_review import load_review  # noqa: PLC0415
     from job_scout.models import CompanyReview  # noqa: PLC0415
 
     cache: dict[str, CompanyReview | None] = {}
@@ -150,7 +152,7 @@ def _attach_company_reviews(db: Database, jobs: list[JobListing]) -> None:
         key = job.company.lower()
         if key not in cache:
             raw = db.get_company_review(job.company, max_age_days=365)
-            cache[key] = CompanyReview.model_validate_json(raw) if raw else None
+            cache[key] = load_review(raw)
         job.company_review = cache[key]
 
 
@@ -661,10 +663,17 @@ def _add_saved_routes(router: APIRouter) -> None:
     def save_answers(
         job_id: int, body: InterviewAnswerSet, user: InterviewUser
     ) -> InterviewAnswerSet:
-        """Keep the applicant's rewritten answers in place of the drafts."""
+        """Keep the applicant's rewritten answers in place of the drafts.
+
+        Answers generated after the page opened this set are not replaced by
+        it: that is a 409, and the page keeps the edits on screen.
+        """
         if body.job_id != job_id:
             raise InterviewStoreError("Vacancy ID does not match the answers.")
-        save_edited_answers(user, body)
+        try:
+            save_edited_answers(user, body)
+        except StaleInterviewError as exc:
+            raise HTTPException(409, str(exc)) from exc
         return body
 
 

@@ -13,10 +13,14 @@ which keeps the navigation pane useful and the file tidy in any editor.
 The fixed wording is in the set's own language and follows the house style in
 :mod:`job_scout.writing_style`: no em or en dashes, no decorative symbols and
 no emoji. What the model wrote, and what the applicant rewrote, is exported as
-it is; the export never rewrites the applicant's own text. The one exception
-is technical: control characters that a Word file cannot hold (they arrive
-with text pasted from Word or scraped from a page) are dropped from both
-formats alike, so one stray character cannot cost the applicant the download.
+it is; the export never rewrites the applicant's own text. Two things are
+translated rather than rewritten: the source names and dated notes the
+generators record in English (a story cited as "STAR story 3", a question
+"based on" the vacancy, a lookup "checked 18 September 2026"), which a Dutch
+document says in Dutch. The one technical exception: control characters that
+a Word file cannot hold (they arrive with text pasted from Word or scraped
+from a page) are dropped from both formats alike, so one stray character
+cannot cost the applicant the download.
 """
 
 from __future__ import annotations
@@ -49,6 +53,7 @@ from job_scout.interview_questions import (
     THIN_REVIEW,
     InterviewQuestion,
     QuestionTheme,
+    gap_kind,
 )
 from job_scout.interview_store import InterviewMode, InterviewSet, mode_of
 from job_scout.letters.models import LetterLanguage
@@ -170,15 +175,41 @@ class _Labels(BaseModel):
     based_on: str
     based_on_nothing: str
     missing: str
+    checked_on: str
+    tried_on: str
+    company_used: str
+    research_from: str
+    review_from: str
+    thin_review: str
     sources: str
     ask_file: str
     answer_file: str
+    vacancy: str
+    story: str
     months: tuple[str, ...]
     themes: dict[QuestionTheme, str]
     kinds: dict[QuestionKind, str]
     footings: dict[AnswerFooting, str]
     missing_names: dict[str, str]
+    grounding_words: tuple[tuple[str, str], ...] = ()
 
+
+# How missing_context spells a month: in English, whatever the set's language
+# (see job_scout.company_lookups.day).
+_ENGLISH_MONTHS = (
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
+)
 
 _LABELS = {
     LetterLanguage.EN: _Labels(
@@ -194,23 +225,21 @@ _LABELS = {
         based_on="Based on",
         based_on_nothing="nothing in your CV, stories or notes",
         missing="What was missing",
+        checked_on="checked",
+        tried_on="tried",
+        company_used="Company information that was used",
+        research_from="Company research from",
+        review_from="Company review from",
+        thin_review=(
+            "The company review rests on little web evidence, so it was used "
+            "with caution."
+        ),
         sources="Sources about you that were used",
         ask_file="Interview questions",
         answer_file="Interview answers",
-        months=(
-            "January",
-            "February",
-            "March",
-            "April",
-            "May",
-            "June",
-            "July",
-            "August",
-            "September",
-            "October",
-            "November",
-            "December",
-        ),
+        vacancy="vacancy",
+        story="STAR story",
+        months=_ENGLISH_MONTHS,
         themes={
             QuestionTheme.ROLE: "The role",
             QuestionTheme.TEAM: "The team",
@@ -251,9 +280,20 @@ _LABELS = {
         based_on="Gebaseerd op",
         based_on_nothing="niets uit je cv, verhalen of notities",
         missing="Wat ontbrak",
+        checked_on="gecontroleerd op",
+        tried_on="geprobeerd op",
+        company_used="Gebruikte informatie over het bedrijf",
+        research_from="Bedrijfsonderzoek van",
+        review_from="Beoordeling van het bedrijf van",
+        thin_review=(
+            "De beoordeling van het bedrijf rust op weinig bronnen en is met "
+            "voorzichtigheid gebruikt."
+        ),
         sources="Gebruikte bronnen over jou",
         ask_file="Interviewvragen",
         answer_file="Interviewantwoorden",
+        vacancy="vacature",
+        story="STAR-verhaal",
         months=(
             "januari",
             "februari",
@@ -297,12 +337,30 @@ _LABELS = {
             NO_PUBLIC_INFO: "geen openbare informatie over het bedrijf gevonden",
             RESEARCH_FAILED: "het bedrijfsonderzoek kon deze keer niet worden afgerond",
             NO_REVIEW: "nog geen beoordeling van het bedrijf",
-            THIN_REVIEW: "de beoordeling van het bedrijf rust op weinig bronnen",
             "no vacancy description": "geen vacaturetekst",
             "no STAR stories saved yet": "nog geen STAR-verhalen opgeslagen",
         },
+        # The words a model uses to say where a question came from. Longest
+        # first, so "company review" is translated as a whole.
+        grounding_words=(
+            ("company research", "bedrijfsonderzoek"),
+            ("company review", "bedrijfsbeoordeling"),
+            ("your CV", "je cv"),
+            ("vacancy", "vacature"),
+            ("culture", "cultuur"),
+            ("pros", "voordelen"),
+            ("cons", "nadelen"),
+        ),
     ),
 }
+
+# Sets saved before the plural was fixed say "3 career track(s)".
+_OLD_TRACKS = re.compile(r"^(\d+) career track\(s\)$")
+# A story citation is built in code as "STAR story <id>" and checked against
+# that label, so the stored set always has it in English, in any casing.
+_STORY_CITATION = re.compile(r"^STAR story (\d+)$", re.IGNORECASE)
+# The date a remembered lookup puts after its missing_context constant.
+_DATED_GAP = re.compile(r"^ \((checked|tried) (\d{1,2}) ([A-Za-z]+) (\d{4})\)$")
 
 # The applicant's sources are named in English where they are gathered; a Dutch
 # document says the same in Dutch. A name not listed here is left as it is.
@@ -315,8 +373,8 @@ _SOURCE_NAMES_NL = (
         "je uitgelezen profiel (met een eventuele LinkedIn-import)",
     ),
     (re.compile(r"^your profile description$"), "je profielbeschrijving"),
-    (re.compile(r"^1 career track\(s\)$"), "1 loopbaanrichting"),
-    (re.compile(r"^(\d+) career track\(s\)$"), r"\1 loopbaanrichtingen"),
+    (re.compile(r"^1 career track$"), "1 loopbaanrichting"),
+    (re.compile(r"^(\d+) career tracks$"), r"\1 loopbaanrichtingen"),
     (re.compile(r"^1 STAR story$"), "1 STAR-verhaal"),
     (re.compile(r"^(\d+) STAR stories$"), r"\1 STAR-verhalen"),
 )
@@ -388,6 +446,41 @@ def _header(
     ]
 
 
+def _grounding_name(text: str, labels: _Labels) -> str:
+    """Name where a question came from in the set's language.
+
+    The model is asked to name its source in the words the prompt uses
+    ("vacancy", "company review: cons"), and the citation check reads those
+    English words, so they stay English in the stored set. A Dutch document
+    translates the known words and leaves anything else as the model wrote it.
+
+    Args:
+        text: The question's ``grounded_in`` as stored.
+        labels: Fixed words in the set's language.
+
+    Returns:
+        The source in the set's language.
+    """
+    for english, translated in labels.grounding_words:
+        pattern = rf"(?<![\w-]){re.escape(english)}(?![\w-])"
+        text = re.sub(pattern, translated, text, flags=re.IGNORECASE)
+    return text
+
+
+def _citation_name(source: str, labels: _Labels) -> str:
+    """Name one source of a draft answer in the set's language.
+
+    Args:
+        source: One ``based_on`` entry as stored, e.g. "STAR story 3".
+        labels: Fixed words in the set's language.
+
+    Returns:
+        A story citation in the set's language; any other entry as it is.
+    """
+    match = _STORY_CITATION.match(source)
+    return f"{labels.story} {match.group(1)}" if match else source
+
+
 def _question_blocks(item: InterviewQuestion, labels: _Labels) -> list[Block]:
     """Lay out one question to ask, with why it matters and its source.
 
@@ -402,8 +495,9 @@ def _question_blocks(item: InterviewQuestion, labels: _Labels) -> list[Block]:
     if item.why:
         blocks.append(Block(kind=BlockKind.DETAIL, label=labels.why, text=item.why))
     if item.grounded_in:
+        source = _grounding_name(item.grounded_in, labels)
         label = labels.grounded_in
-        blocks.append(Block(kind=BlockKind.DETAIL, label=label, text=item.grounded_in))
+        blocks.append(Block(kind=BlockKind.DETAIL, label=label, text=source))
     return blocks
 
 
@@ -422,7 +516,8 @@ def _answer_blocks(item: LikelyQuestion, labels: _Labels) -> list[Block]:
         blocks.append(
             Block(kind=BlockKind.DETAIL, label=labels.why_asked, text=item.why_asked)
         )
-    based_on = "; ".join(item.based_on) or labels.based_on_nothing
+    cited = [_citation_name(source, labels) for source in item.based_on]
+    based_on = "; ".join(cited) or labels.based_on_nothing
     return [
         *blocks,
         Block(kind=BlockKind.ANSWER, label=labels.answer, text=item.draft_answer),
@@ -473,6 +568,10 @@ def _source_name(source: str, language: LetterLanguage) -> str:
     Returns:
         The Dutch name when one is known and the set is Dutch, else the name.
     """
+    old = _OLD_TRACKS.match(source)
+    if old:
+        count = int(old.group(1))
+        source = f"{count} career track" + ("" if count == 1 else "s")
     if language is not LetterLanguage.NL:
         return source
     for pattern, replacement in _SOURCE_NAMES_NL:
@@ -481,23 +580,91 @@ def _source_name(source: str, language: LetterLanguage) -> str:
     return source
 
 
-def _closing(interview: InterviewSet, labels: _Labels) -> list[Block]:
-    """List what the generation lacked and which of the applicant's sources it used.
+def _missing_name(gap: str, labels: _Labels) -> str:
+    """Name one ``missing_context`` entry in the set's language, date included.
+
+    An entry caused by a remembered lookup carries its date in English after
+    the constant, e.g. "no company review yet (checked 18 September 2026)".
+    The constant and the date are translated apart, so a Dutch document says
+    "nog geen beoordeling van het bedrijf (gecontroleerd op 18 september
+    2026)". An English set, and an entry nothing is known about, stay as they
+    are.
+
+    Args:
+        gap: One entry as stored.
+        labels: Fixed words in the set's language.
+
+    Returns:
+        The entry in the set's language.
+    """
+    kind = gap_kind(gap)
+    name = labels.missing_names.get(kind)
+    if name is None:
+        return gap
+    rest = gap[len(kind) :]
+    match = _DATED_GAP.match(rest)
+    if match is None or match.group(3) not in _ENGLISH_MONTHS:
+        return name + rest
+    verb, day, month, year = match.groups()
+    when = labels.checked_on if verb == "checked" else labels.tried_on
+    try:
+        moment = date(int(year), _ENGLISH_MONTHS.index(month) + 1, int(day))
+    except ValueError:
+        return name + rest
+    return f"{name} ({when} {_spoken_date(moment, labels)})"
+
+
+def _company_blocks(interview: InterviewSet, labels: _Labels) -> list[Block]:
+    """Say how old the company research and review behind the set are.
+
+    Stored research is reused for as long as it is kept, so the date it was
+    written tells the applicant how fresh the company facts are. A thin review
+    was used, with caution, so it is noted here and not under what was
+    missing.
 
     Args:
         interview: The set being exported.
         labels: Fixed words in the set's language.
 
     Returns:
-        Up to two short sections; an empty one is left out.
+        A heading with one line per dated source and the caution, or nothing.
+    """
+    lines: list[str] = []
+    for label, moment in (
+        (labels.research_from, interview.company_research_date),
+        (labels.review_from, interview.company_review_date),
+    ):
+        if moment is not None:
+            lines.append(f"{label} {_spoken_date(_local_date(moment), labels)}")
+    if THIN_REVIEW in interview.missing_context:
+        lines.append(labels.thin_review)
+    if not lines:
+        return []
+    return [
+        Block(kind=BlockKind.HEADING, text=labels.company_used),
+        *(Block(kind=BlockKind.ITEM, text=line) for line in lines),
+    ]
+
+
+def _closing(interview: InterviewSet, labels: _Labels) -> list[Block]:
+    """List what the generation lacked and which sources it used.
+
+    Args:
+        interview: The set being exported.
+        labels: Fixed words in the set's language.
+
+    Returns:
+        Up to three short sections; an empty one is left out.
     """
     blocks: list[Block] = []
-    if interview.missing_context:
+    absent = [gap for gap in interview.missing_context if gap != THIN_REVIEW]
+    if absent:
         blocks.append(Block(kind=BlockKind.HEADING, text=labels.missing))
         blocks.extend(
-            Block(kind=BlockKind.ITEM, text=labels.missing_names.get(gap, gap))
-            for gap in interview.missing_context
+            Block(kind=BlockKind.ITEM, text=_missing_name(gap, labels))
+            for gap in absent
         )
+    blocks.extend(_company_blocks(interview, labels))
     if interview.sources_used:
         blocks.append(Block(kind=BlockKind.HEADING, text=labels.sources))
         blocks.extend(
@@ -718,10 +885,10 @@ def render_docx(
 
 
 def _ascii_name(text: str) -> str:
-    """Fold a company name to letters a file name and a header can carry.
+    """Fold a company name or vacancy title to what a file name and header carry.
 
     Args:
-        text: The company name as scraped.
+        text: The company name or vacancy title as scraped.
 
     Returns:
         ASCII letters, digits and a few harmless marks, at most 60 characters.
@@ -731,15 +898,22 @@ def _ascii_name(text: str) -> str:
     return cleaned[:_MAX_NAME].strip(" .,-")
 
 
-def export_filename(interview: InterviewSet, file_format: ExportFormat) -> str:
-    """Name the download: date, what it is and the company.
+def export_filename(
+    interview: InterviewSet,
+    file_format: ExportFormat,
+    vacancy_title: str | None = None,
+) -> str:
+    """Name the download: date, what it is, the company and the vacancy.
 
-    For example "20260918 Interviewvragen Findwhere.docx". The name is ASCII
-    only, so it survives every browser, file system and header unchanged.
+    For example "20260918 Interviewvragen Findwhere Meetspecialist.docx". The
+    vacancy keeps two vacancies at one employer apart; without a title the
+    vacancy number does. The name is ASCII only, so it survives every
+    browser, file system and header unchanged.
 
     Args:
         interview: The set being exported.
         file_format: The file type.
+        vacancy_title: The vacancy's title, or None when it is gone.
 
     Returns:
         The file name with its extension.
@@ -747,10 +921,12 @@ def export_filename(interview: InterviewSet, file_format: ExportFormat) -> str:
     labels = _LABELS[interview.language]
     ask = mode_of(interview) is InterviewMode.ASK
     stamp = _local_date(interview.generated_at).strftime("%Y%m%d")
+    vacancy = _ascii_name(vacancy_title or "")
     parts = [
         stamp,
         labels.ask_file if ask else labels.answer_file,
         _ascii_name(interview.company),
+        vacancy or f"{labels.vacancy} {interview.job_id}",
     ]
     return " ".join(part for part in parts if part) + f".{file_format.value}"
 
@@ -784,13 +960,14 @@ def export_interview(
     Returns:
         The file with its name and MIME type.
     """
-    blocks = interview_blocks(interview, vacancy_title(user, interview.job_id))
+    title = vacancy_title(user, interview.job_id)
+    blocks = interview_blocks(interview, title)
     if file_format is ExportFormat.DOCX:
         content = render_docx(blocks, interview.language, interview.generated_at)
     else:
         content = render_text(blocks).encode("utf-8")
     return ExportedFile(
-        filename=export_filename(interview, file_format),
+        filename=export_filename(interview, file_format, title),
         media_type=MEDIA_TYPES[file_format],
         content=content,
     )

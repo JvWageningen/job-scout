@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from job_scout.models import CareerTrack, Config
+from job_scout.evaluator import _build_fit_prompt
+from job_scout.models import CareerTrack, Config, JobListing
 from job_scout.tracks import (
     DEFAULT_TRACK_ID,
     blend_tracks,
@@ -15,6 +16,7 @@ from job_scout.tracks import (
     slugify_track_id,
     standalone_tracks,
 )
+from tests.style_checks import assert_styled_prompt
 
 
 def _single_profile_config() -> Config:
@@ -130,6 +132,29 @@ class TestStandaloneAndBlendSplit:
         text = effective_description(track, [blend])
         assert "MUST" in text
         assert "requirement" in text.lower()
+
+    def test_a_required_blend_keeps_the_fit_prompt_in_the_house_style(self) -> None:
+        """The fit reasoning is read on the dashboard, and a model copies dashes.
+
+        The clause lands in the prompt's candidate profile, so it must not use
+        the double hyphen the house style forbids.
+        """
+        track = CareerTrack(id="q", name="Q", description="Quality work.")
+        blend = CareerTrack(
+            id="ai", name="AI", description="AI tooling", mode="blend", required=True
+        )
+        job = JobListing(
+            title="Quality engineer",
+            company="Voorbeeld",
+            url="https://vacatures.example/q",
+            source="test",
+            description="Quality work with some AI tooling.",
+        )
+
+        prompt = _build_fit_prompt(job, effective_description(track, [blend]), "", "")
+
+        assert "not a bonus: score down roles without it" in prompt
+        assert_styled_prompt(prompt)
 
     def test_only_blend_tracks_still_yields_something_to_search(self) -> None:
         """A config of nothing but blend tracks must not search nothing."""

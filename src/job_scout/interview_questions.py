@@ -138,6 +138,16 @@ class InterviewQuestionSet(BaseModel):
         description="Grounding sources that were absent, so the caller can say so "
         "instead of implying the questions saw everything.",
     )
+    company_research_date: datetime | None = Field(
+        default=None,
+        description="When the company research the questions used was written; "
+        "None when no research was used.",
+    )
+    company_review_date: datetime | None = Field(
+        default=None,
+        description="When the company review the questions used was written; "
+        "None when no review was used.",
+    )
 
 
 class _Response(BaseModel):
@@ -167,6 +177,16 @@ class CompanyContext(BaseModel):
     missing: list[str] = Field(default_factory=list)
     research_checked_at: datetime | None = None
     review_checked_at: datetime | None = None
+
+    @property
+    def research_date(self) -> datetime | None:
+        """When the research in use was written; None when none is used."""
+        return self.research_checked_at if self.research is not None else None
+
+    @property
+    def review_date(self) -> datetime | None:
+        """When the review in use was written; None when none is used."""
+        return self.review_checked_at if self.review is not None else None
 
 
 # What missing_context says about the company. "Searched and found nothing" and
@@ -1008,7 +1028,8 @@ def _json_object(raw: str) -> str:
     return text[start : end + 1]
 
 
-# Every field of a question the user reads.
+# Every field of a question the user reads. None of them is ever a list, so a
+# list the model writes anyway becomes sentences.
 _PROSE_FIELDS = ("question", "why", "grounded_in")
 
 
@@ -1033,7 +1054,7 @@ def _parse_questions(raw: str) -> list[InterviewQuestion]:
     try:
         data = json.loads(_json_object(raw))
         if isinstance(data, dict):
-            clean_items(data.get("questions"), _PROSE_FIELDS)
+            clean_items(data.get("questions"), _PROSE_FIELDS, flatten_lists=True)
         response = _Response.model_validate(data)
     except (json.JSONDecodeError, ValidationError) as exc:
         raise InterviewQuestionError(
@@ -1154,4 +1175,6 @@ def generate_interview_questions(
         generated_at=now or datetime.now(UTC),
         missing_context=missing,
         sources_used=facts.used,
+        company_research_date=company.research_date,
+        company_review_date=company.review_date,
     )

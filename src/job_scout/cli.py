@@ -15,6 +15,7 @@ import click
 from loguru import logger
 
 from job_scout import progress
+from job_scout.company_lookups import day
 from job_scout.config import (
     SECRET_FIELDS,
     USER_FIELDS,
@@ -1028,11 +1029,11 @@ def _get_or_build_review(
     dry_run: bool,
 ) -> CompanyReview | None:
     """Return a cached review for *company* or build and cache a fresh one."""
-    from job_scout.company_review import review_company  # noqa: PLC0415
+    from job_scout.company_review import load_review, review_company  # noqa: PLC0415
 
-    cached = db.get_company_review(company)
-    if cached:
-        return CompanyReview.model_validate_json(cached)
+    cached = load_review(db.get_company_review(company))
+    if cached is not None:
+        return cached
     try:
         review = review_company(
             company, client=llm_client, searxng_url=searxng_url, api_key=api_key
@@ -1803,11 +1804,13 @@ def find_sources(user_name: str | None, browser: bool) -> None:
 @click.option("--refresh", is_flag=True, help="Ignore any cached review")
 def company_review_cmd(company: str, user_name: str | None, refresh: bool) -> None:
     """Summarise how good a COMPANY is to work for, from public web info."""
+    from job_scout.company_review import load_review  # noqa: PLC0415
+
     target = _require_single_user(user_name)
     db = Database(user_db_path(target))
-    cached = None if refresh else db.get_company_review(company)
-    if cached:
-        review = CompanyReview.model_validate_json(cached)
+    cached = None if refresh else load_review(db.get_company_review(company))
+    if cached is not None:
+        review = cached
         click.echo("(cached)")
     else:
         review = _fresh_company_review(company, build_effective_config(target))
@@ -3735,6 +3738,28 @@ def _print_interview_questions(result: InterviewQuestionSet) -> None:
     _print_missing_context(
         result.missing_context, "Not seen, so nothing above is based on it:"
     )
+    _print_company_dates(result)
+
+
+def _print_company_dates(result: InterviewSet) -> None:
+    """Say how old the company research and review behind a set are.
+
+    Stored research is reused for as long as it is kept, so its date tells
+    how fresh the company facts are.
+
+    Args:
+        result: A generated question or answer set.
+    """
+    dated = [
+        f"{what} from {day(moment)}"
+        for what, moment in (
+            ("company research", result.company_research_date),
+            ("company review", result.company_review_date),
+        )
+        if moment is not None
+    ]
+    if dated:
+        click.echo(f"\nCompany information used: {'; '.join(dated)}.")
 
 
 def _print_missing_context(missing: list[str], heading: str) -> None:
@@ -3784,10 +3809,16 @@ def interview_questions(
 ) -> None:
     """Write the questions to ask THIS employer, from the company and your CV.
 
-    The inverse of 'profile interview-prep', which rehearses the questions the
-    employer is likely to ask you. Nothing is researched on demand: the vacancy,
-    the cached company research and review and your saved CV are used as they
-    are, and whatever is missing is reported rather than invented.
+    The inverse of 'interview answers', which drafts your answers to what the
+    employer is likely to ask you. The vacancy and your saved CV are used as
+    they are. When the company has not been researched yet, or its review is
+    missing or rests on fewer than three web sources, it is looked up on the
+    web first and the result is stored. Each lookup is remembered per company,
+    so a later run, or another vacancy at the same employer, does not search
+    again. Whatever is still missing is reported rather than invented.
+
+    The set is saved, so the dashboard shows it and 'interview export' writes
+    it to a Word or text file.
     """
     target = _require_single_user(user_name)
     _require_llm()
@@ -3907,6 +3938,7 @@ def _print_interview_answers(result: InterviewAnswerSet) -> None:
         result.missing_context,
         "Notes -- not seen, so nothing above is based on it:",
     )
+    _print_company_dates(result)
 
 
 @interview.command("answers")
@@ -4059,6 +4091,13 @@ def _export_destination(output: Path | None, filename: str) -> Path:
     default=None,
     help="File or existing folder to write to; the current folder by default",
 )
+@click.option(
+    "--yes",
+    "-y",
+    "replace",
+    is_flag=True,
+    help="Replace a file that already exists without asking",
+)
 def interview_export(
     job_id: int,
     user_name: str | None,
@@ -4066,11 +4105,14 @@ def interview_export(
     language: str,
     file_format: str,
     output: Path | None,
+    replace: bool,
 ) -> None:
     """Write a saved interview set to a Word or text file you can edit.
 
     Nothing is generated. This exports what 'interview questions', 'interview
     answers' or the dashboard saved for this vacancy, edited answers included.
+    A file that already exists may hold your own edits, so you are asked
+    before it is replaced; --yes replaces it without asking.
     """
     target = _require_single_user(user_name)
     chosen = None if language == "auto" else LetterLanguage(language)
@@ -4078,17 +4120,92 @@ def interview_export(
     try:
         saved = latest_interview_set(target, job_id, half, chosen)
         if saved is None:
-            command = "questions" if half is InterviewMode.ASK else "answers"
             raise click.ClickException(
-                f"Nothing saved for vacancy {job_id} yet. Generate it first with "
-                f"'job-scout interview {command} {job_id} --user {target}'."
+                _nothing_saved_message(target, job_id, half, chosen)
             )
         exported = export_interview(target, saved, ExportFormat(file_format))
         destination = _export_destination(output, exported.filename)
-        destination.write_bytes(exported.content)
+        _write_export(destination, exported.content, replace=replace)
     except (ValueError, OSError) as exc:
         raise click.ClickException(str(exc)) from exc
     click.echo(f"Wrote {destination}")
+
+
+_LANGUAGE_NAMES = {LetterLanguage.NL: "Dutch", LetterLanguage.EN: "English"}
+
+
+def _nothing_saved_message(
+    user: str, job_id: int, half: InterviewMode, chosen: LetterLanguage | None
+) -> str:
+    """Explain why nothing was exported, and what to run instead.
+
+    With a language chosen, nothing saved in it does not mean nothing saved:
+    the other language may be, and exporting that costs nothing, while
+    generating costs minutes. The generate hint keeps the chosen language, or
+    it would make another set in the vacancy's own language.
+
+    Args:
+        user: The user whose sets were looked for.
+        job_id: The vacancy.
+        half: The half asked for.
+        chosen: The language asked for; None for the newest of any.
+
+    Returns:
+        The message to show.
+    """
+    command = "questions" if half is InterviewMode.ASK else "answers"
+    generate = f"'job-scout interview {command} {job_id} --user {user}"
+    if chosen is not None:
+        generate += f" --language {chosen.value}"
+    generate += "'"
+    other = None if chosen is None else latest_interview_set(user, job_id, half)
+    if chosen is None or other is None:
+        nothing = f"Nothing saved for vacancy {job_id} yet."
+        return f"{nothing} Generate it first with {generate}."
+    wanted = _LANGUAGE_NAMES[chosen]
+    return (
+        f"No {wanted} set is saved for vacancy {job_id}, but a "
+        f"{_LANGUAGE_NAMES[other.language]} one is. Export it with --language "
+        f"{other.language.value} (or auto), or generate the {wanted} set with "
+        f"{generate}."
+    )
+
+
+def _write_export(destination: Path, content: bytes, *, replace: bool) -> None:
+    """Write an exported file, asking before one that exists is replaced.
+
+    The file may be one the applicant already edited, and it may carry the
+    same name as another vacancy's export. Without a terminal to answer on,
+    nothing is replaced: losing edits cannot be undone.
+
+    Args:
+        destination: Where to write.
+        content: The file.
+        replace: Replace an existing file without asking.
+
+    Raises:
+        click.ClickException: If the file exists and may not be replaced.
+    """
+    refused = click.ClickException(
+        f"{destination} already exists and was left as it is. Run again with "
+        "--yes to replace it, or choose another file with --output."
+    )
+    if destination.exists() and not replace:
+        try:
+            replace = click.confirm(
+                f"{destination} already exists and may hold your own edits. "
+                "Replace it?",
+                default=False,
+            )
+        except click.Abort:
+            replace = False
+        if not replace:
+            raise refused
+    try:
+        with destination.open("wb" if replace else "xb") as stream:
+            stream.write(content)
+    except FileExistsError as exc:
+        raise refused from exc
 
 
 def main() -> None:

@@ -122,7 +122,7 @@ def _blend_clause(blends: list[CareerTrack]) -> str:
         wanted = "; ".join(b.description or b.name for b in required)
         parts.append(
             f"The role MUST also involve: {wanted}. Treat this as a "
-            "requirement, not a bonus -- score down roles without it."
+            "requirement, not a bonus: score down roles without it."
         )
     if optional:
         wanted = "; ".join(b.description or b.name for b in optional)

@@ -358,6 +358,45 @@ def test_a_tailored_resume_comes_back_plain_and_keeps_its_date_ranges() -> None:
     assert_styled_prompt(client.calls[0][0])
 
 
+def test_the_applicants_own_cv_lines_keep_their_punctuation() -> None:
+    """The model is told to keep the CV's own lines; so is the clean-up.
+
+    A dash between a language and its level, or an employer and its team, is
+    the applicant's; only the lines the model reworded follow the style.
+    """
+    cv_text = (
+        "Sam de Vries\n+31 6 - 1234 5678\n"
+        "Data Engineer - Deltameet Institute - Mobility team\n"
+        f"Hewlett Packard Enterprise {EN} Amstelveen\n"
+        f"Talen: Nederlands {EN} moedertaal, Engels {EN} vloeiend\n"
+        "Bouwde ETL-pipelines voor meetdata."
+    )
+    client = FakeLLMClient(
+        [
+            "Sam de Vries\n+31 6 - 1234 5678\n"
+            "Data Engineer - Deltameet Institute - Mobility team\n"
+            "Hewlett Packard Enterprise - Amstelveen\n"
+            f"Talen: Nederlands {EN} moedertaal, Engels {EN} vloeiend\n"
+            "* Bouwde **ETL-pipelines** voor meetdata.\n"
+            f"- Leidde in 2021 de migratie {EM} kosten 30% omlaag"
+        ]
+    )
+
+    tailored = tailor_resume_text(
+        cv_text, _profile(), "Meetmethoden bewaken.", keywords=["x"], client=client
+    )
+
+    assert tailored.splitlines() == [
+        "Sam de Vries",
+        "+31 6 - 1234 5678",
+        "Data Engineer - Deltameet Institute - Mobility team",
+        "Hewlett Packard Enterprise - Amstelveen",
+        f"Talen: Nederlands {EN} moedertaal, Engels {EN} vloeiend",
+        "* Bouwde ETL-pipelines voor meetdata.",
+        "- Leidde in 2021 de migratie, kosten 30% omlaag",
+    ]
+
+
 def test_a_resume_line_that_mentions_a_year_is_still_cleaned() -> None:
     """A profile sentence or a bullet with a year in it is prose, not a date line."""
     client = FakeLLMClient(

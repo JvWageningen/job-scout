@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import re
 import sqlite3
 from collections.abc import Generator
 from contextlib import contextmanager
@@ -38,11 +39,11 @@ def _dedup_key(title: str, company: str) -> str:
 
 
 def company_key(company: str) -> str:
-    """Normalise a company name into the key everything about a company shares.
+    """Normalise a company name: lower-cased, whitespace collapsed.
 
-    Reviews, research and lookup attempts describe the employer, not one
-    vacancy, so two vacancies at "Voorbeeld  BV" and "voorbeeld bv" must find
-    the same rows.
+    Two vacancies at "Voorbeeld  BV" and "voorbeeld bv" are at the same
+    company. Rows shared per employer (reviews, research, lookup attempts)
+    go one step further and use :func:`company_share_key`.
 
     Args:
         company: Company name as a vacancy gives it.
@@ -51,6 +52,42 @@ def company_key(company: str) -> str:
         The name lower-cased with its whitespace collapsed.
     """
     return " ".join(company.lower().split())
+
+
+# A legal form a job board may or may not print after an employer's name:
+# B.V., N.V., V.O.F., C.V., GmbH, Ltd and Inc, with or without full stops.
+# Group words such as Holding or Nederland are left alone, because those can
+# name a different company of the same group.
+_LEGAL_FORM = re.compile(
+    r"[\s,.]+(?:b\.?\s?v|n\.?\s?v|v\.?\s?o\.?\s?f|c\.?\s?v|gmbh|ltd|inc)\.?$"
+)
+
+
+def company_share_key(company: str) -> str:
+    """Return the key research, reviews and lookups are shared under.
+
+    Job boards write one employer as "Voorbeeld", "Voorbeeld B.V." and
+    "Voorbeeld BV". Those are one company, so whatever was found or tried for
+    one spelling serves the others: the key is :func:`company_key` without a
+    trailing legal form. A name that is nothing but a legal form keeps it, so
+    the key is never empty.
+
+    Args:
+        company: Company name as a vacancy gives it.
+
+    Returns:
+        The normalised name without a trailing legal form.
+    """
+    key = company_key(company)
+    while True:
+        shorter = _LEGAL_FORM.sub("", key)
+        if shorter == key or not shorter.strip(" ,."):
+            return key
+        key = shorter
+
+
+# The meta row that says every stored company row uses company_share_key.
+_SHARE_KEY_VERSION = ("company_key_version", "2")
 
 
 # Company keys that stand for "no company given", not for an employer: blank,
@@ -360,6 +397,7 @@ class Database:
                     value TEXT NOT NULL
                 )
             """)
+            self._share_company_keys(conn)
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS star_stories (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -392,7 +430,7 @@ class Database:
         ).fetchall()
         conn.executemany(
             "UPDATE company_research SET company_key = ? WHERE id = ?",
-            [(company_key(row[1] or ""), row[0]) for row in rows],
+            [(company_share_key(row[1] or ""), row[0]) for row in rows],
         )
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_company_key_research ON "
@@ -421,6 +459,86 @@ class Database:
                 PRIMARY KEY (company_key, kind, outcome)
             )
         """)
+
+    @staticmethod
+    def _share_company_keys(conn: sqlite3.Connection) -> None:
+        """Move rows stored per spelling onto one key per employer, once.
+
+        Research, reviews and lookups used to be keyed on the name as written,
+        so "Voorbeeld" and "Voorbeeld B.V." each had their own. They are now
+        keyed on :func:`company_share_key`. Where two spellings meet, the
+        newest review and the latest time of each lookup outcome are kept, so
+        nothing learnt is lost and no key is written twice. A meta row records
+        that this ran.
+
+        Args:
+            conn: Open connection to use for the migration.
+        """
+        key, version = _SHARE_KEY_VERSION
+        row = conn.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
+        if row is not None and row[0] == version:
+            return
+        rows = conn.execute(
+            "SELECT r.id, COALESCE(j.company, r.company_name) FROM company_research r "
+            "LEFT JOIN jobs j ON j.id = r.job_id"
+        ).fetchall()
+        conn.executemany(
+            "UPDATE company_research SET company_key = ? WHERE id = ?",
+            [(company_share_key(row[1] or ""), row[0]) for row in rows],
+        )
+        Database._merge_lookups(conn)
+        Database._merge_reviews(conn)
+        conn.execute(
+            "INSERT INTO meta (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (key, version),
+        )
+
+    @staticmethod
+    def _merge_lookups(conn: sqlite3.Connection) -> None:
+        """Rekey remembered lookups, keeping the latest time per outcome.
+
+        Args:
+            conn: Open connection to use for the migration.
+        """
+        latest: dict[tuple[str, str, str], tuple[datetime, str]] = {}
+        for stored, kind, outcome, at in conn.execute(
+            "SELECT company_key, kind, outcome, looked_up_at FROM company_lookups"
+        ).fetchall():
+            moment = _parse_time(at)
+            if moment is None:
+                continue
+            slot = (company_share_key(stored), kind, outcome)
+            if slot not in latest or moment > latest[slot][0]:
+                latest[slot] = (moment, at)
+        conn.execute("DELETE FROM company_lookups")
+        conn.executemany(
+            "INSERT INTO company_lookups (company_key, kind, outcome, looked_up_at) "
+            "VALUES (?, ?, ?, ?)",
+            [(*slot, at) for slot, (_, at) in latest.items()],
+        )
+
+    @staticmethod
+    def _merge_reviews(conn: sqlite3.Connection) -> None:
+        """Rekey cached reviews, keeping the newest one per employer.
+
+        Args:
+            conn: Open connection to use for the migration.
+        """
+        newest: dict[str, tuple[datetime, str, str]] = {}
+        for stored, review_json, reviewed_at in conn.execute(
+            "SELECT company_key, review_json, reviewed_at FROM company_reviews"
+        ).fetchall():
+            moment = _parse_time(reviewed_at) or datetime.min.replace(tzinfo=UTC)
+            key = company_share_key(stored)
+            if key not in newest or moment > newest[key][0]:
+                newest[key] = (moment, review_json, reviewed_at)
+        conn.execute("DELETE FROM company_reviews")
+        conn.executemany(
+            "INSERT INTO company_reviews (company_key, review_json, reviewed_at) "
+            "VALUES (?, ?, ?)",
+            [(key, text, at) for key, (_, text, at) in newest.items()],
+        )
 
     def _backfill_dedup_keys(self, conn: sqlite3.Connection) -> None:
         """Populate dedup_key for rows written before the column existed.
@@ -1534,7 +1652,7 @@ class Database:
                 (
                     job_id,
                     company_name,
-                    company_key(company_name),
+                    company_share_key(company_name),
                     research_json,
                     now_iso,
                     now_iso,
@@ -1569,7 +1687,7 @@ class Database:
         only the vacancy's own research is returned.
 
         Args:
-            company: Company name; matched on :func:`company_key`.
+            company: Company name; matched on :func:`company_share_key`.
             job_id: A vacancy whose own research is included even if it was
                 stored under a differently written company name.
 
@@ -1578,7 +1696,7 @@ class Database:
         """
         # -1 is never a row id, so the job_id condition matches nothing.
         vacancy = job_id if job_id is not None else -1
-        key = company_key(company) if names_company(company) else None
+        key = company_share_key(company) if names_company(company) else None
         with self._conn() as conn:
             rows = conn.execute(
                 "SELECT research_json FROM company_research "
@@ -1594,7 +1712,7 @@ class Database:
         """Remember that a company was looked up, and how that went.
 
         Args:
-            company: Company name; stored as :func:`company_key`.
+            company: Company name; stored as :func:`company_share_key`.
             kind: What was looked up, e.g. "research" or "review".
             outcome: How it went, e.g. "found", "nothing_found" or "failed".
             at: When it happened; now when omitted.
@@ -1607,14 +1725,14 @@ class Database:
                    VALUES (?, ?, ?, ?)
                    ON CONFLICT(company_key, kind, outcome) DO UPDATE SET
                        looked_up_at = excluded.looked_up_at""",
-                (company_key(company), str(kind), str(outcome), moment),
+                (company_share_key(company), str(kind), str(outcome), moment),
             )
 
     def get_company_lookups(self, company: str, kind: str) -> dict[str, datetime]:
         """Return when each outcome of looking a company up last happened.
 
         Args:
-            company: Company name; matched on :func:`company_key`.
+            company: Company name; matched on :func:`company_share_key`.
             kind: What was looked up, e.g. "research" or "review".
 
         Returns:
@@ -1624,13 +1742,13 @@ class Database:
             rows = conn.execute(
                 "SELECT outcome, looked_up_at FROM company_lookups "
                 "WHERE company_key = ? AND kind = ?",
-                (company_key(company), str(kind)),
+                (company_share_key(company), str(kind)),
             ).fetchall()
         times = {row[0]: _parse_time(row[1]) for row in rows}
         return {outcome: when for outcome, when in times.items() if when is not None}
 
     def save_company_review(self, company: str, review_json: str) -> None:
-        """Cache a company work-quality review, keyed by normalised name.
+        """Cache a company work-quality review, keyed by :func:`company_share_key`.
 
         Args:
             company: Company name.
@@ -1644,7 +1762,7 @@ class Database:
                    ON CONFLICT(company_key) DO UPDATE SET
                        review_json = excluded.review_json,
                        reviewed_at = excluded.reviewed_at""",
-                (company_key(company), review_json, now),
+                (company_share_key(company), review_json, now),
             )
 
     def get_company_review(self, company: str, max_age_days: int = 30) -> str | None:
@@ -1661,7 +1779,7 @@ class Database:
             row = conn.execute(
                 "SELECT review_json, reviewed_at FROM company_reviews "
                 "WHERE company_key = ?",
-                (company_key(company),),
+                (company_share_key(company),),
             ).fetchone()
         if not row:
             return None
