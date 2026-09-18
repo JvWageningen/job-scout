@@ -135,7 +135,7 @@
 
             <section id="interview-section" class="section hidden tab-content" data-tab="interview">
                 <div class="letter-heading"><div><h2>Interview questions</h2>
-                <p>Both sides of the conversation. <strong>Questions to ask them</strong> prepares the moment the interviewer says “do you have any questions for us?”. <strong>Questions they may ask you</strong> predicts what you will be asked and drafts an answer you can edit into your own words. Both are written from the vacancy, what is already known about the company and your CV; the answers also draw on your saved STAR stories. This is not about your documents: Document Review checks those.</p></div>
+                <p>Both sides of the conversation. <strong>Questions to ask them</strong> prepares the moment the interviewer says “do you have any questions for us?”. <strong>Questions they may ask you</strong> predicts what you will be asked and drafts an answer you can edit into your own words. Both are written from the vacancy, what is already known about the company and your CV; the answers also draw on your saved STAR stories. Whatever you generate is saved with the vacancy, so it is there when you come back, and both halves download as a Word or text file you can edit. This is not about your documents: Document Review checks those.</p></div>
                 <span id="interview-badge" class="letter-badge">You ask the employer</span></div>
                 <div class="interview-modes" role="tablist" aria-label="Halves of your interview preparation">
                     <button class="interview-mode active" type="button" role="tab" data-mode="ask" id="interview-tab-ask" aria-selected="true" tabindex="0" aria-controls="interview-ask-panel">Questions to ask them</button>
@@ -147,10 +147,10 @@
                     <div class="letter-setup">
                         <h3>1. Set the conversation</h3>
                         <button id="interview-refresh" class="btn btn-small" type="button">Refresh vacancies &amp; CVs</button>
-                        <p class="letter-hint">One setup for both halves: whichever you generate uses the vacancy, language and CV chosen here.</p>
+                        <p class="letter-hint">One setup for both halves: whichever you generate uses the vacancy, language and CV chosen here. Choosing a vacancy shows what you saved for it.</p>
                         <label for="interview-job">Vacancy</label><select id="interview-job"></select>
                         <label for="interview-language">Language</label>
-                        <select id="interview-language"><option value="auto">Automatic — match the vacancy</option><option value="nl">Nederlands</option><option value="en">English</option></select>
+                        <select id="interview-language"><option value="auto">Automatic: match the vacancy</option><option value="nl">Nederlands</option><option value="en">English</option></select>
                         <label for="interview-cv">CV Builder profile <span class="letter-hint">(optional)</span></label><select id="interview-cv"></select>
                         <p class="letter-hint">Your own CV file, LinkedIn import and profile are always used. A CV Builder profile is optional: Automatic uses every source you have. Save any CV Builder changes first.</p>
                         <label for="interview-notes">Anything the model should know? <span class="letter-hint">(optional)</span></label>
@@ -169,8 +169,12 @@
                                 <p id="interview-source" class="letter-hint"></p>
                                 <p id="interview-missing" class="letter-warnings"></p>
                                 <div id="interview-themes"></div>
-                                <div class="letter-actions"><button id="interview-copy" class="btn btn-secondary" type="button">Copy all</button></div>
-                                <p class="letter-hint">A model wrote these from your CV and this vacancy. Read them before you use them, and drop any that no longer fit the conversation.</p>
+                                <div class="letter-actions">
+                                    <button id="interview-docx" class="btn btn-secondary" type="button">Download Word file</button>
+                                    <button id="interview-txt" class="btn btn-secondary" type="button">Download text file</button>
+                                    <button id="interview-copy" class="btn btn-secondary" type="button">Copy all</button>
+                                </div>
+                                <p class="letter-hint">A model wrote these from your CV and this vacancy. Read them before you use them, and drop any that no longer fit the conversation. The Word file opens in Word, LibreOffice and Google Docs, and every question in it can be rewritten or deleted.</p>
                             </div>
                         </div>
                         <div id="interview-answer-panel" role="tabpanel" aria-labelledby="interview-tab-answer" hidden>
@@ -180,8 +184,12 @@
                                 <p id="interview-answers-source" class="letter-hint"></p>
                                 <p id="interview-answers-missing" class="letter-warnings"></p>
                                 <div id="interview-answers-list"></div>
-                                <div class="letter-actions"><button id="interview-answers-copy" class="btn btn-secondary" type="button">Copy all</button></div>
-                                <p class="letter-hint">These are drafts, not lines to learn: rewrite each one until it sounds like you. Your edits stay on this page until you regenerate or reload, so copy them out when you are happy. Copy all takes the text as you have edited it.</p>
+                                <div class="letter-actions">
+                                    <button id="interview-answers-docx" class="btn btn-secondary" type="button">Download Word file</button>
+                                    <button id="interview-answers-txt" class="btn btn-secondary" type="button">Download text file</button>
+                                    <button id="interview-answers-copy" class="btn btn-secondary" type="button">Copy all</button>
+                                </div>
+                                <p class="letter-hint">These are drafts, not lines to learn: rewrite each one until it sounds like you. Your edits are saved with this vacancy as you type, and both downloads and Copy all take the text as you edited it. Generating again replaces the saved answers in that language, edits included.</p>
                             </div>
                         </div>
                     </div>

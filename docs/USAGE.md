@@ -74,6 +74,7 @@ logs directory regardless of this setting; `-v` only affects what reaches your t
 | [`profile interview-prep`](#profile-interview-prep) | Match likely questions to your STAR stories |
 | [`interview questions`](#interview-questions) | Write the questions to ask the employer |
 | [`interview answers`](#interview-answers) | Predict their questions and draft your answers |
+| [`interview export`](#interview-export) | Write a saved interview set to a Word or text file |
 | [`cv list`](#cv-list) | List the stored CV profiles |
 | [`cv serve`](#cv-serve) | Run the CV editor on its own |
 | [`cv render`](#cv-render) | Render a stored CV profile to PDF |
@@ -743,7 +744,8 @@ employer, does not search again (see
 [How the company is looked up](INTERVIEW_QUESTIONS.md#how-the-company-is-looked-up)).
 Whatever grounding is still absent is listed at the end under *Not seen, so nothing above
 is based on it* rather than guessed at. Salary, holiday and benefit questions are omitted
-unless your `--notes` raise them. The questions themselves are not saved.
+unless your `--notes` raise them. The set is saved, so the dashboard shows it and
+[`interview export`](#interview-export) can write it to a file.
 
 | Argument / option | Default | Description |
 |---|---|---|
@@ -780,9 +782,15 @@ bank is allowed, unlike [`profile interview-prep`](#profile-interview-prep): the
 are then built from CV facts alone, and the missing bank is reported.
 
 The company is looked up first in the same way as for
-[`interview questions`](#interview-questions), and the answers themselves are not saved.
+[`interview questions`](#interview-questions), and the set is saved in the same way.
 Absent grounding is listed at the end under *Notes — not seen, so nothing above is based
 on it*.
+
+When answers in that language are already saved for the vacancy, they may be answers
+you rewrote in the dashboard, so the command asks before it replaces them, the way the
+dashboard does. Answer no and the saved answers stay; the new set is printed but not
+saved. Without a terminal to answer on, the saved answers are kept as well. `--yes`
+replaces them without asking, for scripts.
 
 | Argument / option | Default | Description |
 |---|---|---|
@@ -791,10 +799,39 @@ on it*.
 | `--language [auto\|nl\|en]` | `auto` | Language for both the questions and the answers; `auto` reads it from the vacancy |
 | `--cv TEXT` | matched to the language | CV Builder profile to prefer; your own CV and profile are always used |
 | `--notes TEXT` | empty | Context only you know, e.g. why you are leaving |
+| `--yes`, `-y` | off | Replace answers already saved for this vacancy and language without asking |
 
 Exits 1 when the vacancy, the user or a usable CV profile is missing, or when the model
 returns nothing usable. The full feature guide is
 [INTERVIEW_QUESTIONS.md](INTERVIEW_QUESTIONS.md).
+
+### `interview export`
+
+```bash
+uv run job-scout interview export 42 --user alex
+uv run job-scout interview export 42 --user alex --mode answer --format txt
+uv run job-scout interview export 42 --user alex --mode answer --output ~/Documents
+```
+
+Writes a saved interview set to a file you can edit, without generating anything. The
+set is the one [`interview questions`](#interview-questions),
+[`interview answers`](#interview-answers) or the dashboard saved for that vacancy, with
+any answers you rewrote in the dashboard. The Word file opens in Word, LibreOffice and
+Google Docs; every question and answer in it is a plain paragraph. The text file has
+the same content in the same order.
+
+| Argument / option | Default | Description |
+|---|---|---|
+| `JOB_ID` | required | Numeric job id |
+| `--user TEXT` | the only user | User whose set to export |
+| `--mode [ask\|answer]` | `ask` | `ask`: the questions you ask them; `answer`: the questions they may ask you, with your answers |
+| `--language [auto\|nl\|en]` | `auto` | Which saved language to export; `auto` takes the newest |
+| `--format [docx\|txt]` | `docx` | Word or plain text |
+| `--output PATH` | the current folder | A file, or an existing folder to write into |
+
+Without `--output` the file is named like the dashboard's download, for example
+`20260918 Interviewvragen Findwhere.docx`. Exits 1 when nothing is saved for that
+vacancy yet. See [Saving and downloading](INTERVIEW_QUESTIONS.md#saving-and-downloading).
 
 ---
 

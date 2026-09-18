@@ -152,6 +152,22 @@ def user_letters_dir(name: str) -> Path:
     return user_dir(name) / "letters"
 
 
+def user_interview_dir(name: str) -> Path:
+    """Return the directory holding a user's saved interview preparation.
+
+    One JSON file per vacancy, half and language: the questions to ask the
+    employer and the questions they may ask, with the draft answers as the
+    user last left them. Like the letters, none of it belongs beside the code.
+
+    Args:
+        name: User name.
+
+    Returns:
+        Path to data/users/<name>/interview/.
+    """
+    return user_dir(name) / "interview"
+
+
 def user_config_path(name: str) -> Path:
     """Return the config file path for a specific user.
 

@@ -60,10 +60,21 @@ from job_scout.interview_answers import (
     InterviewAnswerSet,
     generate_interview_answers,
 )
+from job_scout.interview_export import ExportedFile, ExportFormat, export_interview
 from job_scout.interview_questions import (
     InterviewQuestionError,
     InterviewQuestionSet,
     generate_interview_questions,
+)
+from job_scout.interview_store import (
+    InterviewMode,
+    InterviewSet,
+    InterviewStoreError,
+    SavedInterview,
+    load_saved_interview,
+    save_edited_answers,
+    save_interview_set,
+    saved_vacancy_choices,
 )
 from job_scout.letters.api import build_api_router as build_letters_api_router
 from job_scout.letters.models import LetterLanguage
@@ -488,6 +499,55 @@ def checked_interview_user(user: str, response: Response) -> Iterator[str]:
 
 InterviewUser = Annotated[str, Depends(checked_interview_user)]
 
+# Tells the page whether a freshly generated set was saved, without changing
+# the shape of the set it gets back.
+_SAVED_HEADER = "X-Interview-Saved"
+
+
+def _keep_generated(user: str, interview: InterviewSet, response: Response) -> None:
+    """Save a set that was just generated, without ever losing it to the save.
+
+    Generation can take minutes. If the disk refuses the write, the set still
+    goes back to the page, where it can be downloaded, and the header says it
+    was not saved.
+
+    Args:
+        user: The validated user.
+        interview: The generated set.
+        response: The response whose header reports the outcome.
+    """
+    try:
+        save_interview_set(user, interview)
+    except OSError as exc:
+        logger.error("Generated interview for {!r} could not be saved: {}", user, exc)
+        response.headers[_SAVED_HEADER] = "false"
+        return
+    response.headers[_SAVED_HEADER] = "true"
+
+
+def _attachment(exported: ExportedFile) -> Response:
+    """Send a rendered file as a download.
+
+    Args:
+        exported: The file, with an ASCII-only name.
+
+    Returns:
+        The attachment response.
+    """
+    return Response(
+        exported.content,
+        media_type=exported.media_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{exported.filename}"',
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+ExportFormatQuery = Annotated[
+    ExportFormat, Query(alias="format", description="docx for Word, txt for text")
+]
+
 
 def build_interview_router() -> APIRouter:
     """Build both directions of one interview's preparation.
@@ -495,8 +555,11 @@ def build_interview_router() -> APIRouter:
     ``/questions`` writes what this candidate should ask the employer;
     ``/answers`` predicts what the interviewer will ask them and drafts the
     reply. They share the request body and the vacancy shortlist, so neither
-    can be prepared for a vacancy the other would refuse. The older
-    ``/api/interview-prep`` route keeps working and is not touched here.
+    can be prepared for a vacancy the other would refuse. Every generated set
+    is saved per vacancy, half and language; ``/saved`` reads it back so
+    nothing has to be generated twice, and ``/export`` turns what is on screen
+    into a Word or text file. The older ``/api/interview-prep`` route keeps
+    working and is not touched here.
 
     Returns:
         A router to mount under "/api/interview", inside the prefix
@@ -509,17 +572,24 @@ def build_interview_router() -> APIRouter:
         """Offer the same vacancies, CVs and source summary the letter writer offers.
 
         Both tabs call ``open_vacancy_choices``, ``profile_choices`` and
-        ``describe_sources``, so an interview can only ever be prepared for a
-        vacancy that is still live, and the two setups cannot drift apart.
+        ``describe_sources``, so the two setups cannot drift apart.
+        ``saved_jobs`` adds, apart from that shortlist, the vacancies that left
+        it but still have saved preparation: a posting is often taken down
+        once the interviews start, and what was prepared for it is still
+        needed then.
         """
+        jobs = open_vacancy_choices(user)
         return {
-            "jobs": open_vacancy_choices(user),
+            "jobs": jobs,
+            "saved_jobs": saved_vacancy_choices(user, {job["id"] for job in jobs}),
             "profiles": profile_choices(user),
             "sources": describe_sources(user),
         }
 
     @router.post("/questions")
-    def questions(body: InterviewRequest, user: InterviewUser) -> InterviewQuestionSet:
+    def questions(
+        body: InterviewRequest, user: InterviewUser, response: Response
+    ) -> InterviewQuestionSet:
         """Write the questions this candidate should ask this employer.
 
         Uses the vacancy, the applicant's facts from all their sources and the
@@ -527,9 +597,10 @@ def build_interview_router() -> APIRouter:
         company is researched from web evidence first, and a missing or thinly
         sourced review is written again once; what is written is stored, so this
         can take a few minutes. Whatever still cannot be found is reported in
-        ``missing_context`` rather than invented.
+        ``missing_context`` rather than invented. The set is saved for this
+        vacancy and language, replacing the one saved before.
         """
-        return generate_interview_questions(
+        result = generate_interview_questions(
             user,
             body.job_id,
             get_llm_client(build_effective_config(user)),
@@ -537,18 +608,22 @@ def build_interview_router() -> APIRouter:
             cv_slug=body.cv_slug,
             notes=body.notes,
         )
+        _keep_generated(user, result, response)
+        return result
 
     @router.post("/answers")
-    def answers(body: InterviewRequest, user: InterviewUser) -> InterviewAnswerSet:
+    def answers(
+        body: InterviewRequest, user: InterviewUser, response: Response
+    ) -> InterviewAnswerSet:
         """Predict this interviewer's questions and draft this candidate's answers.
 
         Looks the company up in the same way as ``/questions`` and is grounded
         in the same material plus the applicant's own STAR stories: an answer
         that cites something the candidate never did is found out in the room,
         so nothing is invented and what is missing comes back in
-        ``missing_context``.
+        ``missing_context``. The set is saved like the questions are.
         """
-        return generate_interview_answers(
+        result = generate_interview_answers(
             user,
             body.job_id,
             get_llm_client(build_effective_config(user)),
@@ -556,8 +631,70 @@ def build_interview_router() -> APIRouter:
             cv_slug=body.cv_slug,
             notes=body.notes,
         )
+        _keep_generated(user, result, response)
+        return result
 
+    _add_saved_routes(router)
+    _add_export_routes(router)
     return router
+
+
+def _add_saved_routes(router: APIRouter) -> None:
+    """Add the routes that read saved sets and keep edited answers.
+
+    Args:
+        router: The interview router.
+    """
+
+    @router.get("/saved/{job_id}")
+    def saved(
+        job_id: int, user: InterviewUser, mode: InterviewMode | None = None
+    ) -> SavedInterview:
+        """Return what was generated for this vacancy before, newest first.
+
+        Reading costs nothing and changes nothing: the tab shows a saved set
+        straight away and only generates again when the applicant asks.
+        """
+        return load_saved_interview(user, job_id, mode)
+
+    @router.put("/saved/answers/{job_id}")
+    def save_answers(
+        job_id: int, body: InterviewAnswerSet, user: InterviewUser
+    ) -> InterviewAnswerSet:
+        """Keep the applicant's rewritten answers in place of the drafts."""
+        if body.job_id != job_id:
+            raise InterviewStoreError("Vacancy ID does not match the answers.")
+        save_edited_answers(user, body)
+        return body
+
+
+def _add_export_routes(router: APIRouter) -> None:
+    """Add the routes that turn what is on screen into a file.
+
+    Both take the set as the body, the way the letter PDF takes the letter,
+    so a download holds exactly what the page shows, edits included.
+
+    Args:
+        router: The interview router.
+    """
+
+    @router.post("/export/questions")
+    def export_questions(
+        body: InterviewQuestionSet,
+        user: InterviewUser,
+        file_format: ExportFormatQuery = ExportFormat.DOCX,
+    ) -> Response:
+        """Download the questions to ask as a Word or text file."""
+        return _attachment(export_interview(user, body, file_format))
+
+    @router.post("/export/answers")
+    def export_answers(
+        body: InterviewAnswerSet,
+        user: InterviewUser,
+        file_format: ExportFormatQuery = ExportFormat.DOCX,
+    ) -> Response:
+        """Download the likely questions and your answers as a Word or text file."""
+        return _attachment(export_interview(user, body, file_format))
 
 
 class TokenAuthMiddleware(BaseHTTPMiddleware):
