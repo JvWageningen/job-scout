@@ -226,6 +226,30 @@ class TestDeriveStyleGuide:
         )
         assert guide == expected.strip()
 
+    def test_quoted_evidence_keeps_the_mark_it_is_about(
+        self, examples: list[ExampleLetter]
+    ) -> None:
+        """A quoted dash is kept, or "never use a dash" would forbid a comma.
+
+        The guide's own words around the quotes are still cleaned.
+        """
+        em, en = "\u2014", "\u2013"
+        lines = (
+            f'- Never use "{em}" to join two clauses {em} use a full stop.',
+            f"- Never use em dashes ({em}) or en dashes ({en}).",
+            f'- Instead of "ik ben er klaar voor {em} echt", write "ik ben klaar."',
+        )
+        dirty = GOOD_GUIDE.replace(
+            '- Never write "uitdagende functie".', "\n".join(lines)
+        )
+        client = FakeLLMClient([dirty])
+
+        guide = derive_style_guide(examples, client)
+
+        assert f'- Never use "{em}" to join two clauses, use a full stop.' in guide
+        assert f"- Never use em dashes ({em}) or en dashes ({en})." in guide
+        assert f'"ik ben er klaar voor {em} echt"' in guide
+
     def test_model_failure_becomes_style_error(
         self, examples: list[ExampleLetter]
     ) -> None:
@@ -301,6 +325,10 @@ class TestDerivationPrompt:
         prompt = _prompt(client)
         assert_styled_prompt(prompt)
         assert "whether bulleted lists are used" not in prompt
+        # A guide that types the mark it forbids shows the writer that mark.
+        assert "name the mark in words" in prompt
+        # "Their best day" asks for the polish the house style rules out.
+        assert "best day" not in prompt
 
     def test_leaves_out_file_names(self, examples: list[ExampleLetter]) -> None:
         """File names often name the employer, so they stay out of the prompt."""

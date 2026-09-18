@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import re
 from io import BytesIO
 from pathlib import Path
 from typing import Any
@@ -16,10 +15,8 @@ from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
 
 from job_scout.llm.base import LLMClient
 from job_scout.models import CvProfile
-from job_scout.writing_style import HOUSE_STYLE, humanise
-
-# A four-digit year from the last or the current century.
-_YEAR = re.compile(r"\b(?:19|20)\d{2}\b")
+from job_scout.prose import clean_prose
+from job_scout.writing_style import HOUSE_STYLE
 
 
 def extract_resume_keywords(
@@ -130,7 +127,11 @@ def tailor_resume_text(
 
     try:
         response = client.complete(prompt, purpose="resume_tailoring")
-        tailored = _humanise_resume(response.strip())
+        # Every line is cleaned, date lines included: clean_prose writes a
+        # period that ends in a word or a month, joined by an en dash, as a
+        # plain-hyphen range ("jan 2019-heden") rather than splitting it with
+        # a comma.
+        tailored = clean_prose(response.strip())
         logger.debug(
             f"Tailored resume: {len(tailored)} chars from original {len(cv_text)}"
         )
@@ -138,23 +139,6 @@ def tailor_resume_text(
     except Exception as e:
         logger.error(f"Failed to tailor resume: {e}")
         return cv_text  # Return original on failure
-
-
-def _humanise_resume(text: str) -> str:
-    """Put a tailored resume's prose in plain punctuation, sparing its dates.
-
-    A line that carries a year is left exactly as written: on a CV that is
-    almost always a date line such as "jan 2019 \u2013 heden", where the dash
-    is a range and a comma would change what the line says.
-
-    Args:
-        text: The resume as the model wrote it.
-
-    Returns:
-        The resume with dashes, emphasis and emoji cleaned out of its prose.
-    """
-    lines = text.split("\n")
-    return "\n".join(line if _YEAR.search(line) else humanise(line) for line in lines)
 
 
 def _format_cv_profile_summary(profile: CvProfile) -> str:

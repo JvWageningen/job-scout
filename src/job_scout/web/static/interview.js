@@ -23,7 +23,7 @@
     // has to rehearse, so it is the one the page marks in amber.
     const FOOTINGS = {
         strong: 'Backed by your CV', partial: 'Partly covered',
-        gap: 'Gap — rehearse this',
+        gap: 'Gap, rehearse this',
     };
     const NO_USER = 'Select a single user to prepare interview questions.';
     // Must match THIN_REVIEW in interview_questions.py. A thin review is still
@@ -195,7 +195,7 @@
         el('results').hidden = false; el('empty').hidden = true;
     }
     function plainText(set) {
-        return [`Questions to ask — ${set.company}`, ...grouped(set.questions, 'theme', THEMES).map(([theme, list]) =>
+        return [`Questions to ask: ${set.company}`, ...grouped(set.questions, 'theme', THEMES).map(([theme, list]) =>
             [label(theme, THEMES).toUpperCase(), ...list.map((item, index) => [
                 `${index + 1}. ${item.question}`,
                 item.why ? `   Why this matters for you: ${item.why}` : '',
@@ -261,7 +261,7 @@
     // What is copied is what is on screen: the user's edits, not the draft.
     function plainTextAnswers(set) {
         const indent = text => String(text).split('\n').map(l => '   ' + l).join('\n');
-        return [`Questions they may ask — ${set.company}`, ...grouped(set.questions, 'kind', KINDS).map(([kind, list]) =>
+        return [`Questions they may ask: ${set.company}`, ...grouped(set.questions, 'kind', KINDS).map(([kind, list]) =>
             [label(kind, KINDS).toUpperCase(), ...list.map((item, index) => {
                 const draft = drafts.find(d => d.item === item);
                 return [

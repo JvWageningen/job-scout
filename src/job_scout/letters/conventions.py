@@ -84,8 +84,8 @@ Hard rules, whatever the language
   anything specific from them: no employer, person, project, product, place, date,
   or achievement. Those belong to other applications and would be wrong in this one.
 - Do not mention salary unless the user's notes ask you to.
-- Write the letter the user would write on their best day: keep their voice and
-  formality, and apply their style guide's improvements.
+- Write the letter the way the user writes: keep their voice and formality, and
+  apply their style guide's improvements without polishing beyond them.
 """
 
 

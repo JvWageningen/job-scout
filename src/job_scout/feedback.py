@@ -20,7 +20,8 @@ from pydantic import BaseModel, Field
 
 from job_scout.evaluator import _extract_json
 from job_scout.llm.base import LLMError
-from job_scout.writing_style import HOUSE_STYLE, humanise
+from job_scout.prose import clean_prose
+from job_scout.writing_style import HOUSE_STYLE
 
 if TYPE_CHECKING:
     from job_scout.llm.base import LLMClient
@@ -80,6 +81,10 @@ _STYLE_NOTE = (
 
 # The fields of a point written as prose; severity is a fixed label.
 _POINT_PROSE = ("section", "issue", "suggestion", "example")
+# The one prose field that is all the model's own words: the rewrite the
+# candidate may paste. The others quote the candidate's document, and a quote
+# must show what the document actually says.
+_REWRITE = "example"
 
 
 def _job_context(job: JobListing) -> str:
@@ -194,7 +199,8 @@ neither American-style overselling nor apologetic understatement. Flag any
 generic sentence that could be sent to any employer unchanged, and any sentence
 that reads as machine written because it breaks the house style below.
 
-Be specific: quote the weak sentence and give a replacement. Do not invent
+Be specific: quote the weak sentence exactly as the letter has it, in double
+quotes and with its own punctuation, and give a replacement. Do not invent
 achievements. Order points with the most damaging first. At most {_MAX_POINTS}
 points. In missing_keywords, list things the vacancy clearly asks about that
 the letter never addresses.
@@ -212,19 +218,52 @@ Respond ONLY with JSON in exactly this shape:
 {_SCHEMA}"""
 
 
-def _plain_point(raw: dict[str, Any]) -> FeedbackPoint:
+def _plain(text: str, *, quotes_document: bool = True) -> str:
+    """Put one piece of review prose in the house style.
+
+    Args:
+        text: Prose as the model wrote it.
+        quotes_document: Whether it may quote the candidate's document, whose
+            quoted words are then kept exactly as written.
+
+    Returns:
+        The cleaned prose.
+    """
+    return clean_prose(text, keep_quotes=quotes_document)
+
+
+def _plain_point(raw: dict[str, Any]) -> FeedbackPoint | None:
     """Build one feedback point with its prose in plain punctuation.
 
     Args:
         raw: One entry of the model's "points" list.
 
     Returns:
-        The point; its severity label is kept exactly as given.
+        The point, its severity label kept exactly as given, or None when the
+        issue held nothing but marks the clean-up removes.
     """
     point = FeedbackPoint(**raw)
-    return point.model_copy(
-        update={field: humanise(getattr(point, field)) for field in _POINT_PROSE}
+    cleaned = point.model_copy(
+        update={
+            field: _plain(getattr(point, field), quotes_document=field != _REWRITE)
+            for field in _POINT_PROSE
+        }
     )
+    return cleaned if cleaned.issue else None
+
+
+def _strengths(raw: object) -> list[str]:
+    """Clean the strengths, dropping any the clean-up leaves empty.
+
+    Args:
+        raw: The model's "strengths" value.
+
+    Returns:
+        At most six strengths in plain punctuation.
+    """
+    items = raw if isinstance(raw, list) else []
+    cleaned = (_plain(str(item)) for item in items if item)
+    return [text for text in cleaned if text][:6]
 
 
 def _run(prompt: str, client: LLMClient, target: str) -> DocumentFeedback:
@@ -250,16 +289,17 @@ def _run(prompt: str, client: LLMClient, target: str) -> DocumentFeedback:
             target=target,
         )
 
-    points = [
+    cleaned = (
         _plain_point(p)
         for p in (data.get("points") or [])
         if isinstance(p, dict) and p.get("issue")
-    ][:_MAX_POINTS]
+    )
+    points = [point for point in cleaned if point is not None][:_MAX_POINTS]
 
     return DocumentFeedback(
         score=data.get("score") if isinstance(data.get("score"), int) else None,
-        summary=humanise(str(data.get("summary") or "")),
-        strengths=[humanise(str(s)) for s in (data.get("strengths") or []) if s][:6],
+        summary=_plain(str(data.get("summary") or "")),
+        strengths=_strengths(data.get("strengths")),
         points=points,
         missing_keywords=[str(k) for k in (data.get("missing_keywords") or []) if k][
             :12

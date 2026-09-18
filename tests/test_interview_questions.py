@@ -29,6 +29,7 @@ from job_scout.database import Database
 from job_scout.interview_questions import (
     InterviewQuestion,
     InterviewQuestionError,
+    InterviewQuestionSet,
     QuestionTheme,
     generate_interview_questions,
 )
@@ -788,6 +789,34 @@ def test_every_field_the_user_reads_comes_back_plain(
     for item in result.questions:
         assert_plain(item.question + item.why + item.grounded_in)
     assert_styled_prompt(client.calls[0][0])
+
+
+def test_the_length_limit_holds_for_the_cleaned_text(
+    db: Database, dutch_job: int
+) -> None:
+    """A dash becomes ", ", so a field at its limit can grow past it when cleaned.
+
+    Cleaning before validation means a set that comes back always passes its
+    own limits again, and one the clean-up pushes over is refused like any
+    other over-long answer.
+    """
+    at_limit = ("Ja\u2014nee " * 60)[:400]
+    first = _question("Waarom is deze rol nu open?", "role")
+    first["why"] = at_limit
+    others = [_question(text, theme) for text, theme in THEMED[1:]]
+
+    with pytest.raises(InterviewQuestionError, match="invalid or incomplete"):
+        generate_interview_questions(
+            USER, dutch_job, FakeLLMClient([_payload([first, *others])])
+        )
+
+    first["why"] = "Ja\u2014nee " * 10
+    result = generate_interview_questions(
+        USER, dutch_job, FakeLLMClient([_payload([first, *others])])
+    )
+
+    assert result.questions[0].why == ("Ja, nee " * 10).strip()
+    assert InterviewQuestionSet.model_validate(result.model_dump()) == result
 
 
 def test_prompt_states_the_rules_that_make_this_worth_having(

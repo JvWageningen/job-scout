@@ -210,7 +210,7 @@ and drafts an answer for each. They arrive grouped by what the question probes �
 motivation and fit, your experience, technical depth, how you work with others, gaps
 they will probe, practical matters — and every block carries a footing chip saying how
 much real evidence stands behind the answer: *Backed by your CV*, *Partly covered*, or
-*Gap — rehearse this*, which is marked in amber and counted in the summary line. The
+*Gap, rehearse this*, which is marked in amber and counted in the summary line. The
 answers are drawn only from your CV, your saved STAR stories and your notes; a gap is
 answered honestly rather than bluffed, because an invented achievement is found out in
 the room. Each draft sits in an editable box — rewrite it until it sounds like you, and

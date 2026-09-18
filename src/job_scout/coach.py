@@ -22,8 +22,9 @@ from pydantic import BaseModel, Field
 from job_scout.evaluator import _extract_json
 from job_scout.llm.base import LLMError
 from job_scout.models import CareerTrack, CvProfile
+from job_scout.prose import clean_prose
 from job_scout.tracks import slugify_track_id
-from job_scout.writing_style import HOUSE_STYLE, humanise
+from job_scout.writing_style import HOUSE_STYLE
 
 if TYPE_CHECKING:
     from job_scout.llm.base import LLMClient
@@ -248,9 +249,9 @@ def propose_tracks(
     )
     return CoachProposal(
         tracks=tracks,
-        summary=humanise(str(data.get("summary") or "")),
-        negative_description=humanise(str(data.get("negative_description") or "")),
-        follow_up=humanise(str(data.get("follow_up") or "")),
+        summary=clean_prose(str(data.get("summary") or "")),
+        negative_description=clean_prose(str(data.get("negative_description") or "")),
+        follow_up=clean_prose(str(data.get("follow_up") or "")),
     )
 
 
@@ -282,7 +283,7 @@ def _coerce_tracks(value: object) -> list[CareerTrack]:
             CareerTrack(
                 id=track_id,
                 name=name,
-                description=humanise(str(item.get("description") or "").strip()),
+                description=clean_prose(str(item.get("description") or "").strip()),
                 mode="blend" if item.get("mode") == "blend" else "standalone",
                 required=bool(item.get("required")),
                 keywords_dutch=_as_str_list(item.get("keywords_dutch")),

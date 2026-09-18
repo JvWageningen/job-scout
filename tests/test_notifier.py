@@ -78,6 +78,15 @@ def test_notification_payload_structure() -> None:
     assert "Amsterdam" in body
 
 
+def test_notification_body_joins_score_and_reasoning_without_a_dash() -> None:
+    """The text around the generated reasoning follows the house style too."""
+    job = _make_job(location_unknown=True)
+    _, body = _build_notification_payload(job)
+    assert "Score: 80/100. Good match" in body
+    assert "Location unknown, travel time not calculated" in body
+    assert "\u2014" not in body
+
+
 def test_notification_title_contains_company() -> None:
     """Notification title includes both job title and company."""
     job = _make_job(title="Backend Engineer", company="StartupXYZ")

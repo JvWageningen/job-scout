@@ -26,6 +26,7 @@ from job_scout.letters.models import LetterLanguage, LetterRequest, WarningKind
 from job_scout.letters.style import save_style_guide
 from job_scout.letters.writer import (
     LetterError,
+    _style_warnings,
     letter_pdf_bytes,
     load_letter,
     save_letter,
@@ -220,6 +221,69 @@ def test_a_plain_letter_has_no_style_warning(private_data: int) -> None:
     letter = write_letter("Alex", LetterRequest(job_id=private_data), fake())
 
     assert WarningKind.STYLE not in [w.kind for w in letter.warnings]
+
+
+def _style_messages_for_named_employer(closing: str) -> list[str]:
+    """Write a letter to an employer whose name and product hold stock words.
+
+    Args:
+        closing: The letter's last sentence.
+
+    Returns:
+        The messages of the letter's STYLE warnings.
+    """
+    job_id = Database(config.user_db_path("Alex")).save_job(
+        JobListing(
+            title="Engineer",
+            company="Pivotal Meettechniek",
+            url="https://example.org/vacancy-2",
+            source="test",
+            description=(
+                "Wij zoeken een collega die met de techniek werkt. Je beheert "
+                "ons meetplatform Elevate Suite en bent verantwoordelijk voor "
+                "de kwaliteit."
+            ),
+        )
+    )
+    body = (
+        "Ik solliciteer bij Pivotal Meettechniek. Bij CurrentWorks werk ik "
+        f"dagelijks met Elevate Suite aan metingen. {closing}"
+    )
+    client = FakeLLMClient([json.dumps({"paragraphs": [body]})])
+    letter = write_letter("Alex", LetterRequest(job_id=job_id), client)
+    return [w.message for w in letter.warnings if w.kind is WarningKind.STYLE]
+
+
+def test_a_stock_word_inside_a_name_is_not_reported(private_data: int) -> None:
+    """The applicant cannot rewrite the employer's name or a product it sells."""
+    assert _style_messages_for_named_employer("Ik kijk uit naar uw reactie.") == []
+
+
+def test_a_short_title_is_not_cut_out_of_the_middle_of_a_word() -> None:
+    """Removing "com" from "compassie" would leave "passie" behind."""
+    assert _style_warnings("Mijn compassie voor metingen.", ["Com"], "") == []
+
+
+def test_the_applicants_own_stock_word_is_still_reported_next_to_a_name(
+    private_data: int,
+) -> None:
+    messages = _style_messages_for_named_employer("Ik heb er veel passie voor.")
+
+    assert len(messages) == 1
+    assert '"passie"' in messages[0]
+    assert "pivotal" not in messages[0]
+    assert "elevate" not in messages[0]
+
+
+def test_a_paragraph_the_clean_up_makes_too_long_is_refused(
+    private_data: int,
+) -> None:
+    """A dash becomes ", ", so the length limit is checked on the cleaned text."""
+    paragraph = ("Ja\u2014nee " * 900)[:5990]
+    client = FakeLLMClient([json.dumps({"paragraphs": [paragraph]})])
+
+    with pytest.raises(LetterError, match="overlong"):
+        write_letter("Alex", LetterRequest(job_id=private_data), client)
 
 
 def test_a_letter_of_nothing_but_marks_is_refused(private_data: int) -> None:

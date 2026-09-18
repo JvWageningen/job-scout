@@ -23,7 +23,8 @@ from loguru import logger
 from job_scout.config import user_letters_dir
 from job_scout.letters.models import ExampleLetter, LetterLanguage
 from job_scout.llm.base import LLMClient, LLMError
-from job_scout.writing_style import HOUSE_STYLE, humanise
+from job_scout.prose import clean_prose
+from job_scout.writing_style import HOUSE_STYLE
 
 
 class StyleError(RuntimeError):
@@ -105,8 +106,8 @@ the writer to preserve it, never to soften it.
 closing, register and length, and what changes compared with their Dutch letters.
 - Keep doing: genuine strengths that recur, so the writer keeps them.
 - Improve: recurring weaknesses, each paired with the better alternative \
-("Instead of ..., write ..."). The writer should produce the letter this person \
-writes on their best day.
+("Instead of ..., write ..."). The writer should write the way this person \
+writes, with these improvements applied, not a more polished version of them.
 - Never: hard prohibitions. List the stock phrases this person has actually used, \
 quoted so the writer can avoid them; flattery of the employer; and inventing any \
 fact that is not in the CV, the vacancy or the user's notes.
@@ -131,9 +132,11 @@ THE HOUSE STYLE COMES FIRST
 Every letter written from this guide also follows the house style below, so the \
 guide must never contradict it: do not tell the writer to use dashes, bulleted \
 lists, bold text, exclamation marks or any word the house style bans, even where \
-this person's letters do. Where their letters do, put that under Improve or Never. \
-Write the guide's own instructions in the house style too; the headings and \
-bullets required under OUTPUT FORMAT are the only formatting allowed.
+this person's letters do. Where their letters do, put that under Improve or Never, \
+and name the mark in words (a dash, bold text, a bulleted list) instead of typing \
+it, so the guide never shows the writer the mark itself. Write the guide's own \
+instructions in the house style too; the headings and bullets required under \
+OUTPUT FORMAT are the only formatting allowed.
 {house_style}
 OUTPUT FORMAT
 Return only the markdown guide: no preamble, no closing remarks, no code fence. \
@@ -366,17 +369,21 @@ def _humanise_guide(markdown: str) -> str:
     The guide is handed to the letter writer word for word, and a writer copies
     the punctuation of its instructions, so a dash left in the guide comes back
     in the letters. Headings, bullets and their indentation stay as they are.
+    Quoted phrases stay as they are too: they are evidence from the applicant's
+    own letters, and "Instead of ..., write ..." or 'never use "\u2014"' only
+    make sense while the quote still shows the mark it is about.
 
     Args:
         markdown: The guide as the model wrote it.
 
     Returns:
-        The same guide without dashes, emphasis or emoji in its wording.
+        The same guide without dashes, emphasis or emoji in its own wording.
     """
     lines = []
     for line in markdown.split("\n"):
         text = line.lstrip()
-        lines.append(line[: len(line) - len(text)] + humanise(text) if text else "")
+        indent = line[: len(line) - len(text)]
+        lines.append(indent + clean_prose(text, keep_quotes=True) if text else "")
     return "\n".join(lines)
 
 

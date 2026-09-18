@@ -27,6 +27,7 @@ from job_scout.database import Database
 from job_scout.interview_answers import (
     AnswerFooting,
     InterviewAnswerError,
+    InterviewAnswerSet,
     LikelyQuestion,
     QuestionKind,
     generate_interview_answers,
@@ -561,6 +562,49 @@ def test_every_field_the_user_reads_comes_back_plain(
     for question in result.questions:
         assert_plain(question.question + question.why_asked + question.draft_answer)
     assert_styled_prompt(client.calls[0][0])
+
+
+def test_the_length_limit_holds_for_the_cleaned_answer(
+    db: Database, dutch_job: int
+) -> None:
+    """A dash becomes ", ", so an answer at its limit can grow past it when cleaned.
+
+    Cleaning before validation means a set that comes back always passes its
+    own limits again, and one the clean-up pushes over is refused like any
+    other over-long answer.
+    """
+    others = [_item(text, kind) for text, kind in ASKED[1:]]
+    at_limit = _item("Waarom wij?", "motivation", answer=("Ja\u2014nee " * 400)[:2500])
+
+    with pytest.raises(InterviewAnswerError, match="invalid or incomplete"):
+        generate_interview_answers(
+            USER, dutch_job, FakeLLMClient([_payload([at_limit, *others])])
+        )
+
+    within = _item("Waarom wij?", "motivation", answer="Ja\u2014nee " * 10)
+    result = generate_interview_answers(
+        USER, dutch_job, FakeLLMClient([_payload([within, *others])])
+    )
+
+    assert result.questions[0].draft_answer == ("Ja, nee " * 10).strip()
+    assert InterviewAnswerSet.model_validate(result.model_dump()) == result
+
+
+def test_a_salary_range_in_an_answer_stays_a_range(
+    db: Database, dutch_job: int
+) -> None:
+    """A comma would turn "\u20ac 3.500 - \u20ac 4.800" into two separate amounts."""
+    answer = "Ik zit nu op \u20ac 3.500 - \u20ac 4.800 bruto per maand \u2014 dat past."
+    first = _item("Wat verwacht je qua salaris?", "practical", answer=answer)
+    others = [_item(text, kind) for text, kind in ASKED[1:]]
+
+    result = generate_interview_answers(
+        USER, dutch_job, FakeLLMClient([_payload([first, *others])])
+    )
+
+    assert result.questions[0].draft_answer == (
+        "Ik zit nu op \u20ac 3.500-\u20ac 4.800 bruto per maand, dat past."
+    )
 
 
 def test_prompt_states_the_rules_that_make_the_answers_trustworthy(

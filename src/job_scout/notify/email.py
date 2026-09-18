@@ -41,7 +41,7 @@ def _format_travel_summary(job: JobListing) -> str:
         Human-readable travel summary string.
     """
     if job.location_unknown:
-        return "Location unknown — travel time not calculated"
+        return "Location unknown, travel time not calculated"
     if not job.travel_times:
         return "Travel time not available"
 

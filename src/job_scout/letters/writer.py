@@ -44,7 +44,13 @@ from job_scout.letters.models import (
 from job_scout.letters.render import render_letter_pdf
 from job_scout.letters.style import load_style_guide
 from job_scout.llm.base import LLMClient
-from job_scout.writing_style import HOUSE_STYLE, ai_tells, humanise
+from job_scout.prose import clean_prose
+from job_scout.writing_style import HOUSE_STYLE, ai_tells
+
+# Draft paragraphs share the limit of a stored letter's paragraphs.
+_MAX_PARAGRAPH_CHARS = 6000
+# The end of a text that the next word would open a sentence of.
+_SENTENCE_START = re.compile(r"(?:^|[.!?:]\s+|\n\s*)$")
 
 # The personal style guide and the example letters may both show dashes or
 # lists, because the applicant's own letters did; the house style still wins.
@@ -74,7 +80,12 @@ def require_user(user: str) -> str:
 
 
 def _parse_draft(raw: str) -> Draft:
-    """Reject malformed or cut-off JSON rather than salvaging a partial letter."""
+    """Reject malformed or cut-off JSON rather than salvaging a partial letter.
+
+    The paragraphs are put in the house style before their length is checked:
+    the clean-up can lengthen a paragraph, and the letter's limit applies to
+    the text that is kept.
+    """
     raw = raw.strip()
     if raw.startswith("```") and raw.endswith("```"):
         raw = re.sub(r"^```(?:json)?\s*", "", raw)[:-3].strip()
@@ -84,7 +95,10 @@ def _parse_draft(raw: str) -> Draft:
         raise LetterError(
             "The model returned an incomplete or invalid letter. Retry."
         ) from exc
-    if any(not p.strip() or len(p) > 6000 for p in draft.paragraphs):
+    if any(not p.strip() for p in draft.paragraphs):
+        raise LetterError("The model returned empty or overlong paragraphs.")
+    draft.paragraphs = _plain_paragraphs(draft.paragraphs)
+    if any(len(p) > _MAX_PARAGRAPH_CHARS for p in draft.paragraphs):
         raise LetterError("The model returned empty or overlong paragraphs.")
     return draft
 
@@ -101,25 +115,74 @@ def _plain_paragraphs(paragraphs: list[str]) -> list[str]:
     Raises:
         LetterError: If nothing but dashes, emphasis or emoji was written.
     """
-    cleaned = [text for text in (humanise(p.strip()) for p in paragraphs) if text]
+    cleaned = [text for text in (clean_prose(p.strip()) for p in paragraphs) if text]
     if not cleaned:
         raise LetterError("The model returned an empty letter. Retry.")
     return cleaned
 
 
-def _style_warnings(body: str) -> list[LetterWarning]:
-    """Point out the stock phrases that make a letter read as generated.
-
-    A rule cannot rewrite "passionate" into what the applicant actually means,
-    so the phrases are named for the applicant to rewrite.
+def _without_names(body: str, names: list[str]) -> str:
+    """Blank out the names the applicant cannot rewrite.
 
     Args:
         body: The finished letter body.
+        names: The employer, the job title and the recipient.
+
+    Returns:
+        The body with every occurrence of those names, as whole words, removed.
+        A short title such as "IT" is not cut out of the middle of a word, where
+        it could leave a stock word behind.
+    """
+    for name in (n.strip() for n in names):
+        if name:
+            pattern = rf"(?<!\w){re.escape(name)}(?!\w)"
+            body = re.sub(pattern, " ", body, flags=re.IGNORECASE)
+    return body
+
+
+def _is_a_name(phrase: str, body: str, vacancy: str) -> bool:
+    """Tell whether a stock word only appears as the name of something.
+
+    "Elevate Health" or "Pivotal Software" is a name the vacancy uses, not a
+    choice of words. That shows as a capital in the middle of a sentence, the
+    same capitalised word appearing in the vacancy.
+
+    Args:
+        phrase: A stock phrase found in the body.
+        body: The body, with the known names already removed.
+        vacancy: The vacancy text the letter answers.
+
+    Returns:
+        True when every occurrence is capitalised mid-sentence as in the vacancy.
+    """
+    pattern = rf"(?<![\w-]){re.escape(phrase)}(?![\w-])"
+    hits = list(re.finditer(pattern, body, re.IGNORECASE))
+    return bool(hits) and all(
+        hit.group(0)[0].isupper()
+        and not _SENTENCE_START.search(body[: hit.start()])
+        and hit.group(0) in vacancy
+        for hit in hits
+    )
+
+
+def _style_warnings(body: str, names: list[str], vacancy: str) -> list[LetterWarning]:
+    """Point out the stock phrases that make a letter read as generated.
+
+    A rule cannot rewrite "passionate" into what the applicant actually means,
+    so the phrases are named for the applicant to rewrite. A stock word inside
+    the employer's name, the job title, the recipient or a name the vacancy
+    uses is not the applicant's wording, so it is not reported.
+
+    Args:
+        body: The finished letter body.
+        names: The employer, the job title and the recipient.
+        vacancy: The vacancy text the letter answers.
 
     Returns:
         One warning naming every stock phrase found, or nothing.
     """
-    phrases = ai_tells(body)
+    own = _without_names(body, names)
+    phrases = [p for p in ai_tells(own) if not _is_a_name(p, own, vacancy)]
     if not phrases:
         return []
     return [
@@ -275,7 +338,7 @@ def write_letter(
         ),
         subject=subject_line(job.title, language),
         salutation=salutation,
-        paragraphs=_plain_paragraphs(draft.paragraphs),
+        paragraphs=draft.paragraphs,
         closing=default_closing(language),
         signature=facts.name,
         examples_used=[e.name for e in examples],
@@ -287,7 +350,11 @@ def write_letter(
     letter.warnings.extend(
         _example_warnings(letter.body_text(), examples, allowed + facts.name)
     )
-    letter.warnings.extend(_style_warnings(letter.body_text()))
+    letter.warnings.extend(
+        _style_warnings(
+            letter.body_text(), [job.company, job.title, recipient], job.description
+        )
+    )
     return letter
 
 

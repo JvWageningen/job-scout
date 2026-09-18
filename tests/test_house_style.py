@@ -10,14 +10,18 @@ generators and the CV tailor are covered next to their own fixtures.
 from __future__ import annotations
 
 import json
+from typing import Any
 
 from job_scout import coach, cover_letter_generator, feedback, interview_prep
+from job_scout.cli import _eval_job_full_parallel
 from job_scout.coach import CoachAnswer
 from job_scout.evaluator import evaluate_fit
-from job_scout.models import CvProfile, CvRole, JobListing
+from job_scout.models import Config, CvProfile, CvRole, JobListing
 from job_scout.resume_tailor import tailor_resume_text
 from tests.helpers import FakeLLMClient
 from tests.style_checks import GENERATED, PLAIN, assert_plain, assert_styled_prompt
+
+EM, EN, EURO = "\u2014", "\u2013", "\u20ac"
 
 
 def _job() -> JobListing:
@@ -144,6 +148,60 @@ class TestFeedback:
         assert review.summary == PLAIN
         assert_styled_prompt(client.calls[0][0])
 
+    def test_a_quoted_sentence_still_shows_what_the_letter_says(self) -> None:
+        """The review quotes the letter's dashes; cleaning them would misquote it.
+
+        Only the quotation is kept. The model's own words around it, and the
+        rewrite the candidate may paste, are cleaned as usual.
+        """
+        quoted = f'"Ik ben {EM} echt {EM} gemotiveerd"'
+        response = json.dumps(
+            {
+                "summary": f"De opening {quoted} leest als gegenereerd {EM} jammer.",
+                "points": [
+                    {
+                        "issue": f"De zin {quoted} gebruikt gedachtestreepjes.",
+                        "suggestion": f'Vervang "{EM}" door een punt {EM} of schrap.',
+                        "example": f"Ik ben gemotiveerd {EM} echt.",
+                    }
+                ],
+            }
+        )
+
+        review = feedback.review_cover_letter(
+            "Beste team, ...", _job(), client=FakeLLMClient([response])
+        )
+
+        assert review.summary == f"De opening {quoted} leest als gegenereerd, jammer."
+        point = review.points[0]
+        assert point.issue == f"De zin {quoted} gebruikt gedachtestreepjes."
+        assert point.suggestion == f'Vervang "{EM}" door een punt, of schrap.'
+        assert point.example == "Ik ben gemotiveerd, echt."
+
+    def test_the_prompt_asks_for_exact_quotes(self) -> None:
+        client = FakeLLMClient([self._RESPONSE])
+
+        feedback.review_cover_letter("Beste team, ...", _job(), client=client)
+
+        assert "exactly as the letter has it, in double" in client.calls[0][0]
+
+    def test_a_point_or_strength_left_empty_by_the_clean_up_is_dropped(
+        self,
+    ) -> None:
+        """An emoji-only strength would otherwise show as an empty bullet."""
+        response = json.dumps(
+            {
+                "summary": "Degelijk.",
+                "strengths": ["\u2705", "Concreet"],
+                "points": [{"issue": "\U0001f680"}, {"issue": "Te lang."}],
+            }
+        )
+
+        review = feedback.review_cv("CV", client=FakeLLMClient([response]))
+
+        assert review.strengths == ["Concreet"]
+        assert [point.issue for point in review.points] == ["Te lang."]
+
 
 class TestCoach:
     """The coach's proposal and its own intake questions."""
@@ -216,10 +274,75 @@ def test_the_evaluation_reasoning_comes_back_plain() -> None:
     assert_styled_prompt(client.calls[0][0])
 
 
-def test_a_tailored_resume_comes_back_plain_but_keeps_its_date_lines() -> None:
-    """On a date line the dash is a range, and a comma would change it."""
-    date_line = "Adviseur, Voorbeeld BV, jan 2019 \u2013 heden"
-    client = FakeLLMClient([f"PROFIEL\n{GENERATED}\n\nERVARING\n{date_line}"])
+def test_a_salary_range_in_the_compensation_reasoning_stays_a_range() -> None:
+    """Stating the range is what this field is for; a comma would split it."""
+    response = json.dumps(
+        {
+            "fit_score": 64,
+            "fit_reasoning": "Past goed.",
+            "matches_negative": False,
+            "negative_reasoning": "Geen.",
+            "salary_min": 3500,
+            "salary_max": 4800,
+            "salary_period": "monthly",
+            "vacation_days": None,
+            "compensation_reasoning": (
+                f"Schaal 10: {EURO} 3.500 - {EURO} 4.800 per maand, "
+                f"ofwel EUR 42k{EN}58k per jaar {EM} marktconform."
+            ),
+        }
+    )
+
+    _, _, compensation = evaluate_fit(
+        _job(), "Kwaliteitsadviseur", "", "", client=FakeLLMClient([response])
+    )
+
+    assert compensation.reasoning == (
+        f"Schaal 10: {EURO} 3.500-{EURO} 4.800 per maand, "
+        "ofwel EUR 42k-58k per jaar, marktconform."
+    )
+
+
+class _CachedEvaluation:
+    """A database whose evaluation cache predates the house style."""
+
+    def get_cached_evaluation(self, job: JobListing) -> tuple[int, dict[str, Any]]:
+        return 72, {
+            "fit_reasoning": GENERATED,
+            "negative_match": False,
+            "negative_reasoning": None,
+            "salary_min": None,
+            "salary_max": None,
+            "salary_period": None,
+            "vacation_days": None,
+            "compensation_reasoning": f"{EURO}3.500 {EN} {EURO}4.800 {EM} **prima**",
+        }
+
+
+def test_reasoning_reused_from_the_evaluation_cache_is_cleaned_too() -> None:
+    """A new vacancy row must not bring back the dashes of an old evaluation."""
+    job = _job()
+    client = FakeLLMClient([])
+
+    _eval_job_full_parallel(
+        (job, Config(), "", client, _CachedEvaluation())  # type: ignore[arg-type]
+    )
+
+    assert client.calls == []
+    assert job.fit_score == 72
+    assert job.fit_reasoning == PLAIN
+    assert job.negative_reasoning is None
+    assert job.compensation_reasoning == f"{EURO}3.500-{EURO}4.800, prima"
+
+
+def test_a_tailored_resume_comes_back_plain_and_keeps_its_date_ranges() -> None:
+    """On a date line the dash is a range: it becomes a hyphen, not a comma."""
+    client = FakeLLMClient(
+        [
+            f"PROFIEL\n{GENERATED}\n\nERVARING\n"
+            f"Adviseur, Voorbeeld BV, jan 2019 {EN} heden"
+        ]
+    )
 
     tailored = tailor_resume_text(
         "Adviseur bij Voorbeeld BV.",
@@ -229,5 +352,28 @@ def test_a_tailored_resume_comes_back_plain_but_keeps_its_date_lines() -> None:
         client=client,
     )
 
-    assert tailored == f"PROFIEL\n{PLAIN}\n\nERVARING\n{date_line}"
+    assert tailored == (
+        f"PROFIEL\n{PLAIN}\n\nERVARING\nAdviseur, Voorbeeld BV, jan 2019-heden"
+    )
     assert_styled_prompt(client.calls[0][0])
+
+
+def test_a_resume_line_that_mentions_a_year_is_still_cleaned() -> None:
+    """A profile sentence or a bullet with a year in it is prose, not a date line."""
+    client = FakeLLMClient(
+        [
+            f"Data engineer sinds 2019 {EM} **robuuste** pipelines \U0001f680\n"
+            f"- Leidde in 2021 de migratie {EM} kosten 30% omlaag - en **snel**\n"
+            "- Mail: jan__de__vries@example.nl"
+        ]
+    )
+
+    tailored = tailor_resume_text(
+        "CV", _profile(), "Meetmethoden bewaken.", keywords=["x"], client=client
+    )
+
+    assert tailored == (
+        "Data engineer sinds 2019, robuuste pipelines\n"
+        "- Leidde in 2021 de migratie, kosten 30% omlaag, en snel\n"
+        "- Mail: jan__de__vries@example.nl"
+    )

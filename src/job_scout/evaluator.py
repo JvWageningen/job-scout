@@ -17,7 +17,8 @@ from job_scout.models import (
     KeywordsResult,
     NegativeEvaluation,
 )
-from job_scout.writing_style import HOUSE_STYLE, humanise
+from job_scout.prose import clean_prose
+from job_scout.writing_style import HOUSE_STYLE
 
 # The cheap scorers used to see only the first 600 characters of the CV, which
 # on a typical one-page CV is the header and the skills list -- it stops before
@@ -501,11 +502,13 @@ def evaluate_fit(
         data = _extract_json(output)
         fit = FitEvaluation(
             fit_score=int(data.get("fit_score", 0)),
-            reasoning=humanise(str(data.get("fit_reasoning", "No reasoning provided"))),
+            reasoning=clean_prose(
+                str(data.get("fit_reasoning", "No reasoning provided"))
+            ),
         )
         neg = NegativeEvaluation(
             matches_negative=bool(data.get("matches_negative", False)),
-            reasoning=humanise(
+            reasoning=clean_prose(
                 str(data.get("negative_reasoning", "No reasoning provided"))
             ),
         )
@@ -514,7 +517,7 @@ def evaluate_fit(
             salary_max=_safe_int(data.get("salary_max")),
             salary_period=data.get("salary_period"),
             vacation_days=_safe_int(data.get("vacation_days")),
-            reasoning=humanise(str(data.get("compensation_reasoning", ""))),
+            reasoning=clean_prose(str(data.get("compensation_reasoning", ""))),
         )
         return fit, neg, comp
     except json.JSONDecodeError as e:

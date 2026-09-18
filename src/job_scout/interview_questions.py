@@ -55,7 +55,8 @@ from job_scout.letters.models import LetterLanguage
 from job_scout.letters.writer import LetterError, require_user
 from job_scout.llm.base import LLMClient, LLMError
 from job_scout.models import CompanyResearch, CompanyReview, Config, JobListing
-from job_scout.writing_style import HOUSE_STYLE, humanise
+from job_scout.prose import clean_items
+from job_scout.writing_style import HOUSE_STYLE
 
 
 class InterviewQuestionError(RuntimeError):
@@ -807,24 +808,17 @@ def _json_object(raw: str) -> str:
     return text[start : end + 1]
 
 
-def _humanise(questions: list[InterviewQuestion]) -> list[InterviewQuestion]:
-    """Clean the marks of generated text out of every field the user reads.
-
-    Args:
-        questions: Freshly parsed questions, modified in place.
-
-    Returns:
-        The same questions, in plain punctuation.
-    """
-    for item in questions:
-        item.question = humanise(item.question)
-        item.why = humanise(item.why)
-        item.grounded_in = humanise(item.grounded_in)
-    return questions
+# Every field of a question the user reads.
+_PROSE_FIELDS = ("question", "why", "grounded_in")
 
 
 def _parse_questions(raw: str) -> list[InterviewQuestion]:
-    """Parse the model response strictly, clean its wording, then drop repeats.
+    """Parse the model response, clean its wording, validate, then drop repeats.
+
+    The wording is cleaned before validation, so the length limits of
+    :class:`InterviewQuestion` hold for the text that is kept: the clean-up
+    can make a field a little longer, and a set validated again later must not
+    fail on a limit the first validation never saw.
 
     Args:
         raw: The model's response text.
@@ -837,12 +831,15 @@ def _parse_questions(raw: str) -> list[InterviewQuestion]:
             an unknown theme.
     """
     try:
-        response = _Response.model_validate_json(_json_object(raw))
-    except ValidationError as exc:
+        data = json.loads(_json_object(raw))
+        if isinstance(data, dict):
+            clean_items(data.get("questions"), _PROSE_FIELDS)
+        response = _Response.model_validate(data)
+    except (json.JSONDecodeError, ValidationError) as exc:
         raise InterviewQuestionError(
             "The model returned invalid or incomplete questions. Retry."
         ) from exc
-    return _dedupe(_humanise(response.questions))
+    return _dedupe(response.questions)
 
 
 # Which word in a grounded_in string implicates which absent source. A thin

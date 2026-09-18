@@ -37,7 +37,7 @@ def _format_travel_summary(job: JobListing) -> str:
         Human-readable travel summary string.
     """
     if job.location_unknown:
-        return "Location unknown — travel time not calculated"
+        return "Location unknown, travel time not calculated"
     if not job.travel_times:
         return "Travel time not available"
 
@@ -67,7 +67,7 @@ def _build_notification_payload(job: JobListing) -> tuple[str, str]:
     """
     title = f"{job.title} @ {job.company}"
     lines = [
-        f"Score: {job.fit_score}/100 — {job.fit_reasoning}",
+        f"Score: {job.fit_score}/100. {job.fit_reasoning}",
         f"Salary: {_format_salary_summary(job)}",
     ]
     if job.vacation_days is not None:

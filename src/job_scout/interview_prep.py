@@ -9,7 +9,8 @@ from loguru import logger
 
 from job_scout.llm.base import LLMClient
 from job_scout.models import BehavioralQuestion, InterviewPrep, StarStory
-from job_scout.writing_style import HOUSE_STYLE, humanise
+from job_scout.prose import clean_prose
+from job_scout.writing_style import HOUSE_STYLE
 
 
 def extract_behavioral_questions(
@@ -70,7 +71,7 @@ def extract_behavioral_questions(
         result = []
         for item in questions:
             if isinstance(item, dict):
-                question_text = humanise(item.get("question", "").strip())
+                question_text = clean_prose(item.get("question", "").strip())
                 keywords = item.get("keywords", [])
                 if question_text:
                     result.append(

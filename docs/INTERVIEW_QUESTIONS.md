@@ -173,7 +173,7 @@ exists so you can see at a glance which answers are standing on something real.
 | --- | --- | --- | --- |
 | `strong` | Backed by your CV | *your CV or a STAR story carries this* | The material is there. Make the wording yours and move on. |
 | `partial` | Partly covered | *only adjacent experience, so it has to be framed* | You have something near it. Check that the framing is one you would defend if pushed. |
-| `gap` | Gap — rehearse this | *you do not have this; rehearse saying so plainly* | **This is the one to rehearse.** |
+| `gap` | Gap, rehearse this | *you do not have this; rehearse saying so plainly* | **This is the one to rehearse.** |
 
 A `gap` answer says so in its first sentence, then says what is adjacent and how you
 would close it. No bluffing, no padding, no changing the subject. Said straight — "my

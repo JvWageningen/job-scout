@@ -80,14 +80,14 @@ that tapping the notification opens the listing:
 
 ```text
 Senior Quality Engineer @ ASML
-Score: 78/100 — Strong overlap with your validation and CSV experience
+Score: 78/100. Strong overlap with your validation and CSV experience
 Salary: €5000–6000/month
 Vacation: 27 days/year
 Location: Veldhoven
 Travel: PT: 52min | Bike: 38min | Car: 31min
 Source: indeed
 Employer page (still open): https://www.asml.com/careers/...
-Company review: 71/100 (medium confidence) — Strong engineering culture, ...
+Company review: 71/100 (medium confidence). Strong engineering culture, ...
 ```
 
 The channels do not all carry the same fields:

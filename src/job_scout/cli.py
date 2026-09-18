@@ -74,6 +74,7 @@ from job_scout.models import (
     TrackScore,
 )
 from job_scout.notify import NotificationError, get_notifier
+from job_scout.prose import clean_prose
 from job_scout.salary import extract_salary_range
 from job_scout.scheduler import (
     check_schedule_status,
@@ -251,7 +252,7 @@ def _evaluate_job(
         # score the model never actually produced.
         logger.warning(f"LLM unreachable while evaluating {job.title!r}: {exc}")
         job.fit_score = None
-        job.fit_reasoning = "LLM unreachable - will retry"
+        job.fit_reasoning = "LLM unreachable, will retry"
         return False
 
     job.fit_score = fit.fit_score
@@ -672,6 +673,22 @@ def _eval_job_quick_parallel(
     return job, best.fit_score
 
 
+def _cached_prose(value: object) -> str | None:
+    """Put reasoning copied from an earlier evaluation in the house style.
+
+    The evaluation cache hands a new vacancy the reasoning written for an
+    earlier one with the same title and company, which may predate the house
+    style; it is cleaned on the way in like a fresh evaluation.
+
+    Args:
+        value: A reasoning column from the cache, or None.
+
+    Returns:
+        The cleaned text, or None when there was none.
+    """
+    return clean_prose(value) if isinstance(value, str) else None
+
+
 def _eval_job_full_parallel(
     args: tuple[JobListing, Config, str, LLMClient, Database],
 ) -> tuple[JobListing, bool, str | None]:
@@ -693,14 +710,16 @@ def _eval_job_full_parallel(
             logger.info(f"Using cached full-eval: {job.title}")
             # Populate job with cached evaluation results
             job.fit_score = cached_score
-            job.fit_reasoning = cached_data["fit_reasoning"]
+            job.fit_reasoning = _cached_prose(cached_data["fit_reasoning"])
             job.negative_match = cached_data["negative_match"]
-            job.negative_reasoning = cached_data["negative_reasoning"]
+            job.negative_reasoning = _cached_prose(cached_data["negative_reasoning"])
             job.salary_min = cached_data["salary_min"]
             job.salary_max = cached_data["salary_max"]
             job.salary_period = cached_data["salary_period"]
             job.vacation_days = cached_data["vacation_days"]
-            job.compensation_reasoning = cached_data["compensation_reasoning"]
+            job.compensation_reasoning = _cached_prose(
+                cached_data["compensation_reasoning"]
+            )
             # Reapply filters with cached data
             if job.negative_match:
                 return job, False, None
@@ -2034,7 +2053,7 @@ def _print_job(job: JobListing) -> None:
     click.echo(f"\n{'=' * 60}")
     click.echo(f"Title:    {job.title}")
     click.echo(f"Company:  {job.company}")
-    click.echo(f"Score:    {job.fit_score}/100 — {job.fit_reasoning}")
+    click.echo(f"Score:    {job.fit_score}/100. {job.fit_reasoning}")
     click.echo(f"Salary:   {_format_salary(job)}")
     if job.compensation_reasoning:
         click.echo(f"Comp:     {job.compensation_reasoning}")
@@ -2061,9 +2080,9 @@ def _print_rejected_job(job: JobListing) -> None:
     click.echo(f"Title:   {job.title}")
     click.echo(f"Company: {job.company}")
     if job.negative_match:
-        click.echo(f"Reason:  Negative match — {job.negative_reasoning}")
+        click.echo(f"Reason:  Negative match. {job.negative_reasoning}")
     elif job.fit_score is not None and job.fit_score < 60:
-        click.echo(f"Reason:  Score {job.fit_score}/100 — {job.fit_reasoning}")
+        click.echo(f"Reason:  Score {job.fit_score}/100. {job.fit_reasoning}")
     else:
         reason_parts = []
         if job.compensation_reasoning:

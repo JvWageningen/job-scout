@@ -49,7 +49,8 @@ from job_scout.letters.models import LetterLanguage
 from job_scout.letters.writer import LetterError, require_user
 from job_scout.llm.base import LLMClient
 from job_scout.models import JobListing
-from job_scout.writing_style import HOUSE_STYLE, humanise
+from job_scout.prose import clean_items
+from job_scout.writing_style import HOUSE_STYLE
 
 
 class InterviewAnswerError(RuntimeError):
@@ -537,27 +538,19 @@ def _json_object(raw: str) -> str:
     return text[start : end + 1]
 
 
-def _humanise(questions: list[LikelyQuestion]) -> list[LikelyQuestion]:
-    """Clean the marks of generated text out of every field the user reads.
-
-    ``based_on`` is left alone: it names sources, and :func:`_check_citations`
-    compares it with the labels the model was given.
-
-    Args:
-        questions: Freshly parsed questions, modified in place.
-
-    Returns:
-        The same questions, in plain punctuation.
-    """
-    for item in questions:
-        item.question = humanise(item.question)
-        item.why_asked = humanise(item.why_asked)
-        item.draft_answer = humanise(item.draft_answer)
-    return questions
+# Every field of a question the user reads. ``based_on`` is left alone: it
+# names sources, and :func:`_check_citations` compares it with the labels the
+# model was given.
+_PROSE_FIELDS = ("question", "why_asked", "draft_answer")
 
 
 def _parse_questions(raw: str) -> list[LikelyQuestion]:
-    """Parse the model response strictly, clean its wording, then drop repeats.
+    """Parse the model response, clean its wording, validate, then drop repeats.
+
+    The wording is cleaned before validation, so the length limits of
+    :class:`LikelyQuestion` hold for the text that is kept: the clean-up can
+    make a draft answer a little longer, and a set validated again later must
+    not fail on a limit the first validation never saw.
 
     Args:
         raw: The model's response text.
@@ -570,12 +563,15 @@ def _parse_questions(raw: str) -> list[LikelyQuestion]:
             unknown kind or an unknown footing.
     """
     try:
-        response = _Response.model_validate_json(_json_object(raw))
-    except ValidationError as exc:
+        data = json.loads(_json_object(raw))
+        if isinstance(data, dict):
+            clean_items(data.get("questions"), _PROSE_FIELDS)
+        response = _Response.model_validate(data)
+    except (json.JSONDecodeError, ValidationError) as exc:
         raise InterviewAnswerError(
             "The model returned invalid or incomplete answers. Retry."
         ) from exc
-    return _dedupe(_humanise(response.questions))
+    return _dedupe(response.questions)
 
 
 def _check_citations(

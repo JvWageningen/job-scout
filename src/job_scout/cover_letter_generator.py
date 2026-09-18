@@ -9,7 +9,8 @@ from loguru import logger
 
 from job_scout.llm.base import LLMClient
 from job_scout.models import CvProfile
-from job_scout.writing_style import HOUSE_STYLE, humanise
+from job_scout.prose import clean_prose
+from job_scout.writing_style import HOUSE_STYLE
 
 
 def extract_screening_questions(
@@ -58,7 +59,7 @@ def extract_screening_questions(
                 f"Expected questions list, got {type(questions)}: {questions}"
             )
             return []
-        cleaned = (humanise(str(q).strip()) for q in questions if q)
+        cleaned = (clean_prose(str(q).strip()) for q in questions if q)
         return [question for question in cleaned if question]
     except ValueError as e:
         logger.error(f"Failed to extract screening questions: {e}")
@@ -116,7 +117,7 @@ def generate_cover_letter(
 
     try:
         response = client.complete(prompt, purpose="cover_letter")
-        cover_letter = humanise(response.strip())
+        cover_letter = clean_prose(response.strip())
         logger.debug(f"Generated cover letter: {len(cover_letter)} chars")
         return cover_letter
     except Exception as e:
@@ -189,7 +190,7 @@ def answer_screening_questions(
         for q in questions:
             # Try to find answer by exact match or by index
             if q in answers_dict:
-                result[q] = humanise(str(answers_dict[q]).strip())
+                result[q] = clean_prose(str(answers_dict[q]).strip())
         return result
     except Exception as e:
         logger.error(f"Failed to generate screening answers: {e}")

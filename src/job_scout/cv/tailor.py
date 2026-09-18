@@ -36,11 +36,12 @@ from job_scout.cv.models import (
 from job_scout.cv.storage import StorageError, normalise_slug
 from job_scout.llm.base import LLMClient
 from job_scout.models import JobListing
+from job_scout.prose import clean_prose
 
 # Reused rather than re-implemented: the text pipeline already knows how to dig
 # JSON out of a chatty or markdown-fenced completion.
 from job_scout.resume_tailor import _parse_json_response, extract_resume_keywords
-from job_scout.writing_style import HOUSE_STYLE, humanise
+from job_scout.writing_style import HOUSE_STYLE
 
 SLUG_LIMIT = 60
 """Longest slug :func:`job_scout.cv.storage.normalise_slug` returns."""
@@ -563,7 +564,7 @@ def _apply_section_patch(section: Section, patch: SectionPatch) -> None:
     label = f"section {section.title or section.id!r}"
     if isinstance(section, TextSection):
         if patch.body is not None:
-            section.body = humanise(patch.body.strip())
+            section.body = clean_prose(patch.body.strip())
         return
     if isinstance(section, ExperienceSection):
         _apply_experience_patch(section, patch, label)
@@ -610,9 +611,10 @@ def _apply_experience_patch(
 def _apply_entry_patch(entry: ExperienceEntry, patch: EntryPatch) -> None:
     """Reword one experience entry in place.
 
-    Only the reworded prose is put in plain punctuation. The title,
-    organisation and period are compared with the original exactly as the
-    model echoed them, so a changed fact cannot hide behind the clean-up.
+    Only the reworded prose is put in plain punctuation, and a period inside
+    it (a bullet saying "jan 2019 to heden" with a dash) stays a range. The
+    title, organisation and period are compared with the original exactly as
+    the model echoed them, so a changed fact cannot hide behind the clean-up.
 
     Args:
         entry: The entry to modify.
@@ -624,11 +626,11 @@ def _apply_entry_patch(entry: ExperienceEntry, patch: EntryPatch) -> None:
     _reject_rewritten_facts(entry, patch)
 
     if patch.description is not None:
-        entry.description = humanise(patch.description.strip())
+        entry.description = clean_prose(patch.description.strip())
 
     if patch.bullets is None:
         return
-    cleaned = (humanise(bullet.strip()) for bullet in patch.bullets)
+    cleaned = (clean_prose(bullet.strip()) for bullet in patch.bullets)
     bullets = [bullet for bullet in cleaned if bullet]
     if len(bullets) > len(entry.bullets):
         raise TailorError(

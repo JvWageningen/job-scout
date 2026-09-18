@@ -223,6 +223,35 @@ def test_reworded_prose_comes_back_plain_and_facts_stay_as_they_are() -> None:
     assert_styled_prompt(client.calls[1][0])
 
 
+def test_a_period_inside_reworded_prose_stays_a_range() -> None:
+    """A comma would make "jan 2019 to heden" say two separate things."""
+    response = plan(
+        sections={
+            "pf": {"body": "Sinds 2019 \u2013 heden in de meettechniek."},
+            "xp": {
+                "entries": {
+                    "e1": {
+                        "bullets": [
+                            "Trained customers (jan 2019 \u2013 dec 2021)",
+                            "Repaired optics, 2014 \u2013 2019",
+                        ]
+                    }
+                }
+            },
+        }
+    )
+
+    result = tailor_cv_document(make_doc(), make_job(), client_for(response))
+
+    profile = result.main[0]
+    assert isinstance(profile, TextSection)
+    assert profile.body == "Sinds 2019-heden in de meettechniek."
+    assert experience_of(result).entries[0].bullets == [
+        "Trained customers (jan 2019-dec 2021)",
+        "Repaired optics, 2014-2019",
+    ]
+
+
 def test_clean_prose_does_not_hide_a_changed_employer() -> None:
     response = plan(
         sections={
