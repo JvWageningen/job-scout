@@ -220,9 +220,12 @@ original draft.
 **Saved per vacancy.** Every set you generate is saved in your own data folder, one per
 vacancy, half and language. Choosing a vacancy shows what is saved for it straight
 away, with the date it was generated, and the generate button then reads as generating
-again. Nothing is generated until you press it. Generating again replaces the saved
-set in that language; the answers half asks first, because the saved answers hold your
-edits. With the language on *Automatic* the newest saved set is shown.
+again. Nothing is generated until you press it. Generating again replaces the set on
+screen; the answers half asks first and names the language, because the saved answers
+hold your edits. With the language on *Automatic* the newest saved set is shown, and
+generating again keeps to that set's language. An edit counts as saved once the server
+has it: a failed save is sent again on your next change, and while an edit is unsaved
+the tab will not switch vacancy or language, and a reload asks first.
 
 **Downloads.** Both halves have **Download Word file** and **Download text file**. The
 Word file opens in Word, LibreOffice and Google Docs, uses real heading styles, and
@@ -242,8 +245,11 @@ stories that fit, without company research, your CV, or drafted answers.
 The vacancy dropdown offers the vacancies still worth working on: nothing rejected,
 expired, closed by you, or lacking a description. The best match is on top, with each
 fit score shown. It is built by the same code as the Cover Letter Writer's dropdown, so
-the two can never disagree about which vacancies are live. **Refresh vacancies & CVs**
-re-reads it without disturbing anything already on screen.
+the two can never disagree about which vacancies are live. A vacancy that has left
+that list but still has saved preparation, often because the employer took the posting
+down once the interviews started, is listed below it under *No longer on your
+shortlist, with saved preparation*. **Refresh vacancies & CVs** re-reads it without
+disturbing anything already on screen.
 
 If the company research, the review or your story bank is missing, the tab says so under
 the result instead of filling the gap in. Read everything before you use it. See

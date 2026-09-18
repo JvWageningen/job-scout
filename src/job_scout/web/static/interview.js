@@ -39,16 +39,22 @@
     const AGAIN = {
         ask: 'Generate the questions again', answer: 'Generate questions & answers again',
     };
+    const LANGUAGES = {nl: 'Dutch', en: 'English'};
     // How long typing may pause before an edited answer is saved.
     const SAVE_DELAY = 1500;
+    const EMPTIED = 'An empty answer keeps its last saved text until you write a new one.';
     let epoch = 0, loadedUser = null, latest = null, keepInterviewTab = false;
     // The answer half keeps its set and the textareas holding it, because the
     // user's edits live in the DOM and every copy, save and download must take
-    // them, not the draft.
-    let answers = null, drafts = [], lastSaved = '';
+    // them, not the draft. lastSaved is the set as the server has it; queued
+    // is the newest version sent, which may still fail.
+    let answers = null, drafts = [], lastSaved = '', queued = '';
     // Everything saved for the chosen vacancy: both halves, every language,
     // newest first. Switching half or language picks from it without a request.
     let saved = null;
+    // The vacancy and language whose sets are on screen, so a switch that
+    // cannot go ahead puts the dropdown back on what is shown.
+    let shownJob = '', shownLanguage = 'auto';
     // Edits are saved one after another, and a vacancy is only read once they
     // have landed, so reading it back never returns the text before an edit.
     let saving = Promise.resolve(), saveTimer = null;
@@ -94,7 +100,7 @@
     }
     function clearAnswers() {
         clearTimeout(saveTimer);
-        answers = null; drafts = []; lastSaved = '';
+        answers = null; drafts = []; lastSaved = ''; queued = '';
         el('answers-results').hidden = true; el('answers-empty').hidden = false;
         el('answers-list').replaceChildren();
         el('answers-source').textContent = ''; el('answers-missing').textContent = '';
@@ -105,7 +111,7 @@
     // on screen is a view choice and survives, like an open tab does.
     function reset() {
         epoch++;
-        loadedUser = null; saved = null;
+        loadedUser = null; saved = null; shownJob = ''; shownLanguage = 'auto';
         clearQuestions(); clearAnswers();
         el('workspace').disabled = true;
         ['job', 'cv'].forEach(id => el(id).replaceChildren());
@@ -132,10 +138,20 @@
     // match is on top, so the page does not depend on that ordering silently.
     const byScore = jobs => [...jobs].sort((a, b) =>
         (b.fit_score == null ? -1 : b.fit_score) - (a.fit_score == null ? -1 : a.fit_score));
+    const vacancy = j => new Option(
+        `${j.title} · ${j.company}${j.fit_score == null ? '' : ` · ${j.fit_score}/100`}`, j.id);
     function choices(data) {
         el('job').replaceChildren(new Option('Choose a vacancy', ''));
-        byScore(data.jobs).forEach(j => el('job').add(new Option(
-            `${j.title} · ${j.company}${j.fit_score == null ? '' : ` · ${j.fit_score}/100`}`, j.id)));
+        byScore(data.jobs).forEach(j => el('job').add(vacancy(j)));
+        // A vacancy that left the shortlist, often because the posting came
+        // down once the interviews started, keeps what was saved for it.
+        const kept = data.saved_jobs || [];
+        if (kept.length) {
+            const group = document.createElement('optgroup');
+            group.label = 'No longer on your shortlist, with saved preparation';
+            kept.forEach(j => group.append(vacancy(j)));
+            el('job').append(group);
+        }
         fillCvs(data.profiles);
     }
     // Same as the letter tab: CV Builder is one source among several, so a
@@ -164,7 +180,7 @@
             choices(data);
             loadedUser = ctx.user;
             status(!data.sources.used.length ? data.sources.missing.join(' ') :
-                !data.jobs.length ? 'No open vacancies yet. Run your search first.' :
+                !data.jobs.length && !(data.saved_jobs || []).length ? 'No open vacancies yet. Run your search first.' :
                 `Ready. Choose the vacancy you are being interviewed for. ${sourcesLine(data.sources)}`);
         });
     }
@@ -298,7 +314,7 @@
     }
     function renderAnswers(set) {
         clearTimeout(saveTimer);
-        answers = set; drafts = []; lastSaved = JSON.stringify(set);
+        answers = set; drafts = []; lastSaved = queued = JSON.stringify(set);
         el('answers-list').replaceChildren();
         grouped(set.questions, 'kind', KINDS).forEach(([kind, list]) => {
             const block = document.createElement('div');
@@ -314,17 +330,31 @@
         el('answers-results').hidden = false; el('answers-empty').hidden = true;
         buttons();
     }
-    // The answer set as it is on screen: the user's edits, not the drafts.
-    function editedAnswers() {
-        const questions = answers.questions.map(item => {
+    // The answer set as it is on screen: the user's edits, not the drafts. An
+    // emptied box keeps the text last saved for it, so rewriting one answer
+    // never holds back the edits to all the others.
+    function onScreen() {
+        let before = answers.questions;
+        try { before = JSON.parse(lastSaved).questions || before; } catch { /* nothing saved yet */ }
+        let emptied = 0;
+        const questions = answers.questions.map((item, index) => {
             const draft = drafts.find(d => d.item === item);
-            return draft ? {...item, draft_answer: draft.area.value} : item;
+            if (!draft) return item;
+            if (String(draft.area.value).trim()) return {...item, draft_answer: draft.area.value};
+            emptied++;
+            return {...item, draft_answer: (before[index] || item).draft_answer};
         });
-        if (questions.some(q => !String(q.draft_answer).trim())) {
-            throw new Error('One of your answers is empty. Write something in it first; an empty answer cannot be saved or downloaded.');
-        }
-        return {...answers, questions};
+        return {set: {...answers, questions}, emptied};
     }
+    // A download takes exactly what is on screen, and an empty box is not an answer.
+    function editedAnswers() {
+        const {set, emptied} = onScreen();
+        if (emptied) {
+            throw new Error('One of your answers is empty. Write something in it first; an empty answer cannot be downloaded.');
+        }
+        return set;
+    }
+    const unsaved = () => Boolean(answers && drafts.length) && JSON.stringify(onScreen().set) !== lastSaved;
     // What is copied is what is on screen: the user's edits, not the draft.
     function plainTextAnswers(set) {
         const indent = text => String(text).split('\n').map(l => '   ' + l).join('\n');
@@ -367,15 +397,55 @@
         saved[half] = [set, ...saved[half].filter(s => s.language !== set.language)]
             .sort((a, b) => new Date(b.generated_at) - new Date(a.generated_at));
     }
-    async function loadSaved() {
-        const job = el('job').value;
-        if (!job) {
-            saved = null; showSaved();
-            status('Choose the vacancy you are being interviewed for.');
+    // Quiet by design: it runs while the user types, so it neither disables
+    // the page nor waits for anything but the save before it.
+    function saveEdits() {
+        clearTimeout(saveTimer);
+        const user = validUser();
+        if (!answers || !user) return;
+        const {set, emptied} = onScreen();
+        const text = JSON.stringify(set);
+        if (text === queued) {
+            if (emptied) status(EMPTIED);
             return;
         }
+        queued = text;
+        const ctx = {user, epoch};
+        saving = saving.then(() => putAnswers(ctx, set, text, emptied));
+    }
+    // An edit counts as saved only once the server has it. Until then the page
+    // does not treat it as saved, and a failed save goes again on the next
+    // change or blur instead of being skipped as done.
+    async function putAnswers(ctx, set, text, emptied) {
+        try {
+            await api('/saved/answers/' + set.job_id, ctx, json('PUT', set));
+        } catch (error) {
+            if (queued === text) queued = '';
+            if (error.message !== 'stale' && ctx.epoch === epoch) status(error.message, true);
+            return;
+        }
+        if (answers && answers.job_id === set.job_id && answers.language === set.language) lastSaved = text;
+        if (saved && saved.job_id === set.job_id) remember('answers', set);
+        status(emptied ? `Your edits are saved. ${EMPTIED}` : 'Your edited answers are saved with this vacancy.');
+    }
+    // Before the answers on screen make way for another set, their last edits
+    // are sent and have to land. If they did not, the answers stay on screen.
+    async function settle() {
+        saveEdits();
+        await saving;
+        if (unsaved()) {
+            throw new Error('Your latest edits to the answers could not be saved, so they stay on screen. Try again, or download them first.');
+        }
+    }
+    async function loadSaved() {
+        const job = el('job').value;
         await run('Opening what is saved for this vacancy...', async ctx => {
-            await saving;
+            try { await settle(); } catch (error) { el('job').value = shownJob; throw error; }
+            fresh(ctx);
+            // Nothing of the previous vacancy stays on screen while this one is
+            // read: if the read fails, its sets must not pass for this one's.
+            shownJob = job; saved = null; showSaved();
+            if (!job) { status('Choose the vacancy you are being interviewed for.'); return; }
             const data = await (await api(`/saved/${job}`, ctx)).json();
             fresh(ctx);
             if (el('job').value !== job) return;
@@ -383,26 +453,12 @@
             status(savedStatus());
         });
     }
-    // Quiet by design: it runs while the user types, so it neither disables
-    // the page nor waits for anything but the save before it.
-    function saveEdits() {
-        clearTimeout(saveTimer);
-        const user = validUser();
-        if (!answers || !user) return;
-        let body;
-        try { body = editedAnswers(); } catch (error) { status(error.message, true); return; }
-        const text = JSON.stringify(body);
-        if (text === lastSaved) return;
-        lastSaved = text;
-        remember('answers', body);
-        const ctx = {user, epoch};
-        saving = saving.then(async () => {
-            try {
-                await api('/saved/answers/' + body.job_id, ctx, json('PUT', body));
-                status('Your edited answers are saved with this vacancy.');
-            } catch (error) {
-                if (error.message !== 'stale' && ctx.epoch === epoch) status(error.message, true);
-            }
+    async function showLanguage() {
+        await run('Opening the saved set in this language...', async ctx => {
+            try { await settle(); } catch (error) { el('language').value = shownLanguage; throw error; }
+            fresh(ctx);
+            shownLanguage = el('language').value;
+            showSaved(); status(savedStatus());
         });
     }
     // --- Downloads: the server renders the file, the page hands it over. ---
@@ -454,17 +510,22 @@
         setTimeout(() => { button.textContent = original; }, 1500);
     }
     // One setup serves both halves, so one reader of it does too.
-    function request() {
-        if (!el('job').value) throw new Error('Choose a vacancy first.');
+    function request(shown) {
+        const job = el('job').value;
+        if (!job) throw new Error('Choose a vacancy first.');
         // "Automatic" is the absence of a choice: the API detects the language
-        // from the vacancy when it is null.
+        // from the vacancy when it is null. With a saved set on screen, though,
+        // generating again means that set, so its language goes along. Else
+        // "again" could replace a set in another language that is not shown.
         const language = el('language').value;
+        const again = shown && shown.job_id === Number(job) ? shown.language : null;
         return {
-            job_id: Number(el('job').value),
-            language: language === 'auto' ? null : language,
+            job_id: Number(job),
+            language: language === 'auto' ? again : language,
             cv_slug: el('cv').value || null, notes: el('notes').value,
         };
     }
+    const languageName = set => LANGUAGES[set.language] || String(set.language).toUpperCase();
     document.addEventListener('DOMContentLoaded', () => {
         document.querySelector('[data-tab="interview"].tab-btn').addEventListener('click', () => {
             if (loadedUser !== validUser()) load();
@@ -486,8 +547,15 @@
         });
         el('job').addEventListener('change', loadSaved);
         el('language').addEventListener('change', () => {
-            if (!saved) return;
-            showSaved(); status(savedStatus());
+            if (!saved) { shownLanguage = el('language').value; return; }
+            showLanguage();
+        });
+        // A reload inside the pause before an edit is saved would lose it.
+        window.addEventListener('beforeunload', event => {
+            if (!unsaved()) return;
+            saveEdits();
+            event.preventDefault();
+            event.returnValue = '';
         });
         const halves = [...document.querySelectorAll('#interview-section .interview-mode')];
         halves.forEach((button, index) => {
@@ -502,21 +570,26 @@
             };
         });
         el('generate').onclick = () => run('Writing your questions... If the company has not been researched yet, it is looked up on the web first, so this can take two to four minutes.', async ctx => {
-            const response = await api('/questions', ctx, json('POST', request()));
+            const response = await api('/questions', ctx, json('POST', request(latest)));
             const set = await response.json();
             fresh(ctx); remember('questions', set); render(set);
             status(ready(response, 'questions', 'Read them before you use them, and drop any that no longer fit.'));
         });
         el('answers-generate').onclick = () => {
-            // Generating again replaces the saved set in that language, and the
-            // saved set holds the user's rewritten answers. Losing those after a
-            // call that itself takes minutes is not something to do silently.
-            if (answers && !window.confirm('Generating again replaces the saved answers in this language, '
+            // Generating again replaces the saved set on screen, which request()
+            // makes sure of, and that set holds the user's rewritten answers.
+            // Losing those after a call that itself takes minutes is not
+            // something to do silently.
+            if (answers && !window.confirm(`Generating again replaces the saved ${languageName(answers)} answers, `
                 + 'including the ones you rewrote. Download them first if you want to keep them. Continue?')) {
                 return;
             }
             run('Predicting their questions and drafting your answers... If the company has not been researched yet, it is looked up on the web first, so this can take two to four minutes.', async ctx => {
-                const response = await api('/answers', ctx, json('POST', request()));
+                const body = request(answers);
+                // An edit still on its way must land before the new set does,
+                // or it would be saved over the set just generated.
+                saveEdits(); await saving;
+                const response = await api('/answers', ctx, json('POST', body));
                 const set = await response.json();
                 fresh(ctx); remember('answers', set); renderAnswers(set);
                 status(ready(response, 'draft answers', 'Rewrite each one in your own words, starting with the ones marked as a gap.'));

@@ -304,6 +304,67 @@ def test_edited_answers_are_saved_in_place_of_the_drafts(
     assert body["answers"][0]["questions"][0]["draft_answer"] == EDITED
 
 
+def test_a_file_saved_in_another_encoding_hides_only_itself(
+    job_id: int, client: TestClient
+) -> None:
+    """One unreadable file must not fail the whole vacancy with a 400."""
+    save_interview_set(USER, question_set(job_id))
+    path = save_interview_set(USER, answer_set(job_id, "In het café oefende ik."))
+    path.write_bytes(path.read_text(encoding="utf-8").encode("cp1252"))
+
+    response = client.get(f"/api/interview/saved/{job_id}?user={USER}")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["answers"] == []
+    assert len(response.json()["questions"]) == 1
+
+
+def test_an_edit_without_a_time_zone_keeps_the_saved_list_readable(
+    job_id: int, client: TestClient
+) -> None:
+    """A bare timestamp beside a zoned one used to make sorting fail with a 500."""
+    english = answer_set(job_id).model_copy(update={"language": LetterLanguage.EN})
+    save_interview_set(USER, english)
+    bare = answer_set(job_id, EDITED).model_dump(mode="json")
+    bare["generated_at"] = "2026-09-18T10:00:00"
+
+    put = client.put(f"/api/interview/saved/answers/{job_id}?user={USER}", json=bare)
+    response = client.get(f"/api/interview/saved/{job_id}?user={USER}")
+
+    assert put.status_code == 200, put.text
+    assert response.status_code == 200, response.text
+    answers = response.json()["answers"]
+    assert [s["language"] for s in answers] == ["nl", "en"]
+    assert answers[0]["generated_at"] == "2026-09-18T10:00:00Z"
+
+
+def test_a_vacancy_that_left_the_shortlist_keeps_its_saved_sets(
+    job_id: int, client: TestClient
+) -> None:
+    """A posting taken down during the interviews stays in the tab's dropdown."""
+    save_interview_set(USER, answer_set(job_id))
+    context = f"/api/interview/context?user={USER}"
+
+    live = client.get(context).json()
+    Database(config.user_db_path(USER)).mark_expired(job_id, "posting taken down")
+    later = client.get(context).json()
+    theirs = client.get(f"/api/interview/context?user={OTHER}").json()
+
+    assert [job["id"] for job in live["jobs"]] == [job_id]
+    assert live["saved_jobs"] == []
+    assert later["jobs"] == []
+    assert later["saved_jobs"] == [
+        {
+            "id": job_id,
+            "title": TITLE,
+            "company": COMPANY,
+            "status": "expired",
+            "fit_score": 80,
+        }
+    ]
+    assert theirs["saved_jobs"] == []
+
+
 @pytest.mark.parametrize(
     ("offset", "detail"),
     [(1, "does not match"), (0, "no longer exists")],
@@ -385,6 +446,40 @@ def test_a_company_name_cannot_break_the_download_header(
     assert "set-cookie" not in response.headers
 
 
+def test_a_control_character_cannot_cost_the_word_download(
+    job_id: int, client: TestClient
+) -> None:
+    """Pasted or scraped control characters are dropped from both files alike."""
+    pasted = Database(config.user_db_path(USER)).save_job(
+        JobListing(
+            title="Meet\x1bspecialist",
+            company=COMPANY,
+            url="https://voorbeeld.example/vacatures/8",
+            source="board",
+            description="Je bewaakt de kwaliteit van onze meetmethoden.",
+            status=JobStatus.MATCHED,
+            seen_at=datetime(2026, 1, 1, tzinfo=UTC),
+        )
+    )
+    body = answer_set(pasted, "Eerste regel\x0bgeplakt uit Word\x00.").model_dump(
+        mode="json"
+    )
+    body["company"] = "Find\x07where"
+    export = f"/api/interview/export/answers?user={USER}"
+
+    word = client.post(f"{export}&format=docx", json=body)
+    text = client.post(f"{export}&format=txt", json=body)
+
+    assert word.status_code == 200, word.text
+    assert text.status_code == 200, text.text
+    paragraphs = [p.text for p in Document(io.BytesIO(word.content)).paragraphs]
+    assert paragraphs[0] == "Meetspecialist bij Findwhere"
+    assert "Eerste regel\ngeplakt uit Word." in paragraphs
+    assert "Eerste regel\ngeplakt uit Word." in text.text
+    assert text.text.startswith("Meetspecialist bij Findwhere\n")
+    assert not re.search("[\x00-\x08\x0b\x0c\x0e-\x1f]", text.text)
+
+
 def test_an_unknown_format_or_an_empty_set_is_refused(
     job_id: int, client: TestClient
 ) -> None:
@@ -451,6 +546,45 @@ def test_the_command_saves_what_it_generates(
     assert result.exit_code == 0, result.output
     assert "Saved." in result.output
     assert saved.json()["answers"][0]["questions"][0]["draft_answer"] == DRAFT
+
+
+@pytest.mark.parametrize(
+    ("flags", "reply", "kept"),
+    [
+        ([], None, True),
+        ([], "n\n", True),
+        ([], "y\n", False),
+        (["--yes"], None, False),
+    ],
+)
+def test_the_command_asks_before_it_replaces_saved_answers(
+    job_id: int,
+    monkeypatch: pytest.MonkeyPatch,
+    flags: list[str],
+    reply: str | None,
+    kept: bool,
+) -> None:
+    """Answers rewritten in the dashboard are not lost to a run on the command line.
+
+    With no terminal to answer on, the saved answers are kept.
+    """
+    save_interview_set(USER, answer_set(job_id, EDITED))
+    monkeypatch.setattr("job_scout.cli.check_llm_available", lambda _: (True, None))
+    monkeypatch.setattr("job_scout.cli.get_llm_client", lambda _: FakeLLMClient(["{}"]))
+    monkeypatch.setattr(
+        "job_scout.cli.generate_interview_answers", returning(answer_set(job_id))
+    )
+
+    result = CliRunner().invoke(
+        cli, ["interview", "answers", str(job_id), "--user", USER, *flags], input=reply
+    )
+    saved = TestClient(create_app()).get(f"/api/interview/saved/{job_id}?user={USER}")
+
+    assert result.exit_code == 0, result.output
+    draft = saved.json()["answers"][0]["questions"][0]["draft_answer"]
+    assert draft == (EDITED if kept else DRAFT)
+    assert ("Kept the saved answers." in result.output) is kept
+    assert ("Replace them" in result.output) is not bool(flags)
 
 
 def test_the_command_exports_a_saved_set_to_a_file(job_id: int, tmp_path: Path) -> None:

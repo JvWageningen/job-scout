@@ -74,6 +74,7 @@ from job_scout.interview_store import (
     load_saved_interview,
     save_edited_answers,
     save_interview_set,
+    saved_vacancy_choices,
 )
 from job_scout.letters.api import build_api_router as build_letters_api_router
 from job_scout.letters.models import LetterLanguage
@@ -571,11 +572,16 @@ def build_interview_router() -> APIRouter:
         """Offer the same vacancies, CVs and source summary the letter writer offers.
 
         Both tabs call ``open_vacancy_choices``, ``profile_choices`` and
-        ``describe_sources``, so an interview can only ever be prepared for a
-        vacancy that is still live, and the two setups cannot drift apart.
+        ``describe_sources``, so the two setups cannot drift apart.
+        ``saved_jobs`` adds, apart from that shortlist, the vacancies that left
+        it but still have saved preparation: a posting is often taken down
+        once the interviews start, and what was prepared for it is still
+        needed then.
         """
+        jobs = open_vacancy_choices(user)
         return {
-            "jobs": open_vacancy_choices(user),
+            "jobs": jobs,
+            "saved_jobs": saved_vacancy_choices(user, {job["id"] for job in jobs}),
             "profiles": profile_choices(user),
             "sources": describe_sources(user),
         }

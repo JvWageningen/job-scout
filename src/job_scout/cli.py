@@ -61,6 +61,7 @@ from job_scout.interview_questions import (
 from job_scout.interview_store import (
     InterviewMode,
     InterviewSet,
+    interview_set_path,
     latest_interview_set,
     mode_of,
     save_interview_set,
@@ -3895,12 +3896,20 @@ def _print_interview_answers(result: InterviewAnswerSet) -> None:
 @click.option(
     "--notes", default="", help="Context only you know, e.g. why you are leaving"
 )
+@click.option(
+    "--yes",
+    "-y",
+    "replace",
+    is_flag=True,
+    help="Replace answers already saved for this vacancy and language without asking",
+)
 def interview_answers(
     job_id: int,
     user_name: str | None,
     language: str,
     cv_slug: str | None,
     notes: str,
+    replace: bool,
 ) -> None:
     """Predict what the interviewer will ask YOU, and draft your answers.
 
@@ -3908,6 +3917,10 @@ def interview_answers(
     answer uses only your CV, your saved STAR stories and your notes; where the
     evidence is not there it says so and the question is marked GAP, so you
     rehearse that one rather than meet it for the first time in the room.
+
+    When answers are already saved for this vacancy and language, they may be
+    ones you rewrote in the dashboard, so you are asked before they are
+    replaced. --yes replaces them without asking.
     """
     target = _require_single_user(user_name)
     _require_llm()
@@ -3924,7 +3937,49 @@ def interview_answers(
     except (InterviewAnswerError, LLMError, StorageError, ValueError, OSError) as exc:
         raise click.ClickException(str(exc)) from exc
     _print_interview_answers(result)
-    _keep_for_dashboard(target, result)
+    if replace or _may_replace_answers(target, result):
+        _keep_for_dashboard(target, result)
+
+
+def _may_replace_answers(user: str, result: InterviewAnswerSet) -> bool:
+    """Ask before new answers take the place of saved ones.
+
+    The saved answers may be the applicant's own rewrites from the dashboard,
+    which asks the same question before it replaces them. Without a terminal
+    to answer on, the saved answers are kept: losing edits is the one outcome
+    that cannot be undone.
+
+    Args:
+        user: The user the answers were generated for.
+        result: The answers just printed.
+
+    Returns:
+        True when nothing is saved in this language yet, or the user agreed.
+    """
+    try:
+        path = interview_set_path(
+            user, result.job_id, InterviewMode.ANSWER, result.language
+        )
+    except ValueError:
+        return True
+    if not path.is_file():
+        return True
+    language = "Dutch" if result.language is LetterLanguage.NL else "English"
+    try:
+        agreed = click.confirm(
+            f"\n{language} answers for vacancy {result.job_id} are already saved, "
+            "and they may hold answers you rewrote in the dashboard. Replace them "
+            "with the set above?",
+            default=False,
+        )
+    except click.Abort:
+        agreed = False
+    if not agreed:
+        click.echo(
+            "Kept the saved answers. The set above was not saved; run the command "
+            "again with --yes to replace them."
+        )
+    return agreed
 
 
 def _export_destination(output: Path | None, filename: str) -> Path:

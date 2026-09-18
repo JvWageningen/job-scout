@@ -777,6 +777,12 @@ The company is looked up first in the same way as for
 Absent grounding is listed at the end under *Notes — not seen, so nothing above is based
 on it*.
 
+When answers in that language are already saved for the vacancy, they may be answers
+you rewrote in the dashboard, so the command asks before it replaces them, the way the
+dashboard does. Answer no and the saved answers stay; the new set is printed but not
+saved. Without a terminal to answer on, the saved answers are kept as well. `--yes`
+replaces them without asking, for scripts.
+
 | Argument / option | Default | Description |
 |---|---|---|
 | `JOB_ID` | required | Numeric job id |
@@ -784,6 +790,7 @@ on it*.
 | `--language [auto\|nl\|en]` | `auto` | Language for both the questions and the answers; `auto` reads it from the vacancy |
 | `--cv TEXT` | matched to the language | CV Builder profile to prefer; your own CV and profile are always used |
 | `--notes TEXT` | empty | Context only you know, e.g. why you are leaving |
+| `--yes`, `-y` | off | Replace answers already saved for this vacancy and language without asking |
 
 Exits 1 when the vacancy, the user or a usable CV profile is missing, or when the model
 returns nothing usable. The full feature guide is

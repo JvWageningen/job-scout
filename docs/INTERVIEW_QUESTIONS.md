@@ -363,15 +363,28 @@ data/users/<name>/interview/<vacancy id>-answer-en.json   questions they may ask
 
 Generating again replaces the saved set for that vacancy, half and language, and
 leaves the other half and the other language alone. The answers half asks before it
-replaces a set on screen, because the saved answers hold your edits. Edits to an answer
-are saved as you type, so they are there on your next visit. The questions half has
-nothing to edit on the page; edit those in the downloaded file.
+replaces a set on screen, and names its language, because the saved answers hold your
+edits. `interview answers` on the command line asks the same question when answers in
+that language are already saved.
 
-With the language on *Automatic* the tab shows the newest saved set of each half.
-Choose Nederlands or English to see the set in that language, or to generate one.
-Nobody else's sets are ever shown: each user has their own folder, and every file
-name is built from the vacancy number and two fixed words, so a request cannot point
-anywhere else.
+Edits to an answer are saved as you type, so they are there on your next visit. An
+edit counts as saved once the server has it. If a save fails, it is sent again on your
+next change, and while an edit is unsaved the tab will not switch to another vacancy
+or language, and a reload asks first. An answer you empty keeps its last saved text
+until you write a new one, so rewriting one answer never holds back the others. The
+questions half has nothing to edit on the page; edit those in the downloaded file.
+
+With the language on *Automatic* the tab shows the newest saved set of each half, and
+generating again replaces that set in its own language, so the set you replace is
+always the one on screen. Choose Nederlands or English to see the set in that
+language, or to generate one. Nobody else's sets are ever shown: each user has their
+own folder, and every file name is built from the vacancy number and two fixed words,
+so a request cannot point anywhere else.
+
+An employer often takes the posting down once the interviews start, and the vacancy
+then leaves your shortlist. What you prepared for it stays reachable: as long as a set
+is saved for a vacancy, the dropdown lists it under *No longer on your shortlist, with
+saved preparation*.
 
 **What the download holds.** Both buttons give the same content in the same order, in
 the language of the set:
@@ -398,7 +411,10 @@ The file is named by date, content and employer, for example
 `20260918 Interview answers Findwhere.txt`. The name uses plain letters only, so an
 employer name with accents or odd characters is simplified rather than breaking the
 download. The export adds no dashes, emoji or decorative marks of its own; the words
-the model wrote, and the words you rewrote, are exported as they are.
+the model wrote, and the words you rewrote, are exported as they are. The one thing
+removed is control characters a Word file cannot hold, which can come along with text
+pasted from Word; a line break of that kind becomes an ordinary one. Both files drop
+them alike, so they keep the same content.
 
 ### CLI
 
@@ -411,7 +427,10 @@ uv run job-scout interview answers 42 --user alex --notes "Leaving because the t
 
 Both take the same options: `--user`, `--language auto|nl|en`, `--cv`, `--notes`. Full
 reference: [`interview questions`](USAGE.md#interview-questions) and
-[`interview answers`](USAGE.md#interview-answers).
+[`interview answers`](USAGE.md#interview-answers). Both save the set like the dashboard
+does. When answers in that language are already saved for the vacancy, `answers` asks
+before it replaces them, since they may be answers you rewrote; without a terminal to
+answer on it keeps them, and `--yes` replaces them without asking.
 
 `questions` prints the set grouped by theme, each question followed by its `why:` and
 `from:` lines. `answers` prints a numbered list in the order the model returned, each

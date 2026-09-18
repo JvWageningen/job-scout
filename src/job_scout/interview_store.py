@@ -13,11 +13,18 @@ is saved over the generated one; it keeps the date it was generated.
 Every path is built from a validated user, a positive vacancy id and two closed
 enums, and is checked to sit directly inside the user's interview directory, so
 nothing in a request can point a read or a write anywhere else.
+
+Timestamps are kept in UTC with their zone. A set that arrives or was saved
+without one (an edited file, a hand-made request) is taken as UTC, so saved
+sets can always be put in order.
 """
 
 from __future__ import annotations
 
+import re
 import tempfile
+from collections.abc import Container
+from datetime import UTC
 from enum import StrEnum
 from pathlib import Path
 
@@ -44,6 +51,9 @@ class InterviewMode(StrEnum):
 
 
 InterviewSet = InterviewQuestionSet | InterviewAnswerSet
+
+# The only names save_interview_set writes: vacancy, half and language.
+_SAVED_NAME = re.compile(r"^([1-9][0-9]{0,17})-(?:ask|answer)-(?:nl|en)\.json$")
 
 
 class SavedInterview(BaseModel):
@@ -73,6 +83,24 @@ def mode_of(interview: InterviewSet) -> InterviewMode:
     if isinstance(interview, InterviewAnswerSet):
         return InterviewMode.ANSWER
     return InterviewMode.ASK
+
+
+def _in_utc(interview: InterviewSet) -> InterviewSet:
+    """Give a set's timestamp a zone, taking a bare one as UTC.
+
+    Sets are sorted on when they were generated, and a timestamp with a zone
+    cannot be compared with one without.
+
+    Args:
+        interview: A question set or an answer set.
+
+    Returns:
+        The same set, or a copy whose timestamp carries UTC.
+    """
+    if interview.generated_at.tzinfo is not None:
+        return interview
+    moment = interview.generated_at.replace(tzinfo=UTC)
+    return interview.model_copy(update={"generated_at": moment})
 
 
 def interview_set_path(
@@ -111,7 +139,8 @@ def save_interview_set(user: str, interview: InterviewSet) -> Path:
     """Save a set, replacing the one for the same vacancy, half and language.
 
     The file is written beside its final name and then moved into place, so a
-    crash halfway leaves the previous version rather than half a file.
+    crash halfway leaves the previous version rather than half a file. A
+    timestamp without a zone is saved as UTC.
 
     Args:
         user: Name of an existing user.
@@ -120,6 +149,7 @@ def save_interview_set(user: str, interview: InterviewSet) -> Path:
     Returns:
         Where it was saved.
     """
+    interview = _in_utc(interview)
     path = interview_set_path(
         user, interview.job_id, mode_of(interview), interview.language
     )
@@ -168,9 +198,10 @@ def load_interview_set(
 ) -> InterviewSet | None:
     """Read one saved set, if there is a usable one.
 
-    A file that no longer parses (hand-edited, or written by a version with a
-    different shape) is logged and treated as absent, so generating again
-    replaces it instead of the tab failing on it forever.
+    A file that no longer parses (hand-edited, saved in another encoding, or
+    written by a version with a different shape) is logged and treated as
+    absent, so generating again replaces it instead of the tab failing on it
+    forever. A timestamp without a zone is read as UTC.
 
     Args:
         user: Name of an existing user.
@@ -189,13 +220,13 @@ def load_interview_set(
         loaded: InterviewSet = model.model_validate_json(
             path.read_text(encoding="utf-8")
         )
-    except ValidationError as exc:
+    except (UnicodeDecodeError, ValidationError) as exc:
         logger.warning(f"Ignoring unreadable saved interview {path.name}: {exc}")
         return None
     if loaded.job_id != job_id or loaded.language is not language:
         logger.warning(f"Ignoring saved interview {path.name}: it names another set")
         return None
-    return loaded
+    return _in_utc(loaded)
 
 
 def load_saved_interview(
@@ -229,6 +260,65 @@ def load_saved_interview(
     saved.questions.sort(key=lambda item: item.generated_at, reverse=True)
     saved.answers.sort(key=lambda item: item.generated_at, reverse=True)
     return saved
+
+
+def saved_job_ids(user: str) -> list[int]:
+    """List the vacancies anything is saved for, newest vacancy first.
+
+    Only names this module writes count; a stray file in the folder is not a
+    vacancy.
+
+    Args:
+        user: Name of an existing user.
+
+    Returns:
+        The vacancy ids, highest first.
+    """
+    root = user_interview_dir(require_user(user))
+    if not root.is_dir():
+        return []
+    found = {
+        int(match.group(1))
+        for path in root.iterdir()
+        if (match := _SAVED_NAME.match(path.name))
+    }
+    return sorted(found, reverse=True)
+
+
+def saved_vacancy_choices(
+    user: str, listed: Container[object]
+) -> list[dict[str, object]]:
+    """Offer the vacancies with saved sets that the shortlist no longer shows.
+
+    An employer often takes a posting down once interviews start, and the
+    pruner then marks the vacancy expired and closed. What was prepared for it
+    is still needed, so it stays reachable. The entries have the same shape
+    as the shortlist's and carry nothing private either.
+
+    Args:
+        user: Name of an existing user.
+        listed: Vacancy ids the shortlist already offers.
+
+    Returns:
+        One entry per vacancy that has saved sets, still exists and is not
+        in ``listed``, newest vacancy first.
+    """
+    db = Database(user_db_path(require_user(user)))
+    choices: list[dict[str, object]] = []
+    for job_id in saved_job_ids(user):
+        job = None if job_id in listed else db.get_job(job_id)
+        if job is None:
+            continue
+        choices.append(
+            {
+                "id": job.id,
+                "title": job.title,
+                "company": job.company,
+                "status": job.status.value,
+                "fit_score": job.fit_score,
+            }
+        )
+    return choices
 
 
 def latest_interview_set(

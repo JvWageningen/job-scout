@@ -33,6 +33,8 @@ from job_scout.interview_store import (
     load_saved_interview,
     save_edited_answers,
     save_interview_set,
+    saved_job_ids,
+    saved_vacancy_choices,
 )
 from job_scout.letters.models import LetterLanguage
 from job_scout.letters.writer import LetterError
@@ -277,3 +279,75 @@ def test_edited_answers_need_a_vacancy_that_still_exists(job_id: int) -> None:
     """An edit arrives from the page, so the vacancy is checked first."""
     with pytest.raises(InterviewStoreError, match="no longer exists"):
         save_edited_answers(USER, answer_set(job_id + 50))
+
+
+def test_a_file_in_another_encoding_hides_only_itself(job_id: int) -> None:
+    """An editor that saved the file as cp1252 must not take the other half along."""
+    save_interview_set(USER, question_set(job_id))
+    path = save_interview_set(USER, answer_set(job_id, "In het café oefende ik."))
+    path.write_bytes(path.read_text(encoding="utf-8").encode("cp1252"))
+
+    saved = load_saved_interview(USER, job_id)
+
+    assert saved.answers == []
+    assert saved.questions == [question_set(job_id)]
+
+
+def test_a_timestamp_without_a_zone_is_taken_as_utc(job_id: int) -> None:
+    """A bare timestamp, saved or edited by hand, still sorts beside a zoned one."""
+    bare = question_set(job_id).model_copy(
+        update={"generated_at": datetime(2026, 3, 5, 9)}
+    )
+    written = save_interview_set(USER, bare)
+    edited = question_set(job_id, "New?", language=LetterLanguage.EN, day=7)
+    path = interview_set_path(USER, job_id, InterviewMode.ASK, LetterLanguage.EN)
+    path.write_text(
+        edited.model_dump_json().replace('09:00:00Z"', '09:00:00"'), encoding="utf-8"
+    )
+
+    saved = load_saved_interview(USER, job_id).questions
+
+    assert '"generated_at":"2026-03-07T09:00:00"' in path.read_text(encoding="utf-8")
+    assert [s.language for s in saved] == [LetterLanguage.EN, LetterLanguage.NL]
+    assert [s.generated_at for s in saved] == [
+        datetime(2026, 3, 7, 9, tzinfo=UTC),
+        datetime(2026, 3, 5, 9, tzinfo=UTC),
+    ]
+    assert "2026-03-05T09:00:00Z" in written.read_text(encoding="utf-8")
+
+
+def test_vacancies_with_saved_sets_are_offered_beside_the_shortlist(
+    job_id: int,
+) -> None:
+    """A posting taken down during the interviews keeps its preparation in reach."""
+    db = Database(config.user_db_path(USER))
+    expired = db.save_job(
+        JobListing(
+            title="Kalibratietechnicus",
+            company=COMPANY,
+            url="https://voorbeeld.example/vacatures/2",
+            source="board",
+            status=JobStatus.MATCHED,
+            seen_at=datetime(2026, 1, 2, tzinfo=UTC),
+        )
+    )
+    db.mark_expired(expired, "posting taken down")
+    save_interview_set(USER, question_set(job_id))
+    save_interview_set(USER, question_set(expired))
+    save_interview_set(USER, answer_set(expired))
+    save_interview_set(USER, question_set(job_id + 50))
+    (config.user_interview_dir(USER) / "7-notes.json").write_text("{}", "utf-8")
+
+    choices = saved_vacancy_choices(USER, {job_id})
+
+    assert saved_job_ids(USER) == [job_id + 50, expired, job_id]
+    assert choices == [
+        {
+            "id": expired,
+            "title": "Kalibratietechnicus",
+            "company": COMPANY,
+            "status": "expired",
+            "fit_score": None,
+        }
+    ]
+    assert saved_vacancy_choices(OTHER, set()) == []

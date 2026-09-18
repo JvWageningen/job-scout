@@ -13,7 +13,10 @@ which keeps the navigation pane useful and the file tidy in any editor.
 The fixed wording is in the set's own language and follows the house style in
 :mod:`job_scout.writing_style`: no em or en dashes, no decorative symbols and
 no emoji. What the model wrote, and what the applicant rewrote, is exported as
-it is; the export never rewrites the applicant's own text.
+it is; the export never rewrites the applicant's own text. The one exception
+is technical: control characters that a Word file cannot hold (they arrive
+with text pasted from Word or scraped from a page) are dropped from both
+formats alike, so one stray character cannot cost the applicant the download.
 """
 
 from __future__ import annotations
@@ -29,7 +32,7 @@ from docx import Document
 from docx.document import Document as DocxDocument
 from docx.oxml.ns import qn
 from docx.shared import Pt
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
 
 from job_scout.config import user_db_path
 from job_scout.database import Database
@@ -81,6 +84,13 @@ class ExportedFile(BaseModel):
     content: bytes
 
 
+# Word's manual line break and page break, which paste along with Word text.
+_XML_BREAKS = re.compile("[\x0b\x0c]")
+# Everything else XML 1.0 forbids: C0 controls other than tab, line feed and
+# carriage return, lone surrogates, and the two non-characters.
+_XML_ILLEGAL = re.compile("[\x00-\x08\x0e-\x1f\ud800-\udfff\ufffe\uffff]")
+
+
 class BlockKind(StrEnum):
     """The parts a document is made of, rendered the same way in both formats."""
 
@@ -94,8 +104,28 @@ class BlockKind(StrEnum):
     ITEM = "item"
 
 
+def _xml_safe(text: str) -> str:
+    """Drop the characters a Word file cannot hold.
+
+    Text pasted from Word or scraped from a page can carry control characters
+    that XML forbids, and python-docx refuses the whole document for one of
+    them. A vertical tab or form feed (Word's line and page breaks) becomes a
+    line break; the rest are removed. Tabs and line breaks stay.
+
+    Args:
+        text: Any text headed for the document.
+
+    Returns:
+        The text with only characters XML allows.
+    """
+    return _XML_ILLEGAL.sub("", _XML_BREAKS.sub("\n", text))
+
+
 class Block(BaseModel):
     """One part of the document.
+
+    Both formats are rendered from blocks, so the characters a Word file
+    cannot hold are removed here, once, and the text file stays identical.
 
     Attributes:
         kind: How the part is laid out.
@@ -108,6 +138,19 @@ class Block(BaseModel):
     kind: BlockKind
     text: str
     label: str = ""
+
+    @field_validator("text", "label")
+    @classmethod
+    def _printable(cls, value: str) -> str:
+        """Keep only what a Word file can hold.
+
+        Args:
+            value: The text or the label.
+
+        Returns:
+            The value without XML-illegal characters.
+        """
+        return _xml_safe(value)
 
 
 class _Labels(BaseModel):
