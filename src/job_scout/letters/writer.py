@@ -7,6 +7,7 @@ import json
 import re
 import tempfile
 from datetime import UTC, date, datetime
+from functools import cache
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -15,6 +16,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 from job_scout.config import list_users, user_cv_dir, user_db_path, user_letters_dir
 from job_scout.cv.models import ContactSection, CVDocument, DetailsSection
+from job_scout.cv.sample import sample_cv
 from job_scout.cv.storage import ProfileStore
 from job_scout.database import Database
 from job_scout.letters.conventions import (
@@ -60,6 +62,70 @@ def require_user(user: str) -> str:
     return user
 
 
+@cache
+def _sample_organisations() -> frozenset[str]:
+    """Return every employer and school named in the bundled example CV.
+
+    Read from the sample itself rather than kept as a second list, so the guard
+    cannot drift out of step when the example changes.
+
+    Returns:
+        The example CV's organisations and schools, case-folded.
+    """
+    names: set[str] = set()
+    for language in ("EN", "NL"):
+        for section in sample_cv(language).all_sections():
+            for entry in getattr(section, "entries", None) or []:
+                for field in ("organisation", "school"):
+                    value = getattr(entry, field, "") or ""
+                    if value.strip():
+                        names.add(value.strip().casefold())
+    return frozenset(names)
+
+
+def _example_content(doc: CVDocument) -> list[str]:
+    """Name the example-CV employers and schools still present in a CV.
+
+    CV Builder seeds a new profile with the bundled example so the editor is not
+    empty, and that seed is saved to disk like any other profile. Anything reading
+    stored CVs therefore cannot tell a real one from an untouched example unless it
+    looks. Without this, an applicant who never opened CV Builder gets letters and
+    interview answers describing a fictional person's career.
+
+    Args:
+        doc: A stored CV.
+
+    Returns:
+        The example organisations it still contains, empty for a real CV.
+    """
+    sample = _sample_organisations()
+    found: list[str] = []
+    for section in doc.all_sections():
+        for entry in getattr(section, "entries", None) or []:
+            for field in ("organisation", "school"):
+                value = (getattr(entry, field, "") or "").strip()
+                if value and value.casefold() in sample and value not in found:
+                    found.append(value)
+    return found
+
+
+def _refuse_example(slug: str, found: list[str]) -> LetterError:
+    """Explain that a CV is still (partly) the example, and what to do about it.
+
+    Args:
+        slug: The CV profile.
+        found: Example organisations it still contains.
+
+    Returns:
+        The error to raise.
+    """
+    return LetterError(
+        f"The CV '{slug}' in CV Builder still contains the example CV "
+        f"({', '.join(found[:3])}). Replace it with your own details first: "
+        "otherwise the result would describe someone else's career."
+    )
+
+
 def select_cv(
     user: str, language: LetterLanguage, slug: str | None = None
 ) -> tuple[str, CVDocument]:
@@ -69,19 +135,27 @@ def select_cv(
     if slug:
         if slug not in slugs:
             raise LetterError("The selected CV profile no longer exists.")
-        return slug, store.load(slug)
+        doc = store.load(slug)
+        found = _example_content(doc)
+        if found:
+            raise _refuse_example(slug, found)
+        return slug, doc
+    docs = {candidate: store.load(candidate) for candidate in slugs}
+    examples = {s: _example_content(d) for s, d in docs.items()}
+    real = {s: d for s, d in docs.items() if not examples[s]}
+    if not real:
+        if examples:
+            first = next(iter(examples))
+            raise _refuse_example(first, examples[first])
+        raise LetterError("Save your CV in CV Builder before writing a letter.")
     preferred = "nederlands" if language is LetterLanguage.NL else "default"
-    if preferred in slugs:
-        doc = store.load(preferred)
-        if doc.language.lower() == language.value:
-            return preferred, doc
-    for candidate in slugs:
-        doc = store.load(candidate)
+    if preferred in real and real[preferred].language.lower() == language.value:
+        return preferred, real[preferred]
+    for candidate, doc in real.items():
         if doc.language.lower() == language.value:
             return candidate, doc
-    if slugs:
-        return slugs[0], store.load(slugs[0])
-    raise LetterError("Save your CV in CV Builder before writing a letter.")
+    first = next(iter(real))
+    return first, real[first]
 
 
 def cv_facts(doc: CVDocument) -> str:
