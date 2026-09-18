@@ -4,6 +4,42 @@ Format: [Keep a Changelog](https://keepachangelog.com)
 
 <!-- version list -->
 
+## v2.7.0 (2026-09-18)
+
+### Bug Fixes
+
+- **company**: Look a company up once and reuse it
+  ([`5ef2a9e`](https://github.com/JvWageningen/job-scout/commit/5ef2a9e8173bcacbf95e3f2aab988352a7bc52a3))
+
+- **company**: Treat a dead search as a failure and refresh from the user database
+  ([`7c7c2b8`](https://github.com/JvWageningen/job-scout/commit/7c7c2b8885dd5ccb4e106898ca7d937ae1a0e9a3))
+
+- **interview**: Finish the style, lookup and export review findings
+  ([`18d8f61`](https://github.com/JvWageningen/job-scout/commit/18d8f61fa32dd80368b80981994fbee0b1e3dc15))
+
+- **interview**: Protect edited answers and keep saved sets reachable
+  ([`28efb8f`](https://github.com/JvWageningen/job-scout/commit/28efb8fd1953adf472020aed85fc348f9a75398e))
+
+- **style**: Keep ranges, quotes and links intact when cleaning generated text
+  ([`9a0ca02`](https://github.com/JvWageningen/job-scout/commit/9a0ca027cd3beb73b54c30e198fc733260938a5e))
+
+### Chores
+
+- Sync uv.lock to 2.6.0 [skip ci]
+  ([`fbbcc2c`](https://github.com/JvWageningen/job-scout/commit/fbbcc2c8198db02b0f4fd4de927dbd4226ff10f4))
+
+### Features
+
+- **interview**: Save every interview set and download it as Word or text
+  ([`6c0a00b`](https://github.com/JvWageningen/job-scout/commit/6c0a00b4d9e44abc029befe09abb29d8c1551dd7))
+
+- **style**: Add the house style and a clean-up floor for generated text
+  ([`7e5e406`](https://github.com/JvWageningen/job-scout/commit/7e5e406123234f94a8a1702e9949f2b9a5128bec))
+
+- **style**: Write every applicant-facing text in the house style
+  ([`c530a11`](https://github.com/JvWageningen/job-scout/commit/c530a117dd24b3990349389ac42c3072b469380c))
+
+
 ## v2.6.0 (2026-09-18)
 
 ### Bug Fixes
