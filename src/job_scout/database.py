@@ -53,6 +53,26 @@ def company_key(company: str) -> str:
     return " ".join(company.lower().split())
 
 
+# Company keys that stand for "no company given", not for an employer: blank,
+# the "Unknown" the scrapers and save_company_research fall back to when a
+# listing has no company, and the "nan" that str() makes of a missing pandas
+# value. Two vacancies under one of these are two different employers, so
+# nothing is looked up, shared or remembered under them.
+_PLACEHOLDER_KEYS = frozenset({"", "unknown", "nan"})
+
+
+def names_company(company: str) -> bool:
+    """Tell whether a vacancy's company name names an actual employer.
+
+    Args:
+        company: Company name as a vacancy gives it.
+
+    Returns:
+        False for a blank name or a placeholder such as "Unknown".
+    """
+    return company_key(company) not in _PLACEHOLDER_KEYS
+
+
 def _parse_time(value: object) -> datetime | None:
     """Read a stored ISO timestamp, assuming UTC when it carries no zone.
 
@@ -1545,6 +1565,8 @@ class Database:
 
         Research describes the employer, not one vacancy, so what was found
         for one vacancy is just as true for the next one at the same company.
+        A placeholder name such as "Unknown" names no employer, so under one
+        only the vacancy's own research is returned.
 
         Args:
             company: Company name; matched on :func:`company_key`.
@@ -1554,12 +1576,15 @@ class Database:
         Returns:
             The research JSON strings, most recently updated first.
         """
+        # -1 is never a row id, so the job_id condition matches nothing.
+        vacancy = job_id if job_id is not None else -1
+        key = company_key(company) if names_company(company) else None
         with self._conn() as conn:
             rows = conn.execute(
                 "SELECT research_json FROM company_research "
                 "WHERE company_key = ? OR job_id = ? "
                 "ORDER BY updated_at DESC, id DESC",
-                (company_key(company), job_id if job_id is not None else -1),
+                (key, vacancy),
             ).fetchall()
         return [row[0] for row in rows]
 

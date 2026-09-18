@@ -16,7 +16,12 @@ and is remembered like any other attempt.
 
 Companies are matched on :func:`job_scout.database.company_key`, the same
 normalised name the review cache uses, so every vacancy at one employer shares
-one memory.
+one memory. A placeholder name such as "Unknown" names no employer, so nothing
+is remembered under it (see :func:`job_scout.database.names_company`).
+
+A search that returned no result for any query did not look at the company at
+all: the search was down or blocked. The research and review modules raise for
+it, and it is remembered as a failure, never as "nothing found".
 """
 
 from __future__ import annotations
@@ -27,6 +32,8 @@ from typing import TYPE_CHECKING
 
 from loguru import logger
 from pydantic import BaseModel, Field
+
+from job_scout.database import names_company
 
 if TYPE_CHECKING:
     from job_scout.database import Database
@@ -180,10 +187,12 @@ def recall(
             store without remembering the lookup.
 
     Returns:
-        The memory, empty when the company was never looked up.
+        The memory, empty when the company was never looked up or the name is
+        a placeholder that names no employer.
     """
     last: dict[LookupOutcome, datetime] = {}
-    for outcome, at in db.get_company_lookups(company, kind).items():
+    stored = db.get_company_lookups(company, kind) if names_company(company) else {}
+    for outcome, at in stored.items():
         try:
             last[LookupOutcome(outcome)] = at
         except ValueError:
@@ -204,6 +213,9 @@ def remember(
 ) -> None:
     """Remember that a company was looked up, and how that went.
 
+    Nothing is remembered under a placeholder name such as "Unknown": two
+    vacancies without a company name are two different employers.
+
     Args:
         db: The user's database.
         company: Company name as the vacancy gives it.
@@ -211,6 +223,9 @@ def remember(
         outcome: Found, nothing found or failed.
         now: When the lookup ran; the current time when omitted.
     """
+    if not names_company(company):
+        logger.debug(f"Not remembering a {kind} lookup for placeholder {company!r}")
+        return
     db.record_company_lookup(company, kind, outcome, at=now)
     logger.debug(f"Remembered {kind} lookup for {company!r}: {outcome}")
 

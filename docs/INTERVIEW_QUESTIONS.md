@@ -281,7 +281,7 @@ spaces collapsed, the same way the review cache has always matched them.
 | --- | --- | --- |
 | Found | Not while the research is stored | After 14 days, and only if it is still thin |
 | Nothing found | After 30 days | After 14 days |
-| Failed (model unreachable, or its answer unusable) | After 1 hour | After 1 hour |
+| Failed (model unreachable, its answer unusable, or web search down) | After 1 hour | After 1 hour |
 
 Why these numbers: what a company does and how big it is changes over months, so a
 month between research lookups loses nothing. Employee reviews appear faster, and a thin
@@ -292,6 +292,12 @@ enough to stop a run of clicks each waiting out the same timeout.
 
 A few details:
 
+- A search that brings back no result at all, for any query, means the search was
+  down (SearXNG restarting during a deploy, a rate limit), not that the web knows
+  nothing: a working search always returns something, if only namesakes. It counts as a
+  failure, so it is tried again after an hour, and the review is not tried against the
+  same dead search. "Nothing found" is kept for searches that returned pages, none of
+  them about the company.
 - A review's own date counts as a lookup. A thin review that the daily run or
   `company-review` wrote last week is used as it is, not rewritten now.
 - Research that cites no source counts as absent once: the company is looked up, and
@@ -302,7 +308,15 @@ A few details:
   September 2026)`. `company review is based on little evidence` is never dated.
 - To refresh on purpose, run [`company research`](USAGE.md#company-research) or use
   `POST /api/company/research/{job_id}`. Both always search now, whatever is
-  remembered, and the attempt is remembered in turn.
+  remembered, and work in the user's own database, so the attempt is remembered where
+  interview preparation looks and what they find is used from the next click on.
+- The lookup also hands back a date for each, so a page can say "company research from
+  <date>": when the research or review in use was written, or, with none in use, when
+  the last check found nothing. A later check that found nothing does not make older
+  research look newer.
+- A vacancy without a company name (the scrapers write `Unknown` when a listing names
+  nobody) is never looked up, nothing is remembered for it, and it shares no research or
+  review with other such vacancies: they are different employers.
 - Both lookups use the `evaluation` routing purpose, which may point at a different
   provider than question writing. If research cannot reach that provider, the review is
   not tried as well and is remembered as failed, so one unreachable host costs one
@@ -310,7 +324,9 @@ A few details:
 - The research and review prompts carry the same house style as everything else the tool
   writes, and the prose that comes back (summary, pros, cons, notes, culture and growth)
   is cleaned of dashes, bold and emoji before it is stored. Names, web addresses and the
-  stored snippets are left exactly as they were read.
+  stored snippets are left exactly as they were read. Research and reviews stored before
+  this are cleaned the same way whenever they are read, so their old dashes do not reach
+  the prompt; the stored copy itself is not changed.
 
 Hiring managers are never looked up here: nothing in either half uses them.
 

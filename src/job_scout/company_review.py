@@ -12,13 +12,16 @@ here from how many distinct web sources the review rests on, so a review built
 on one page can never present itself as solid.
 
 Outcomes are kept apart: a review, None when there was nothing to review,
-CompanyReviewError when the model's answer was unusable, and LLMError when the
-model could not be reached. A failure is never dressed up as a review, so a
-caller cannot store one over a good review by accident.
+CompanyReviewError when the model's answer was unusable, ReviewSearchError (a
+CompanyReviewError) when no search query returned anything at all, and LLMError
+when the model could not be reached. A failure is never dressed up as a review,
+so a caller cannot store one over a good review by accident. A blank company
+name or a placeholder such as "Unknown" is never reviewed.
 
 The prompt carries the house style (:data:`job_scout.writing_style.HOUSE_STYLE`)
 and the prose the model returns is cleaned with
-:func:`job_scout.writing_style.humanise` before the review is built.
+:func:`job_scout.writing_style.humanise` before the review is built. Reviews
+stored before the house style are cleaned when read, by :func:`tidy_review`.
 
 The model call uses the ``evaluation`` purpose, which the LLM factory routes to
 its own provider when ``evaluation_provider`` is configured.
@@ -33,6 +36,7 @@ from typing import TYPE_CHECKING
 from loguru import logger
 
 from job_scout.company_research import fenced_evidence, mentions_company, snippet_line
+from job_scout.database import names_company
 from job_scout.evaluator import _extract_json
 from job_scout.models import CompanyReview
 from job_scout.websearch import web_search
@@ -52,7 +56,21 @@ _HIGH_CONFIDENCE_SOURCES = 6
 
 
 class CompanyReviewError(RuntimeError):
-    """Web evidence was found, but the model's answer could not be used."""
+    """The review could not be written.
+
+    Either web evidence was found but the model's answer could not be used, or
+    web search itself was unavailable (see :class:`ReviewSearchError`). Neither
+    says anything about what the web holds on the company.
+    """
+
+
+class ReviewSearchError(CompanyReviewError):
+    """Not one review query returned any result, so the search was not working.
+
+    A query about any employer brings back namesakes and loosely related pages;
+    none at all for every query means the backends failed or blocked, which
+    ``web_search`` reports as an empty list.
+    """
 
 
 def _evidence_queries(company: str) -> list[str]:
@@ -85,23 +103,35 @@ def gather_company_evidence(
 
     Returns:
         Tuple of (evidence snippets, source URLs), index-aligned.
+
+    Raises:
+        ReviewSearchError: If no query returned any result at all, which means
+            the search failed rather than found nothing.
     """
     snippets: list[str] = []
     sources: list[str] = []
+    returned = 0
     for query in _evidence_queries(company):
-        for result in web_search(
+        results = web_search(
             query,
             max_results=5,
             timeout=timeout,
             searxng_url=searxng_url,
             api_key=api_key,
-        ):
+        )
+        returned += len(results)
+        for result in results:
             line = snippet_line(result.title, result.snippet)
             if line and line not in snippets and mentions_company(result, company):
                 snippets.append(line)
                 sources.append(result.url)
             if len(snippets) >= _MAX_SNIPPETS:
                 break
+    if not returned:
+        raise ReviewSearchError(
+            f"web search returned no result for any review query about "
+            f"{company!r}, so it was probably unavailable"
+        )
     return snippets, sources
 
 
@@ -176,14 +206,18 @@ def review_company(
 
     Returns:
         A CompanyReview whose confidence reflects its number of sources, or
-        None when there is no company name or no web result names the
-        company. The model is not asked in either case.
+        None when there is no company name (blank, or a placeholder such as
+        "Unknown") or no web result names the company. The model is not asked
+        in either case.
 
     Raises:
+        ReviewSearchError: If no search query returned any result, so the
+            search was down or blocked. A CompanyReviewError.
         CompanyReviewError: If the model's answer is not a JSON object.
         LLMError: If the model call fails.
     """
-    if not company.strip():
+    if not names_company(company):
+        logger.info(f"Company {company!r} names no employer; not reviewed")
         return None
     snippets, sources = gather_company_evidence(
         company, timeout=timeout, searxng_url=searxng_url, api_key=api_key
@@ -236,6 +270,32 @@ def _review_from_data(
         confidence=confidence,
         sources=distinct[:_MAX_STORED_SOURCES],
         reviewed_at=datetime.now(UTC),
+    )
+
+
+def tidy_review(review: CompanyReview) -> CompanyReview:
+    """Return a stored review with its prose cleaned into the house style.
+
+    Reviews stored before the house style still carry their dashes and are
+    read for up to a year, so their prose is cleaned again whenever it is read
+    for a prompt. Scores, confidence and sources stay as stored.
+
+    Args:
+        review: The review as read from the database.
+
+    Returns:
+        A cleaned copy; *review* itself is left unchanged.
+    """
+    return review.model_copy(
+        update={
+            "summary": humanise(review.summary),
+            "pros": _prose_list(review.pros),
+            "cons": _prose_list(review.cons),
+            "employee_sentiment": _prose(review.employee_sentiment),
+            "financial_health": _prose(review.financial_health),
+            "growth": _prose(review.growth),
+            "company_age": _prose(review.company_age),
+        }
     )
 
 

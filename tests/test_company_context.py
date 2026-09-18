@@ -24,6 +24,7 @@ from job_scout.company_lookups import (
     LookupKind,
     LookupOutcome,
     recall,
+    remember,
 )
 from job_scout.cv.models import CVDocument, TextSection
 from job_scout.cv.storage import ProfileStore
@@ -67,6 +68,20 @@ PAGES = [
         url="https://werkgevers.example/kwadrant-meetlab",
         title="Werken bij Kwadrant Meetlab",
         snippet="Medewerkers van Kwadrant Meetlab noemen de werkdruk rond audits hoog.",
+    ),
+]
+# What a search returns for an employer the web knows nothing about: pages
+# about other organisations. An empty list instead means the search failed.
+NAMESAKES = [
+    SearchResult(
+        url="https://kwadrant-bouw.example/",
+        title="Kwadrant Bouw",
+        snippet="Kwadrant Bouw bouwt woningen in Zwolle.",
+    ),
+    SearchResult(
+        url="https://meetlab-zuid.example/",
+        title="Meetlab Zuid",
+        snippet="Meetlab Zuid test bodemmonsters.",
     ),
 ]
 RESEARCH_ANSWER = json.dumps(
@@ -316,7 +331,7 @@ def test_nothing_found_is_remembered_until_its_cooldown_ends(
     db: Database, web: Web
 ) -> None:
     """An employer the web does not know is not searched for on every click."""
-    web.results = []
+    web.results = list(NAMESAKES)
     job_id = _job(db, "a")
     client = FakeLLMClient([QUESTIONS])
     first = _context(db, job_id, client, NOW)
@@ -331,6 +346,9 @@ def test_nothing_found_is_remembered_until_its_cooldown_ends(
         f"{NO_REVIEW} (checked {CHECKED})",
     ]
 
+    assert soon.research_checked_at == NOW
+    assert soon.review_checked_at == NOW
+
     later = _context(db, job_id, client, NOW + RESEARCH_COOLDOWN + timedelta(hours=1))
     assert len(web.queries) > searched
     assert later.missing == [NO_PUBLIC_INFO, NO_REVIEW]
@@ -339,7 +357,7 @@ def test_nothing_found_is_remembered_until_its_cooldown_ends(
 
 def test_research_and_review_cooldowns_run_separately(db: Database, web: Web) -> None:
     """After two weeks only the review is looked for again; research waits a month."""
-    web.results = []
+    web.results = list(NAMESAKES)
     job_id = _job(db, "a")
     client = FakeLLMClient([QUESTIONS])
     _context(db, job_id, client, NOW)
@@ -437,7 +455,7 @@ def test_an_unreachable_model_holds_both_lookups_for_the_short_cooldown(
 
 def test_research_without_sources_counts_as_absent_once(db: Database, web: Web) -> None:
     """Research from model memory is looked past once, then the lookup stands."""
-    web.results = []
+    web.results = list(NAMESAKES)
     job_id = _job(db, "a")
     remembered = CompanyResearch(company_name=COMPANY, research_notes="Uit het hoofd.")
     db.save_company_research(job_id, remembered.model_dump_json())
@@ -538,3 +556,148 @@ def test_dated_entries_still_drop_questions_that_cite_them() -> None:
     assert _drop_unsupported([cites("company review: cons")], [review]) == []
     kept = cites("vacancy")
     assert _drop_unsupported([kept], [research, review]) == [kept]
+
+
+def test_a_search_outage_is_a_failure_not_nothing_found(db: Database, web: Web) -> None:
+    """SearXNG restarting must not lock the company out for a month.
+
+    web_search turns every backend error into an empty list, so no result for
+    any query is an outage. It is remembered as a failure, the review does not
+    search the same dead backends, and both are tried again after an hour.
+    """
+    web.results = []
+    job_id = _job(db, "a")
+    client = FakeLLMClient([RESEARCH_ANSWER, REVIEW_ANSWER])
+    first = _context(db, job_id, client, NOW)
+    assert first.missing == [RESEARCH_FAILED, NO_REVIEW]
+    assert web.review_queries() == []
+    assert client.calls == []
+    for kind in (LookupKind.RESEARCH, LookupKind.REVIEW):
+        assert set(recall(db, COMPANY, kind).last) == {LookupOutcome.FAILED}
+    assert first.research_checked_at is None
+    searched = len(web.queries)
+
+    held = _context(db, job_id, client, NOW + FAILED_COOLDOWN - timedelta(minutes=5))
+    assert len(web.queries) == searched
+    assert held.missing == [f"{RESEARCH_FAILED} (tried {CHECKED})", NO_REVIEW]
+
+    web.results = list(PAGES)
+    back = _context(db, job_id, client, NOW + FAILED_COOLDOWN + timedelta(minutes=5))
+    assert _purposes(client) == ["evaluation", "evaluation"]
+    assert back.research is not None
+    assert back.missing == [THIN_REVIEW]
+
+
+def test_a_review_search_outage_is_retried_after_the_short_cooldown(
+    db: Database, web: Web
+) -> None:
+    """With research on file, a dead search during the review refresh is a failure."""
+    web.results = []
+    job_id = _job(db, "a")
+    db.save_company_research(job_id, _sourced_research().model_dump_json())
+    client = FakeLLMClient([REVIEW_ANSWER])
+    first = _context(db, job_id, client, NOW)
+    assert first.missing == [NO_REVIEW]
+    assert set(recall(db, COMPANY, LookupKind.REVIEW).last) == {LookupOutcome.FAILED}
+    assert client.calls == []
+
+    web.results = list(PAGES)
+    later = _context(db, job_id, client, NOW + FAILED_COOLDOWN + timedelta(minutes=5))
+    assert _purposes(client) == ["evaluation"]
+    assert later.review is not None
+    assert later.missing == [THIN_REVIEW]
+
+
+def test_research_in_use_is_dated_by_itself_not_by_a_later_empty_check(
+    db: Database, web: Web
+) -> None:
+    """A refresh that found nothing does not make June's research September's."""
+    job_id = _job(db, "a")
+    june = _sourced_research().model_copy(
+        update={"research_timestamp": NOW - timedelta(days=90)}
+    )
+    db.save_company_research(job_id, june.model_dump_json())
+    sound = CompanyReview(
+        company=COMPANY,
+        summary="Behulpzame collega's.",
+        confidence="high",
+        sources=[f"https://reviews{n}.example/kwadrant" for n in range(6)],
+        reviewed_at=NOW - timedelta(days=40),
+    )
+    db.save_company_review(COMPANY, sound.model_dump_json())
+    yesterday = NOW - timedelta(days=1)
+    remember(
+        db, COMPANY, LookupKind.RESEARCH, LookupOutcome.NOTHING_FOUND, now=yesterday
+    )
+    remember(db, COMPANY, LookupKind.REVIEW, LookupOutcome.NOTHING_FOUND, now=yesterday)
+    result = _context(db, job_id, FakeLLMClient([]), NOW)
+    assert web.queries == []
+    assert result.research is not None
+    assert result.research_checked_at == NOW - timedelta(days=90)
+    assert result.review_checked_at == NOW - timedelta(days=40)
+
+
+def test_placeholder_companies_share_nothing(db: Database, web: Web) -> None:
+    """Two "Unknown" vacancies are two different employers.
+
+    Nothing is searched for them, nothing is remembered under the placeholder,
+    and neither sees research or a review stored for the other.
+    """
+    first = _job(db, "a", company="Unknown")
+    second = _job(db, "b", company="Unknown")
+    own = _sourced_research().model_copy(update={"company_name": "Unknown"})
+    db.save_company_research(first, own.model_dump_json())
+    db.save_company_review("Unknown", _thin_review().model_dump_json())
+    client = FakeLLMClient([RESEARCH_ANSWER, REVIEW_ANSWER])
+
+    other = _context(db, second, client, NOW)
+    assert other.research is None
+    assert other.review is None
+    assert other.missing == [NO_PUBLIC_INFO, NO_REVIEW]
+    mine = _context(db, first, client, NOW)
+    assert mine.research is not None
+    assert mine.research.research_notes == NOTES
+    assert web.queries == []
+    assert client.calls == []
+    for kind in (LookupKind.RESEARCH, LookupKind.REVIEW):
+        assert db.get_company_lookups("Unknown", kind) == {}
+
+
+def test_prose_stored_before_the_house_style_is_cleaned_when_read(
+    db: Database, web: Web
+) -> None:
+    """Old research and reviews are reused for months; their dashes are not.
+
+    What is stored is left exactly as it was: cleaning happens on reading.
+    """
+    job_id = _job(db, "a")
+    old_research = _sourced_research().model_copy(
+        update={
+            "research_notes": f"{NOTES} \u2014 vooral voor de export.",
+            "culture_indicators": ["korte lijnen \u2014 weinig lagen"],
+            "tech_stack_hints": ["LabVIEW - TestStand"],
+        }
+    )
+    old_review = CompanyReview(
+        company=COMPANY,
+        summary="Behulpzame collega's \u2013 hoge werkdruk.",
+        pros=["**korte lijnen**"],
+        cons=["werkdruk \u2014 vooral rond audits"],
+        confidence="high",
+        sources=[f"https://reviews{n}.example/kwadrant" for n in range(6)],
+        reviewed_at=NOW - timedelta(days=100),
+    )
+    db.save_company_research(job_id, old_research.model_dump_json())
+    db.save_company_review(COMPANY, old_review.model_dump_json())
+    result = _context(db, job_id, FakeLLMClient([]), NOW)
+    assert web.queries == []
+    assert result.research is not None
+    assert result.review is not None
+    assert result.research.research_notes == f"{NOTES}, vooral voor de export."
+    assert result.research.culture_indicators == ["korte lijnen, weinig lagen"]
+    assert result.research.tech_stack_hints == ["LabVIEW - TestStand"]
+    assert result.research.sources == old_research.sources
+    assert result.review.summary == "Behulpzame collega's, hoge werkdruk."
+    assert result.review.pros == ["korte lijnen"]
+    assert result.review.cons == ["werkdruk, vooral rond audits"]
+    assert db.get_company_research(job_id) == old_research.model_dump_json()

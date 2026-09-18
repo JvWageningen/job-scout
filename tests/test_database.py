@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from job_scout.database import Database
+import pytest
+
+from job_scout.database import Database, names_company
 from job_scout.models import JobListing, JobStatus, TravelMode, TravelTime
 
 
@@ -1163,6 +1165,36 @@ class TestCompanyResearchByCompany:
         assert db.get_company_research_for_company("Ravelijn Zorggroep", job_id=99) == [
             '{"company_name": "orphan"}'
         ]
+
+    def test_a_placeholder_name_shares_nothing(self, tmp_path) -> None:  # noqa: ANN001
+        """Two "Unknown" vacancies are two employers; each keeps its own research."""
+        db = Database(tmp_path / "jobs.db")
+        first = self._job(db, "a", "Unknown")
+        second = self._job(db, "b", "unknown")
+        db.save_company_research(first, '{"company_name": "first"}')
+        db.save_company_research(second, '{"company_name": "second"}')
+        # The orphan fallback name save_company_research writes is one too.
+        db.save_company_research(99, '{"company_name": "orphan"}')
+
+        assert db.get_company_research_for_company("Unknown") == []
+        assert db.get_company_research_for_company("Unknown", job_id=second) == [
+            '{"company_name": "second"}'
+        ]
+
+    @pytest.mark.parametrize(
+        ("company", "named"),
+        [
+            ("Ravelijn Zorggroep", True),
+            ("Unknown Industries", True),
+            ("Unknown", False),
+            (" UNKNOWN ", False),
+            ("nan", False),
+            ("   ", False),
+        ],
+    )
+    def test_names_company(self, company: str, named: bool) -> None:
+        """Only a blank name or a scraper placeholder names no employer."""
+        assert names_company(company) is named
 
 
 class TestCompanyLookupMigration:

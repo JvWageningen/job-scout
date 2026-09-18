@@ -17,10 +17,12 @@ from job_scout.company_research import FENCE_CLOSE, FENCE_OPEN
 from job_scout.company_review import (
     MIN_REVIEW_SOURCES,
     CompanyReviewError,
+    ReviewSearchError,
     _coerce_score,
     evidence_confidence,
     gather_company_evidence,
     review_company,
+    tidy_review,
 )
 from job_scout.database import Database
 from job_scout.llm.base import LLMError
@@ -58,6 +60,14 @@ def _results(count: int) -> list[SearchResult]:
     ]
 
 
+# Results about other organisations: what a search returns for an employer the
+# web knows nothing about. An empty list instead means the search failed.
+_NAMESAKES = [
+    SearchResult(url="https://a.example", title="Kwadrant Bouw reviews", snippet="2/5"),
+    SearchResult(url="https://b.example", title="Meetlab Zuid", snippet="4/5"),
+]
+
+
 def test_gather_evidence_collects_snippets_and_sources() -> None:
     """Evidence gathering flattens search snippets and dedupes."""
     results = [
@@ -74,14 +84,57 @@ def test_gather_evidence_collects_snippets_and_sources() -> None:
 
 def test_gather_evidence_drops_namesakes() -> None:
     """Reviews of a different organisation are not evidence about this one."""
-    results = [
-        SearchResult(
-            url="https://a.example", title="Kwadrant Bouw reviews", snippet="2/5"
-        ),
-        SearchResult(url="https://b.example", title="Meetlab Zuid", snippet="4/5"),
-    ]
-    with patch("job_scout.company_review.web_search", return_value=results):
+    with patch("job_scout.company_review.web_search", return_value=_NAMESAKES):
         assert gather_company_evidence(_COMPANY) == ([], [])
+
+
+def test_a_search_that_returns_nothing_at_all_is_a_failure() -> None:
+    """No result for any query means the search was down, not that the web is silent."""
+    client = FakeLLMClient([_REVIEW_JSON])
+    with patch("job_scout.company_review.web_search", return_value=[]) as search:
+        with pytest.raises(ReviewSearchError):
+            gather_company_evidence(_COMPANY)
+        with pytest.raises(CompanyReviewError):
+            review_company(_COMPANY, client=client)
+    assert search.call_count == 8
+    assert client.calls == []
+
+
+@pytest.mark.parametrize("placeholder", ["Unknown", "  ", "nan"])
+def test_a_placeholder_company_is_not_reviewed(placeholder: str) -> None:
+    """The scrapers write "Unknown" when a listing names nobody."""
+    client = FakeLLMClient([_REVIEW_JSON])
+    with patch(
+        "job_scout.company_review.web_search", return_value=_results(3)
+    ) as search:
+        assert review_company(placeholder, client=client) is None
+    search.assert_not_called()
+    assert client.calls == []
+
+
+def test_a_stored_review_is_cleaned_when_read() -> None:
+    """Old reviews are read for up to a year, so their dashes are cleaned on reading."""
+    stored = CompanyReview(
+        company=_COMPANY,
+        work_score=61,
+        summary="Behulpzame collega's \u2014 hoge werkdruk.",
+        pros=["**korte lijnen**"],
+        cons=["werkdruk \u2013 vooral rond audits"],
+        growth="Groeit \u2014 langzaam.",
+        confidence="medium",
+        sources=["https://reviews0.example/kwadrant-meetlab"],
+    )
+    tidy = tidy_review(stored)
+    assert tidy.summary == "Behulpzame collega's, hoge werkdruk."
+    assert tidy.pros == ["korte lijnen"]
+    assert tidy.cons == ["werkdruk, vooral rond audits"]
+    assert tidy.growth == "Groeit, langzaam."
+    assert (tidy.work_score, tidy.confidence, tidy.sources) == (
+        61,
+        "medium",
+        stored.sources,
+    )
+    assert stored.summary == "Behulpzame collega's \u2014 hoge werkdruk."
 
 
 def test_review_company_synthesises_from_evidence() -> None:
@@ -120,7 +173,7 @@ def test_confidence_is_counted_from_the_sources(count: int, confidence: str) -> 
 def test_no_evidence_means_no_model_call_and_no_review() -> None:
     """Without a single snippet the model is not asked to fill in from memory."""
     client = FakeLLMClient([_REVIEW_JSON])
-    with patch("job_scout.company_review.web_search", return_value=[]):
+    with patch("job_scout.company_review.web_search", return_value=_NAMESAKES):
         assert review_company(_COMPANY, client=client) is None
     assert review_company("  ", client=client) is None
     assert client.calls == []
@@ -190,7 +243,7 @@ def test_the_pipeline_caches_nothing_when_the_web_names_nobody(tmp_path: Path) -
 
     db = Database(tmp_path / "jobs.db")
     client = FakeLLMClient([_REVIEW_JSON])
-    with patch("job_scout.company_review.web_search", return_value=[]):
+    with patch("job_scout.company_review.web_search", return_value=_NAMESAKES):
         review = _get_or_build_review(
             _COMPANY, db, client, searxng_url=None, api_key=None, dry_run=False
         )
@@ -214,7 +267,8 @@ def review_user(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Database:
 @pytest.mark.parametrize(
     ("results", "answer", "expected"),
     [
-        ([], _REVIEW_JSON, "No public web information"),
+        (_NAMESAKES, _REVIEW_JSON, "No public web information"),
+        ([], _REVIEW_JSON, "Could not write the review"),
         (_results(3), "not json", "Could not write the review"),
     ],
 )
@@ -225,7 +279,7 @@ def test_the_review_command_stores_nothing_it_could_not_write(
     answer: str,
     expected: str,
 ) -> None:
-    """Neither an empty web nor a failed call ends up in the cache."""
+    """Neither an empty web, a search outage nor a failed call ends up in the cache."""
     from click.testing import CliRunner
 
     from job_scout.cli import cli

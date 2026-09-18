@@ -3240,7 +3240,8 @@ def create_app() -> FastAPI:
 
         Raises:
             HTTPException: 400/404 for a bad user or job, 404 when no public web
-                information names the company, 502 when the model failed.
+                information names the company, 502 when the model or the web
+                search failed.
         """
         if not user:
             raise HTTPException(status_code=400, detail="User is required")
@@ -3256,6 +3257,7 @@ def create_app() -> FastAPI:
             )
             from job_scout.company_research import (  # noqa: PLC0415
                 CompanyResearchError,
+                SearchUnavailableError,
                 research_company,
             )
             from job_scout.config import (  # noqa: PLC0415
@@ -3276,10 +3278,13 @@ def create_app() -> FastAPI:
             except (CompanyResearchError, LLMError) as exc:
                 remember(db, job.company, LookupKind.RESEARCH, LookupOutcome.FAILED)
                 logger.warning(f"Company research failed for job {job_id}: {exc}")
-                raise HTTPException(
-                    status_code=502,
-                    detail="Company research failed. Check LLM settings and retry.",
-                ) from exc
+                detail = (
+                    "Web search returned nothing at all, so it is probably down. "
+                    "Nothing was stored; retry later."
+                    if isinstance(exc, SearchUnavailableError)
+                    else "Company research failed. Check LLM settings and retry."
+                )
+                raise HTTPException(status_code=502, detail=detail) from exc
             store_research(db, job_id, job.company, research)
             if research is None:
                 raise HTTPException(
@@ -3317,6 +3322,7 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail=f"User '{user}' not found")
 
         try:
+            from job_scout.company_research import tidy_research  # noqa: PLC0415
             from job_scout.config import user_db_path  # noqa: PLC0415
             from job_scout.database import Database  # noqa: PLC0415
             from job_scout.models import CompanyResearch  # noqa: PLC0415
@@ -3334,7 +3340,8 @@ def create_app() -> FastAPI:
                     detail=f"No research found for job {job_id}",
                 )
 
-            research = CompanyResearch.model_validate_json(research_json)
+            # Research stored before the house style is cleaned on the way out.
+            research = tidy_research(CompanyResearch.model_validate_json(research_json))
             return research.model_dump(mode="json")
         except HTTPException:
             raise

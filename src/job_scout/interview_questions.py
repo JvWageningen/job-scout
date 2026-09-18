@@ -49,20 +49,27 @@ from job_scout.company_lookups import (
     LookupAttempt,
     LookupKind,
     LookupOutcome,
+    aware,
     day,
     outcome_of,
     recall,
     remember,
     store_research,
 )
-from job_scout.company_research import CompanyResearchError, research_company
+from job_scout.company_research import (
+    CompanyResearchError,
+    SearchUnavailableError,
+    research_company,
+    tidy_research,
+)
 from job_scout.company_review import (
     MIN_REVIEW_SOURCES,
     CompanyReviewError,
     review_company,
+    tidy_review,
 )
 from job_scout.config import load_llm_config, user_db_path
-from job_scout.database import Database
+from job_scout.database import Database, names_company
 from job_scout.letters.language import detect_language
 from job_scout.letters.models import LetterLanguage
 from job_scout.letters.writer import LetterError, require_user
@@ -144,10 +151,12 @@ class CompanyContext(BaseModel):
         research: Company research, or None when none could be found.
         review: Company work-quality review, or None when none exists.
         missing: What ``missing_context`` must say about these two sources.
-        research_checked_at: When a research lookup for this company last
-            completed, found or not, so a caller can say "company research
-            from <date>". For research stored before lookups were remembered
-            it is the research's own timestamp. None when never looked up.
+        research_checked_at: The date to show with the research, so a caller
+            can say "company research from <date>": when the research in use
+            was written, not when a later lookup that found nothing ran. With
+            no research in use, when a lookup last completed, normally one
+            that found nothing. None when neither is known; a failed lookup
+            checked nothing and never sets it.
         review_checked_at: The same for the company review.
     """
 
@@ -378,9 +387,12 @@ def _research(db: Database, job: JobListing, job_id: int) -> CompanyResearch | N
 
     Research describes the employer, not the vacancy, so research stored for
     any vacancy at the same company (matched on the normalised name) serves
-    this one too. Research that cites no source was written from model memory,
-    before research required web evidence. It counts as absent, so the company
-    is looked up once; that attempt is then remembered like any other.
+    this one too; under a placeholder name such as "Unknown" only the
+    vacancy's own research counts. Research that cites no source was written
+    from model memory, before research required web evidence. It counts as
+    absent, so the company is looked up once; that attempt is then remembered
+    like any other. Prose stored before the house style is cleaned on the way
+    out, so old dashes do not reach the prompt.
 
     Args:
         db: The user's database.
@@ -392,12 +404,12 @@ def _research(db: Database, job: JobListing, job_id: int) -> CompanyResearch | N
         The research, or None when nothing usable is stored.
     """
     if job.company_research is not None and job.company_research.sources:
-        return job.company_research
+        return tidy_research(job.company_research)
     stored = db.get_company_research_for_company(job.company, job_id=job_id)
     for raw in stored:
         research = _parse_research(raw, job.company)
         if research is not None and research.sources:
-            return research
+            return tidy_research(research)
     if stored or job.company_research is not None:
         logger.info(
             f"Ignoring stored research for {job.company!r}: it cites no web "
@@ -409,6 +421,10 @@ def _research(db: Database, job: JobListing, job_id: int) -> CompanyResearch | N
 def _review(db: Database, job: JobListing) -> CompanyReview | None:
     """Reuse a review already on the job, else read the cache.
 
+    The cache is keyed by company name, so under a placeholder name such as
+    "Unknown" it would hold some other employer's review; it is not read then.
+    Prose stored before the house style is cleaned on the way out.
+
     Args:
         db: The user's database.
         job: The vacancy, possibly already enriched by the caller.
@@ -417,12 +433,14 @@ def _review(db: Database, job: JobListing) -> CompanyReview | None:
         The review, or None when nothing readable is stored.
     """
     if job.company_review is not None:
-        return job.company_review
+        return tidy_review(job.company_review)
+    if not names_company(job.company):
+        return None
     raw = db.get_company_review(job.company, max_age_days=_REVIEW_MAX_AGE_DAYS)
     if not raw:
         return None
     try:
-        return CompanyReview.model_validate_json(raw)
+        return tidy_review(CompanyReview.model_validate_json(raw))
     except ValidationError:
         logger.warning(f"Ignoring unreadable company review for {job.company}")
         return None
@@ -506,8 +524,10 @@ def _look_up_research(
     """Research the company now, and say what ``missing_context`` must report.
 
     "Found nothing" and "the lookup failed" are different facts, so they are
-    reported differently. A failure is remembered too, so the next generation
-    within :data:`FAILED_COOLDOWN` does not wait out the same timeout.
+    reported differently. A search that returned no result for any query did
+    not look at the company at all, so it is a failure too. A failure is
+    remembered, so the next generation within :data:`FAILED_COOLDOWN` does not
+    wait out the same timeout, and is retried after it.
 
     Args:
         db: The user's database.
@@ -518,16 +538,16 @@ def _look_up_research(
 
     Returns:
         The research or None, the ``missing_context`` entries it causes, and
-        whether the model answered at all, so an unreachable host is not asked
-        again for the review.
+        whether the model host and the web search both answered, so neither is
+        asked again for the review when it did not.
     """
     try:
         research = _run_research(db, job, job_id, client, now)
-    except LLMError as exc:
+    except (LLMError, SearchUnavailableError) as exc:
         remember(db, job.company, LookupKind.RESEARCH, LookupOutcome.FAILED, now=now)
         logger.warning(
-            f"Company research for {job.company!r} could not reach the model: "
-            f"{exc}; no further company lookups for this generation"
+            f"Company research for {job.company!r} could not reach the model or "
+            f"the web search: {exc}; no further company lookups for this generation"
         )
         return None, [RESEARCH_FAILED], False
     except CompanyResearchError as exc:
@@ -654,9 +674,9 @@ def _settle_review(
         job: The vacancy, possibly already enriched by the caller.
         client: The generator's own client.
         now: The current time.
-        reachable: False when research just failed to reach the model host;
-            the review would ask the same host, so it is remembered as failed
-            instead of waiting out a second timeout.
+        reachable: False when research just failed to reach the model host
+            or the web search; the review would use the same ones, so it is
+            remembered as failed instead of waiting out a second timeout.
 
     Returns:
         The review to ground on, or None, and its ``missing_context`` entries.
@@ -713,10 +733,15 @@ def company_context(
     a thin review still reported as thin.
 
     Both lookups call the model with the ``evaluation`` purpose, which the LLM
-    factory may route to a separately configured provider. If that host cannot
-    be reached during research, the review is not attempted and is remembered
-    as failed: one failure is enough to know, and each retry would cost the
-    full timeout.
+    factory may route to a separately configured provider. If that host, or
+    the web search, cannot be reached during research, the review is not
+    attempted and is remembered as failed: one failure is enough to know, and
+    each retry would cost the full timeout. A search that returned no result
+    for any query counts as unreachable, never as "nothing found".
+
+    A placeholder company name such as "Unknown" names no employer: nothing is
+    looked up, shared or remembered for it, and only the vacancy's own stored
+    research counts.
 
     Args:
         db: The user's database.
@@ -727,22 +752,49 @@ def company_context(
 
     Returns:
         The research and review to ground on, what is missing from them, and
-        when each was last looked up.
+        the date to show with each.
     """
     moment = now or datetime.now(UTC)
     research, missing, reachable = _settle_research(db, job, job_id, client, moment)
     review, review_gap = _settle_review(db, job, client, moment, reachable=reachable)
-    research_memory = recall(
-        db, job.company, LookupKind.RESEARCH, found_at=_stamp(research)
-    )
-    review_memory = recall(db, job.company, LookupKind.REVIEW, found_at=_stamp(review))
     return CompanyContext(
         research=research,
         review=review,
         missing=missing + review_gap,
-        research_checked_at=research_memory.checked_at,
-        review_checked_at=review_memory.checked_at,
+        research_checked_at=_dated(db, job, LookupKind.RESEARCH, research),
+        review_checked_at=_dated(db, job, LookupKind.REVIEW, review),
     )
+
+
+def _dated(
+    db: Database,
+    job: JobListing,
+    kind: LookupKind,
+    result: CompanyResearch | CompanyReview | None,
+) -> datetime | None:
+    """Return the date to show with a result: its own, else the last check.
+
+    A lookup that found nothing does not make older research on file any
+    newer, so a result in use is dated by when it was written.
+
+    Args:
+        db: The user's database.
+        job: The vacancy whose company was looked up.
+        kind: Research or review.
+        result: The research or review the generation uses, if any.
+
+    Returns:
+        When *result* was written (its own date, else the found lookup that
+        stored it); with no result, when a lookup last completed. None when
+        neither is known.
+    """
+    stamp = _stamp(result)
+    if stamp is not None:
+        return aware(stamp)
+    memory = recall(db, job.company, kind)
+    if result is not None:
+        return memory.last.get(LookupOutcome.FOUND)
+    return memory.checked_at
 
 
 def _grounding(

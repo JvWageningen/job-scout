@@ -22,9 +22,12 @@ the stored snippets are never changed.
 
 Outcomes are kept apart so callers can say which one happened: research, None
 when the web offered nothing to use, CompanyResearchError when the model's
-answer was unusable, and LLMError when the model could not be reached. This
-module does not remember lookups; callers record each attempt with
-:mod:`job_scout.company_lookups` so a company is not searched on every request.
+answer was unusable, SearchUnavailableError (a CompanyResearchError) when no
+search query returned anything at all, and LLMError when the model could not be
+reached. This module does not remember lookups; callers record each attempt
+with :mod:`job_scout.company_lookups` so a company is not searched on every
+request. A vacancy whose company is blank or a placeholder such as "Unknown" is
+never searched for.
 
 Both model calls use the ``evaluation`` purpose. The LLM factory routes that
 purpose to its own provider when ``evaluation_provider`` is configured, so these
@@ -43,6 +46,7 @@ from urllib.parse import urlsplit
 from loguru import logger
 from pydantic import ValidationError
 
+from job_scout.database import names_company
 from job_scout.llm.base import LLMClient, LLMError
 from job_scout.llm.factory import get_llm_client
 from job_scout.models import (
@@ -105,7 +109,22 @@ _MIN_DOMAIN_SUBSTRING = 4
 
 
 class CompanyResearchError(RuntimeError):
-    """Web evidence was found, but the model's answer could not be used."""
+    """The research lookup could not be completed.
+
+    Either web evidence was found but the model's answer could not be used, or
+    web search itself was unavailable (see :class:`SearchUnavailableError`).
+    Neither says anything about what the web holds on the company.
+    """
+
+
+class SearchUnavailableError(CompanyResearchError):
+    """Not one search query returned any result, so the search was not working.
+
+    Web search matches loosely: a query about any company, even one nobody
+    writes about, brings back namesakes and pages that share a word with it.
+    No result at all for every query means the search backends failed or
+    blocked the requests, which ``web_search`` reports as an empty list.
+    """
 
 
 def _extract_json(text: str) -> Any:  # noqa: ANN401 - JSON is any shape
@@ -258,28 +277,59 @@ def gather_research_evidence(
     Returns:
         Search results that name the company, in query order; empty when the
         search found nothing about it.
+
+    Raises:
+        SearchUnavailableError: If no query returned any result at all, which
+            means the search failed rather than found nothing.
     """
     evidence: list[SearchResult] = []
     seen: set[str] = set()
+    returned = 0
     for query in _research_queries(company):
-        for result in web_search(
+        results = web_search(
             query,
             max_results=_RESULTS_PER_QUERY,
             timeout=timeout,
             searxng_url=searxng_url,
             api_key=api_key,
-        ):
+        )
+        returned += len(results)
+        for result in results:
             key = result.url.rstrip("/")
             if key in seen or not (result.title or result.snippet):
                 continue
             seen.add(key)
             if mentions_company(result, company):
                 evidence.append(result)
+    _require_results(returned, company)
     logger.debug(
         f"{len(evidence)} of {len(seen)} search results name {company!r}; "
         "the rest were dropped as namesakes or unrelated pages"
     )
     return evidence
+
+
+def _require_results(returned: int, company: str) -> None:
+    """Raise when a lookup's searches came back with no result at all.
+
+    Args:
+        returned: How many results every query of the lookup returned together,
+            before any was dropped as a namesake or a duplicate.
+        company: Company name, for the message.
+
+    Raises:
+        SearchUnavailableError: If *returned* is zero.
+    """
+    if returned:
+        return
+    logger.warning(
+        f"Web search returned no result for any query about {company!r}; "
+        "it was unavailable, so this is not taken as nothing found"
+    )
+    raise SearchUnavailableError(
+        f"web search returned no result for any query about {company!r}, "
+        "so it was probably unavailable"
+    )
 
 
 def _defang(text: str) -> str:
@@ -400,14 +450,18 @@ def research_company(
 
     Returns:
         CompanyResearch with its sources and evidence, or None when the web
-        offered nothing about the company or the snippets support no finding.
+        offered nothing about the company, the snippets support no finding, or
+        the vacancy names no company (blank, or a placeholder like "Unknown").
 
     Raises:
+        SearchUnavailableError: If no search query returned any result, so the
+            search was down or blocked. A CompanyResearchError.
         CompanyResearchError: If evidence was found but the model's answer
             could not be used.
         LLMError: If the model could not be built or reached.
     """
-    if not job.company.strip():
+    if not names_company(job.company):
+        logger.info(f"Vacancy company {job.company!r} names no employer; not searched")
         return None
     evidence = gather_research_evidence(
         job.company, searxng_url=config.searxng_url, api_key=config.brave_api_key
@@ -545,6 +599,25 @@ def _humanise_findings(research: CompanyResearch) -> None:
     research.culture_indicators = [
         text for item in research.culture_indicators if (text := humanise(item))
     ]
+
+
+def tidy_research(research: CompanyResearch) -> CompanyResearch:
+    """Return stored research with its prose cleaned into the house style.
+
+    Research stored before the house style still carries its dashes, and it is
+    reused for every vacancy at the company for as long as it is stored, so
+    its prose is cleaned again whenever it is read for a prompt. The figure
+    check ran when it was written; names, sources and snippets stay as stored.
+
+    Args:
+        research: Research as read from the database.
+
+    Returns:
+        A cleaned copy; *research* itself is left unchanged.
+    """
+    tidy = research.model_copy()
+    _humanise_findings(tidy)
+    return tidy
 
 
 def _opt_str(value: object) -> str | None:

@@ -3458,8 +3458,9 @@ def company_research_cmd(job_id: int, user_name: str | None) -> None:
     """Research a company and suggest hiring managers for a job.
 
     Always looks the company up now, even when a recent lookup is remembered:
-    asking for it is the way to refresh. The attempt is remembered like any
-    other, so interview preparation reuses what it found.
+    asking for it is the way to refresh. It works in the user's own database,
+    the one interview preparation reads, and the attempt is remembered there
+    like any other, so interview preparation reuses what it found.
     """
     from job_scout.company_lookups import (  # noqa: PLC0415
         LookupKind,
@@ -3474,7 +3475,7 @@ def company_research_cmd(job_id: int, user_name: str | None) -> None:
 
     user_name = _require_single_user(user_name)
     config = _require_llm()
-    db = _get_db()
+    db = Database(user_db_path(user_name))
 
     job = db.get_job(job_id)
     if not job:
@@ -3499,11 +3500,12 @@ def company_research_cmd(job_id: int, user_name: str | None) -> None:
 @click.argument("job_id", type=int)
 @click.option("--user", "user_name", default=None, help="User viewing")
 def company_view_cmd(job_id: int, user_name: str | None) -> None:
-    """View saved company research for a job."""
+    """View saved company research for a job, from the user's own database."""
+    from job_scout.company_research import tidy_research  # noqa: PLC0415
     from job_scout.models import CompanyResearch  # noqa: PLC0415
 
     user_name = _require_single_user(user_name)
-    db = _get_db()
+    db = Database(user_db_path(user_name))
 
     job = db.get_job(job_id)
     if not job:
@@ -3515,7 +3517,7 @@ def company_view_cmd(job_id: int, user_name: str | None) -> None:
         click.echo(f"No research found for job {job_id}", err=True)
         return
 
-    _print_research(CompanyResearch.model_validate_json(research_json))
+    _print_research(tidy_research(CompanyResearch.model_validate_json(research_json)))
 
 
 def _print_research(research: CompanyResearch) -> None:
