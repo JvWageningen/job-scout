@@ -17,6 +17,7 @@ from job_scout.models import (
     KeywordsResult,
     NegativeEvaluation,
 )
+from job_scout.writing_style import HOUSE_STYLE, humanise
 
 # The cheap scorers used to see only the first 600 characters of the CV, which
 # on a typical one-page CV is the header and the skills list -- it stops before
@@ -48,8 +49,16 @@ _TITLE_ONLY_CAP = (
     "If the Description is empty or very short, you are judging on a title "
     "alone. Score only what the title itself supports, do NOT infer what the "
     "role involves from the company name, and be sceptical rather than "
-    "generous -- an ambiguous title is weak evidence, not good news. Begin "
+    "generous: an ambiguous title is weak evidence, not good news. Begin "
     "fit_reasoning with 'Title-only:' so the judgement is traceable."
+)
+
+# Only the full evaluation writes reasoning the candidate reads; the quick
+# scorers return a number and do not need the extra instructions.
+_REASONING_STYLE = (
+    "The candidate reads fit_reasoning, negative_reasoning and "
+    "compensation_reasoning on the dashboard, so write them in the house style "
+    "below.\n" + HOUSE_STYLE
 )
 
 
@@ -204,10 +213,10 @@ Evaluate this job. Respond with this exact JSON structure:
 fit_score guidelines:
 - 0 = completely irrelevant role (different field entirely)
 - 40-59 = partial match (related field/different focus, OR a \
-seniority/role-type mismatch — see below)
+seniority/role-type mismatch, see below)
 - 60-79 = good fit (right role AND right level, minor gaps are OK)
 - 80-100 = strong/perfect match
-Experience & seniority: small gaps are fine — if the role fits and \
+Experience & seniority: small gaps are fine. If the role fits and \
 asks for 1-3 more years than the candidate has, deduct only 5-15 \
 points. BUT a real level mismatch must lower the score sharply: if \
 the role requires roughly double the candidate's years of \
@@ -228,11 +237,13 @@ salary_min/salary_max: gross salary in EUR if stated or estimable \
 from the description, null if unknown. Always normalize to monthly \
 amounts (divide yearly by 12). If only one number is given, use it \
 for both min and max.
-salary_period: "monthly" or "yearly" — always "monthly" after \
+salary_period: "monthly" or "yearly"; always "monthly" after \
 normalization
 vacation_days: annual vacation days if mentioned, null if unknown. \
 The Dutch legal minimum is 20 days. If the listing says \
-"marktconform" or similar, estimate based on industry norms."""
+"marktconform" or similar, estimate based on industry norms.
+
+{_REASONING_STYLE}"""
 
 
 def _negative_block(negative_desc: str) -> str:
@@ -490,18 +501,20 @@ def evaluate_fit(
         data = _extract_json(output)
         fit = FitEvaluation(
             fit_score=int(data.get("fit_score", 0)),
-            reasoning=str(data.get("fit_reasoning", "No reasoning provided")),
+            reasoning=humanise(str(data.get("fit_reasoning", "No reasoning provided"))),
         )
         neg = NegativeEvaluation(
             matches_negative=bool(data.get("matches_negative", False)),
-            reasoning=str(data.get("negative_reasoning", "No reasoning provided")),
+            reasoning=humanise(
+                str(data.get("negative_reasoning", "No reasoning provided"))
+            ),
         )
         comp = CompensationEvaluation(
             salary_min=_safe_int(data.get("salary_min")),
             salary_max=_safe_int(data.get("salary_max")),
             salary_period=data.get("salary_period"),
             vacation_days=_safe_int(data.get("vacation_days")),
-            reasoning=str(data.get("compensation_reasoning", "")),
+            reasoning=humanise(str(data.get("compensation_reasoning", ""))),
         )
         return fit, neg, comp
     except json.JSONDecodeError as e:

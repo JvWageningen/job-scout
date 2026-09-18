@@ -23,6 +23,7 @@ from loguru import logger
 from job_scout.config import user_letters_dir
 from job_scout.letters.models import ExampleLetter, LetterLanguage
 from job_scout.llm.base import LLMClient, LLMError
+from job_scout.writing_style import HOUSE_STYLE, humanise
 
 
 class StyleError(RuntimeError):
@@ -86,8 +87,7 @@ letters.
 several letters over something that happens once. Where it helps, quote a short \
 phrase of a few words as evidence.
 - Be concrete and give numbers: the target body length in words for each language, \
-the number of paragraphs, typical paragraph and sentence length, and whether \
-bulleted lists are used and for what.
+the number of paragraphs, and typical paragraph and sentence length.
 - Be concise: short bullets, roughly 400 to 800 words in total.
 
 WHAT EACH SECTION HOLDS
@@ -98,11 +98,11 @@ conditions such as hours, contract or location, and say what they want to discus
 in an interview.
 - Structure: how the letters open, the order of the argument, how evidence is \
 presented, and how they close.
-- Dutch letters: what is specific to their Dutch letters -- salutation, closing, \
-"u" or "je", length. Directness is a strength in a Dutch letter: tell the writer \
-to preserve it, never to soften it.
-- English letters: what is specific to their English letters -- salutation, \
-closing, register, length, and what changes compared with their Dutch letters.
+- Dutch letters: what is specific to their Dutch letters, such as salutation, \
+closing, "u" or "je" and length. Directness is a strength in a Dutch letter: tell \
+the writer to preserve it, never to soften it.
+- English letters: what is specific to their English letters, such as salutation, \
+closing, register and length, and what changes compared with their Dutch letters.
 - Keep doing: genuine strengths that recur, so the writer keeps them.
 - Improve: recurring weaknesses, each paired with the better alternative \
 ("Instead of ..., write ..."). The writer should produce the letter this person \
@@ -114,7 +114,7 @@ fact that is not in the CV, the vacancy or the user's notes.
 LANGUAGES
 {language_note}
 
-STYLE ONLY -- NO FACTS (CRITICAL)
+STYLE ONLY, NO FACTS (CRITICAL)
 The guide must not contain a single fact a writer could copy into a letter to a \
 different employer: no employer or organisation name, no project, product, team, \
 person, place, date, qualification, figure from their career, or contact detail. \
@@ -127,6 +127,14 @@ vacancy; a guide that names an employer puts that name into letters to other \
 employers. Letterheads, addresses and signatures in the letters are not style: \
 ignore them.
 
+THE HOUSE STYLE COMES FIRST
+Every letter written from this guide also follows the house style below, so the \
+guide must never contradict it: do not tell the writer to use dashes, bulleted \
+lists, bold text, exclamation marks or any word the house style bans, even where \
+this person's letters do. Where their letters do, put that under Improve or Never. \
+Write the guide's own instructions in the house style too; the headings and \
+bullets required under OUTPUT FORMAT are the only formatting allowed.
+{house_style}
 OUTPUT FORMAT
 Return only the markdown guide: no preamble, no closing remarks, no code fence. \
 Use exactly these headings, in this order, and add no other headings at these two \
@@ -214,8 +222,8 @@ def derive_style_guide(examples: list[ExampleLetter], client: LLMClient) -> str:
         client: LLM client to call.
 
     Returns:
-        The guide as markdown, unwrapped from any code fence and starting at its
-        title.
+        The guide as markdown, unwrapped from any code fence, starting at its
+        title and in plain punctuation.
 
     Raises:
         StyleError: If there are no examples, the model call fails, or the response
@@ -229,7 +237,7 @@ def derive_style_guide(examples: list[ExampleLetter], client: LLMClient) -> str:
         raw = client.complete(prompt, purpose="cover_letter")
     except LLMError as exc:
         raise StyleError(f"The model could not derive a style guide: {exc}") from exc
-    guide = _clean_response(raw)
+    guide = _humanise_guide(_clean_response(raw))
     if not guide:
         raise StyleError("The model returned an empty style guide.")
     missing = _missing_headings(guide)
@@ -254,6 +262,7 @@ def _build_prompt(examples: list[ExampleLetter]) -> str:
     )
     return _PROMPT.format(
         language_note=_language_note(examples),
+        house_style=HOUSE_STYLE,
         headings=_HEADINGS_BLOCK,
         letters=letters,
     )
@@ -349,6 +358,26 @@ def _clean_response(raw: str) -> str:
         )
         text = text[title.start() :]
     return text.strip()
+
+
+def _humanise_guide(markdown: str) -> str:
+    """Put the guide's wording in plain punctuation, keeping its structure.
+
+    The guide is handed to the letter writer word for word, and a writer copies
+    the punctuation of its instructions, so a dash left in the guide comes back
+    in the letters. Headings, bullets and their indentation stay as they are.
+
+    Args:
+        markdown: The guide as the model wrote it.
+
+    Returns:
+        The same guide without dashes, emphasis or emoji in its wording.
+    """
+    lines = []
+    for line in markdown.split("\n"):
+        text = line.lstrip()
+        lines.append(line[: len(line) - len(text)] + humanise(text) if text else "")
+    return "\n".join(lines)
 
 
 def _missing_headings(markdown: str) -> list[str]:

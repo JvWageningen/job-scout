@@ -40,6 +40,7 @@ from job_scout.models import (
     JobListing,
 )
 from tests.helpers import FakeLLMClient
+from tests.style_checks import GENERATED, PLAIN, assert_plain, assert_styled_prompt
 
 USER = "Sam"
 COMPANY = "Deltameet Institute"
@@ -541,6 +542,25 @@ def test_prompt_carries_the_real_grounding(db: Database, dutch_job: int) -> None
     assert NL_EMPLOYER in prompt
     assert "meetmethoden bewaakt" in prompt
     assert "natural spoken Dutch" in prompt
+
+
+def test_every_field_the_user_reads_comes_back_plain(
+    db: Database, dutch_job: int
+) -> None:
+    """Question, reason and draft answer are cleaned; citations are not touched."""
+    first = _item(GENERATED, "motivation", answer=GENERATED)
+    first["why_asked"] = GENERATED
+    others = [_item(text, kind) for text, kind in ASKED[1:]]
+    client = FakeLLMClient([_payload([first, *others])])
+
+    result = generate_interview_answers(USER, dutch_job, client)
+
+    item = result.questions[0]
+    assert (item.question, item.why_asked, item.draft_answer) == (PLAIN, PLAIN, PLAIN)
+    assert item.based_on == ["CV: Ervaring"]
+    for question in result.questions:
+        assert_plain(question.question + question.why_asked + question.draft_answer)
+    assert_styled_prompt(client.calls[0][0])
 
 
 def test_prompt_states_the_rules_that_make_the_answers_trustworthy(

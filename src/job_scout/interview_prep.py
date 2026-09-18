@@ -9,6 +9,7 @@ from loguru import logger
 
 from job_scout.llm.base import LLMClient
 from job_scout.models import BehavioralQuestion, InterviewPrep, StarStory
+from job_scout.writing_style import HOUSE_STYLE, humanise
 
 
 def extract_behavioral_questions(
@@ -45,6 +46,9 @@ def extract_behavioral_questions(
         "- Experience with the technologies or methodologies mentioned\n"
         "- Teamwork and communication in relevant contexts\n"
         "- Problem-solving and decision-making\n\n"
+        "Phrase each question the way the interviewer would say it out loud, "
+        "in the house style below.\n"
+        f"{HOUSE_STYLE}\n"
         f"JOB DESCRIPTION:\n{job_description[:3000]}\n\n"
         "Return ONLY valid JSON with format:\n"
         '{"questions": [\n'
@@ -66,7 +70,7 @@ def extract_behavioral_questions(
         result = []
         for item in questions:
             if isinstance(item, dict):
-                question_text = item.get("question", "").strip()
+                question_text = humanise(item.get("question", "").strip())
                 keywords = item.get("keywords", [])
                 if question_text:
                     result.append(

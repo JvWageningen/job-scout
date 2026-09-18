@@ -34,6 +34,7 @@ from job_scout.cv.tailor import (
 )
 from job_scout.models import JobListing
 from tests.helpers import FakeLLMClient
+from tests.style_checks import GENERATED, PLAIN, assert_styled_prompt
 
 KEYWORDS = '{"keywords": ["Python", "SQL", "pipelines"]}'
 
@@ -188,6 +189,58 @@ def test_tailoring_rewords_prose_and_reorders_content() -> None:
     assert profile.body == "Data engineer who builds Python and SQL pipelines."
 
 
+def test_reworded_prose_comes_back_plain_and_facts_stay_as_they_are() -> None:
+    """Only the prose the tailor may rewrite is cleaned; periods keep their hyphen."""
+    response = plan(
+        sections={
+            "pf": {"body": GENERATED},
+            "xp": {
+                "entries": {
+                    "e1": {
+                        "period": "2014 - 2019",
+                        "description": GENERATED,
+                        "bullets": [GENERATED, "\U0001f680"],
+                    }
+                }
+            },
+        },
+    )
+    client = client_for(response)
+
+    result = tailor_cv_document(make_doc(), make_job(), client)
+
+    profile = result.main[0]
+    assert isinstance(profile, TextSection)
+    assert profile.body == PLAIN
+    entry = experience_of(result).entries[0]
+    assert entry.description == PLAIN
+    assert entry.bullets == [PLAIN]
+    assert (entry.title, entry.organisation, entry.period) == (
+        "Field Engineer",
+        "Acme BV",
+        "2014 - 2019",
+    )
+    assert_styled_prompt(client.calls[1][0])
+
+
+def test_clean_prose_does_not_hide_a_changed_employer() -> None:
+    response = plan(
+        sections={
+            "xp": {
+                "entries": {
+                    "e1": {
+                        "organisation": "Globex Industries",
+                        "description": GENERATED,
+                    }
+                }
+            }
+        }
+    )
+
+    with pytest.raises(TailorError, match="not editable"):
+        tailor_cv_document(make_doc(), make_job(), client_for(response))
+
+
 def test_the_source_document_is_never_mutated() -> None:
     doc = make_doc()
     before = doc.model_dump()
@@ -315,7 +368,7 @@ def test_tailoring_survives_a_vacancy_without_a_description() -> None:
 
     result = tailor_cv_document(make_doc(), make_job(description=None), client)
 
-    assert "Data Engineer - Meridiaan Data - Utrecht" in client.calls[1][0]
+    assert "Data Engineer, Meridiaan Data, Utrecht" in client.calls[1][0]
     assert [section.id for section in result.main] == ["xp", "pf", "ed"]
 
 

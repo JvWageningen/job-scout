@@ -38,9 +38,9 @@ Form
 - Salutation: "Beste [naam]," when a person or team is named. Without a name, use
   "Beste [organisatie]-team," or, for a conservative employer, "Geachte heer, mevrouw,".
 - Close with "Met vriendelijke groet,".
-- One page. Short paragraphs. A bulleted list is fine for concrete evidence.
+- One page. Short paragraphs of whole sentences, without bulleted lists.
 
-Directness -- Dutch recruiters read this as competence, not rudeness
+Directness (Dutch recruiters read this as competence, not rudeness)
 - Say in the first paragraph which role this is and why you are applying. No warm-up.
 - State the supplied motive plainly. Mention a career change only if the CV or notes
   support it; do not invent a reason for leaving.
@@ -62,7 +62,7 @@ Form
 - Salutation: "Dear [name]," when a person or team is named, otherwise
   "Dear hiring team,".
 - Close with "Best regards,".
-- One page. Short paragraphs. A bulleted list is fine for concrete evidence.
+- One page. Short paragraphs of whole sentences, without bulleted lists.
 
 Register
 - Most of these letters go to Dutch employers who happen to recruit in English. For

@@ -40,6 +40,7 @@ from job_scout.models import JobListing
 # Reused rather than re-implemented: the text pipeline already knows how to dig
 # JSON out of a chatty or markdown-fenced completion.
 from job_scout.resume_tailor import _parse_json_response, extract_resume_keywords
+from job_scout.writing_style import HOUSE_STYLE, humanise
 
 SLUG_LIMIT = 60
 """Longest slug :func:`job_scout.cv.storage.normalise_slug` returns."""
@@ -242,7 +243,7 @@ def _digest(value: str) -> str:
 # Prompt
 # --------------------------------------------------------------------------
 
-RULES = """RULES - these are absolute, and the result is checked against them:
+RULES = """RULES. These are absolute, and the result is checked against them:
 1. This CV describes a real person. Never invent an employer, job title, school,
    degree, date, skill or achievement. If it is not in the JSON above, it does
    not exist.
@@ -256,6 +257,13 @@ RULES = """RULES - these are absolute, and the result is checked against them:
 6. Keep the language of the CV (it may be Dutch) and its professional tone.
 7. Sections marked "frozen" hold personal details and are not yours to touch.
 8. Reply with JSON only: no prose, no markdown fences."""
+
+STYLE_NOTE = (
+    "Every body, description and bullet you reword follows the house style "
+    "below. The CV keeps its own bullets; the house style decides the words "
+    "inside them.\n" + HOUSE_STYLE
+)
+"""Tells the model how reworded prose reads; frozen facts are never restyled."""
 
 RESPONSE_SCHEMA = """Reply with exactly this shape:
 {
@@ -289,7 +297,7 @@ def _job_description(job: JobListing) -> str:
     Returns:
         Its headline facts followed by the posting text, if any.
     """
-    headline = " - ".join(
+    headline = ", ".join(
         part for part in (job.title, job.company, job.location) if part
     )
     body = (job.description or "").strip()
@@ -324,7 +332,7 @@ def _build_prompt(
         f"VACANCY:\n{description[:MAX_DESCRIPTION_CHARS]}\n\n"
         f"KEY TERMS TO FOREGROUND:\n{', '.join(keywords[:MAX_KEYWORDS]) or '(none)'}"
         f"\n\nCV STRUCTURE (JSON):\n{outline}{context}\n\n{RULES}\n\n"
-        f"{RESPONSE_SCHEMA}"
+        f"{STYLE_NOTE}\n{RESPONSE_SCHEMA}"
     )
 
 
@@ -555,7 +563,7 @@ def _apply_section_patch(section: Section, patch: SectionPatch) -> None:
     label = f"section {section.title or section.id!r}"
     if isinstance(section, TextSection):
         if patch.body is not None:
-            section.body = patch.body.strip()
+            section.body = humanise(patch.body.strip())
         return
     if isinstance(section, ExperienceSection):
         _apply_experience_patch(section, patch, label)
@@ -602,6 +610,10 @@ def _apply_experience_patch(
 def _apply_entry_patch(entry: ExperienceEntry, patch: EntryPatch) -> None:
     """Reword one experience entry in place.
 
+    Only the reworded prose is put in plain punctuation. The title,
+    organisation and period are compared with the original exactly as the
+    model echoed them, so a changed fact cannot hide behind the clean-up.
+
     Args:
         entry: The entry to modify.
         patch: Its patch.
@@ -612,11 +624,12 @@ def _apply_entry_patch(entry: ExperienceEntry, patch: EntryPatch) -> None:
     _reject_rewritten_facts(entry, patch)
 
     if patch.description is not None:
-        entry.description = patch.description.strip()
+        entry.description = humanise(patch.description.strip())
 
     if patch.bullets is None:
         return
-    bullets = [bullet.strip() for bullet in patch.bullets if bullet.strip()]
+    cleaned = (humanise(bullet.strip()) for bullet in patch.bullets)
+    bullets = [bullet for bullet in cleaned if bullet]
     if len(bullets) > len(entry.bullets):
         raise TailorError(
             f"entry {entry.title!r} at {entry.organisation!r} came back with "

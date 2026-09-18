@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 
 from job_scout.evaluator import _extract_json
 from job_scout.llm.base import LLMError
+from job_scout.writing_style import HOUSE_STYLE, humanise
 
 if TYPE_CHECKING:
     from job_scout.llm.base import LLMClient
@@ -70,6 +71,15 @@ _SCHEMA = """{
   ],
   "missing_keywords": ["<terms the job asks for that the document never uses>"]
 }"""
+
+_STYLE_NOTE = (
+    "The candidate reads summary, strengths, issue and suggestion, and may paste "
+    "an example straight into their document, so write all of them in the house "
+    "style below.\n" + HOUSE_STYLE
+)
+
+# The fields of a point written as prose; severity is a fixed label.
+_POINT_PROSE = ("section", "issue", "suggestion", "example")
 
 
 def _job_context(job: JobListing) -> str:
@@ -150,6 +160,7 @@ Be specific. "Add more detail" is useless; name the bullet and say what it
 should say instead. Do not invent achievements the candidate has not claimed.
 Order points with the most damaging first. At most {_MAX_POINTS} points.
 
+{_STYLE_NOTE}
 PARSED PROFILE:
 {_profile_context(profile)}
 {context}
@@ -178,15 +189,17 @@ a motivational letter (motivatiebrief) written for one specific vacancy.
 
 Judge whether it answers "why this role, why this employer, why you", whether
 it evidences its claims rather than asserting them, whether it repeats the CV
-instead of adding to it, and whether the tone fits Dutch business culture --
+instead of adding to it, and whether the tone fits Dutch business culture:
 neither American-style overselling nor apologetic understatement. Flag any
-generic sentence that could be sent to any employer unchanged.
+generic sentence that could be sent to any employer unchanged, and any sentence
+that reads as machine written because it breaks the house style below.
 
 Be specific: quote the weak sentence and give a replacement. Do not invent
 achievements. Order points with the most damaging first. At most {_MAX_POINTS}
 points. In missing_keywords, list things the vacancy clearly asks about that
 the letter never addresses.
 
+{_STYLE_NOTE}
 {_job_context(job)}
 
 THE CANDIDATE'S BACKGROUND (for checking claims are grounded):
@@ -197,6 +210,21 @@ THE LETTER:
 
 Respond ONLY with JSON in exactly this shape:
 {_SCHEMA}"""
+
+
+def _plain_point(raw: dict[str, Any]) -> FeedbackPoint:
+    """Build one feedback point with its prose in plain punctuation.
+
+    Args:
+        raw: One entry of the model's "points" list.
+
+    Returns:
+        The point; its severity label is kept exactly as given.
+    """
+    point = FeedbackPoint(**raw)
+    return point.model_copy(
+        update={field: humanise(getattr(point, field)) for field in _POINT_PROSE}
+    )
 
 
 def _run(prompt: str, client: LLMClient, target: str) -> DocumentFeedback:
@@ -223,15 +251,15 @@ def _run(prompt: str, client: LLMClient, target: str) -> DocumentFeedback:
         )
 
     points = [
-        FeedbackPoint(**p)
+        _plain_point(p)
         for p in (data.get("points") or [])
         if isinstance(p, dict) and p.get("issue")
     ][:_MAX_POINTS]
 
     return DocumentFeedback(
         score=data.get("score") if isinstance(data.get("score"), int) else None,
-        summary=str(data.get("summary") or ""),
-        strengths=[str(s) for s in (data.get("strengths") or []) if s][:6],
+        summary=humanise(str(data.get("summary") or "")),
+        strengths=[humanise(str(s)) for s in (data.get("strengths") or []) if s][:6],
         points=points,
         missing_keywords=[str(k) for k in (data.get("missing_keywords") or []) if k][
             :12

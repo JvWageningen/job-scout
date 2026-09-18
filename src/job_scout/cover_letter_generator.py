@@ -9,6 +9,7 @@ from loguru import logger
 
 from job_scout.llm.base import LLMClient
 from job_scout.models import CvProfile
+from job_scout.writing_style import HOUSE_STYLE, humanise
 
 
 def extract_screening_questions(
@@ -41,7 +42,9 @@ def extract_screening_questions(
         "Extract the most likely screening questions that a hiring manager would "
         "ask based on this job description. Focus on questions about required "
         "skills, experience, and specific requirements mentioned in the job posting. "
-        "Respond ONLY with valid JSON.\n\n"
+        "Respond ONLY with valid JSON.\n"
+        "The applicant reads these questions: write each one in the house style "
+        f"below.\n{HOUSE_STYLE}\n"
         f"JOB DESCRIPTION:\n{job_description[:2000]}\n\n"
         'Return valid JSON with format: {"questions": ["question1", "question2", ...]}'
     )
@@ -55,7 +58,8 @@ def extract_screening_questions(
                 f"Expected questions list, got {type(questions)}: {questions}"
             )
             return []
-        return [str(q).strip() for q in questions if q]
+        cleaned = (humanise(str(q).strip()) for q in questions if q)
+        return [question for question in cleaned if question]
     except ValueError as e:
         logger.error(f"Failed to extract screening questions: {e}")
         return []
@@ -96,24 +100,23 @@ def generate_cover_letter(
     profile_summary = _format_cv_profile_summary(cv_profile)
 
     prompt = (
-        "You are an expert cover letter writer. Write a professional, compelling "
-        "cover letter for a job application. The letter should:\n"
-        "- Highlight the applicant's most relevant experience and skills\n"
-        "- Show enthusiasm for the specific role and company\n"
-        "- Be concise and professional (3-4 paragraphs)\n"
-        "- Use a professional tone appropriate for Dutch business culture\n\n"
+        "Write a cover letter for a job application. Put the applicant's most "
+        "relevant experience and skills first, say plainly why they want this "
+        "role at this company, and keep it to 3 or 4 short paragraphs in the "
+        "direct, professional tone of Dutch business culture.\n"
+        f"The whole letter follows the house style below.\n{HOUSE_STYLE}\n"
         f"APPLICANT PROFILE:\n{profile_summary}\n\n"
         f"TARGET POSITION: {job_title} at {company_name}\n\n"
         f"JOB DESCRIPTION:\n{job_description[:1500]}\n\n"
         "Write the cover letter as plain text, starting with a greeting and "
         "ending with a professional closing. Do NOT include placeholders or "
-        "bracketed fields like [Your Name] - write as if the applicant is "
+        "bracketed fields like [Your Name]: write as if the applicant is "
         "already known to be applying."
     )
 
     try:
         response = client.complete(prompt, purpose="cover_letter")
-        cover_letter = response.strip()
+        cover_letter = humanise(response.strip())
         logger.debug(f"Generated cover letter: {len(cover_letter)} chars")
         return cover_letter
     except Exception as e:
@@ -162,7 +165,9 @@ def answer_screening_questions(
         "Generate thoughtful, honest, and professional answers to the following "
         "screening questions. The answers should be based on the applicant's "
         "background and demonstrate fit for the role. Each answer should be "
-        "2-3 sentences, concise but substantive. Respond ONLY with valid JSON.\n\n"
+        "2 or 3 sentences, concise but substantive. Respond ONLY with valid JSON.\n"
+        "The applicant sends these answers: write each one in the house style "
+        f"below.\n{HOUSE_STYLE}\n"
         f"APPLICANT PROFILE:\n{profile_summary}\n\n"
         f"JOB DESCRIPTION:\n{job_description[:1000]}\n\n"
         f"SCREENING QUESTIONS:\n{questions_str}\n\n"
@@ -184,7 +189,7 @@ def answer_screening_questions(
         for q in questions:
             # Try to find answer by exact match or by index
             if q in answers_dict:
-                result[q] = str(answers_dict[q]).strip()
+                result[q] = humanise(str(answers_dict[q]).strip())
         return result
     except Exception as e:
         logger.error(f"Failed to generate screening answers: {e}")
@@ -211,7 +216,8 @@ def _format_cv_profile_summary(profile: CvProfile) -> str:
     if profile.past_roles:
         roles_str = "; ".join(
             [
-                f"{role.title} at {role.company} ({role.start_date} - {role.end_date})"
+                f"{role.title} at {role.company} "
+                f"({role.start_date} to {role.end_date or 'now'})"
                 if role.start_date
                 else f"{role.title} at {role.company}"
                 for role in profile.past_roles

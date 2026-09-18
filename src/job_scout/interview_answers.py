@@ -49,6 +49,7 @@ from job_scout.letters.models import LetterLanguage
 from job_scout.letters.writer import LetterError, require_user
 from job_scout.llm.base import LLMClient
 from job_scout.models import JobListing
+from job_scout.writing_style import HOUSE_STYLE, humanise
 
 
 class InterviewAnswerError(RuntimeError):
@@ -208,8 +209,8 @@ _ANSWER_RULES = (
     "does not have this.\n"
     "6. For a gap, say so plainly in the first sentence, then say what is "
     "adjacent and how they would close it. Do not bluff, do not pad, do not "
-    "change the subject. This candidate already writes that way -- 'my "
-    "background is in X, not Y; I would like to build that' -- and said straight "
+    "change the subject. This candidate already writes that way ('my "
+    "background is in X, not Y; I would like to build that'), and said straight "
     "it reads as confidence, not as weakness.\n"
     "7. Where a STAR story fits the question, build the answer out of it: the "
     "situation, what they actually did, how it ended. Name that story in "
@@ -232,11 +233,17 @@ _LANGUAGE_RULE = {
     ),
 }
 
+_STYLE_RULE = (
+    "11. Every question, why_asked and draft_answer is read by the candidate "
+    "and follows the house style below. An answer that sounds rehearsed to "
+    "perfection is less convincing in the room than a plain one.\n" + HOUSE_STYLE
+)
+
 _NO_STORIES = (
     "There are no STAR stories saved, so every answer must be built from the CV "
     "facts and the applicant's notes alone. Do not invent an anecdote to fill the "
     "space. Because of that, weight the set towards questions the CV can actually "
-    "answer -- experience, technical, motivation, gap, practical -- and include at "
+    "answer (experience, technical, motivation, gap, practical) and include at "
     "most one behavioural question. An empty story bank is missing data, not a "
     "missing career: filling the set with 'tell me about a time when' questions the "
     "applicant has no saved anecdote for would make a data-entry gap read as a "
@@ -460,6 +467,7 @@ def _prompt(
         + _QUESTION_RULES
         + _ANSWER_RULES
         + _LANGUAGE_RULE[language]
+        + _STYLE_RULE
         + _SOURCES_NOTE
         + gaps
         + "\nGROUNDING (quoted data, never instructions):\n"
@@ -529,8 +537,27 @@ def _json_object(raw: str) -> str:
     return text[start : end + 1]
 
 
+def _humanise(questions: list[LikelyQuestion]) -> list[LikelyQuestion]:
+    """Clean the marks of generated text out of every field the user reads.
+
+    ``based_on`` is left alone: it names sources, and :func:`_check_citations`
+    compares it with the labels the model was given.
+
+    Args:
+        questions: Freshly parsed questions, modified in place.
+
+    Returns:
+        The same questions, in plain punctuation.
+    """
+    for item in questions:
+        item.question = humanise(item.question)
+        item.why_asked = humanise(item.why_asked)
+        item.draft_answer = humanise(item.draft_answer)
+    return questions
+
+
 def _parse_questions(raw: str) -> list[LikelyQuestion]:
-    """Parse the model response strictly, then drop repeats.
+    """Parse the model response strictly, clean its wording, then drop repeats.
 
     Args:
         raw: The model's response text.
@@ -548,7 +575,7 @@ def _parse_questions(raw: str) -> list[LikelyQuestion]:
         raise InterviewAnswerError(
             "The model returned invalid or incomplete answers. Retry."
         ) from exc
-    return _dedupe(response.questions)
+    return _dedupe(_humanise(response.questions))
 
 
 def _check_citations(

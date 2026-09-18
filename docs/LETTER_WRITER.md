@@ -21,7 +21,8 @@ editable draft, ready for your review.
    conversation, or something you want to discuss. Notes are treated as facts you
    supply, so include only things that are true.
 5. Click **Generate full letter**. Edit the date, subject, salutation, body, closing and
-   signature. Separate paragraphs with blank lines; use `- ` for bullet lines.
+   signature. Separate paragraphs with blank lines. The writer uses plain paragraphs;
+   a line you start with `- ` still prints as a bullet.
    Expand **Read the complete letter** to see all fields together.
 6. **Save draft** stores one version per vacancy and language. Saving replaces
    that language's previous version. To retrieve it, select Dutch or English and
@@ -82,6 +83,11 @@ paragraphs, and a professional level of formality. Dutch output uses `u` and `uw
 English keeps the same directness. The guide can refine the tone without requiring
 factual details from old applications.
 
+Every letter also follows job-scout's house style: no dashes joining clauses, no
+lists or bold text, and none of the stock words that make a letter read as
+generated. Where your guide or your old letters do those things, the house style
+wins. [Writing style](WRITING_STYLE.md) explains the rules and why they exist.
+
 ## Facts and review
 
 The prompt separates current CV facts and your notes from historical examples and
@@ -90,8 +96,10 @@ prior conversations or outdated employment chronology into the new application.
 Contact/detail sections are excluded from the factual prompt; PDF contact details
 are read directly from the selected CV.
 
-Warnings flag unusual length, missing references, a CV language fallback and some
-recognisable names copied from examples. These are review aids, not a guarantee
+Warnings flag unusual length, missing references, a CV language fallback, some
+recognisable names copied from examples, and stock phrases that read as generated
+(such as "passionate" or "met veel enthousiasme") so you can rewrite them in your
+own words. These are review aids, not a guarantee
 that every claim is correct. Check employers, qualifications, dates, achievements
 and reasons for applying before sending. Invalid or incomplete model JSON is
 rejected without replacing a saved draft.

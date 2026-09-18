@@ -23,6 +23,7 @@ from job_scout.letters.style import (
 )
 from job_scout.llm.base import CallPurpose, LLMError
 from tests.helpers import FakeLLMClient
+from tests.style_checks import GENERATED, PLAIN, assert_styled_prompt
 
 DUTCH_LETTER = """\
 Beste wervingsteam,
@@ -203,6 +204,28 @@ class TestDeriveStyleGuide:
         with pytest.raises(StyleError, match="empty"):
             derive_style_guide(examples, client)
 
+    def test_guide_wording_comes_back_plain_and_keeps_its_structure(
+        self, examples: list[ExampleLetter]
+    ) -> None:
+        """The writer copies the guide's punctuation, so the guide loses its dashes.
+
+        Headings, bullets and the indentation of a nested bullet stay; only the
+        wording inside them changes.
+        """
+        dirty = GOOD_GUIDE.replace(
+            "- Write plainly, in the first person.",
+            f"- {GENERATED}\n  - **Kort** \u2014 en direct.",
+        )
+        client = FakeLLMClient([dirty])
+
+        guide = derive_style_guide(examples, client)
+
+        expected = GOOD_GUIDE.replace(
+            "- Write plainly, in the first person.",
+            f"- {PLAIN}\n  - Kort, en direct.",
+        )
+        assert guide == expected.strip()
+
     def test_model_failure_becomes_style_error(
         self, examples: list[ExampleLetter]
     ) -> None:
@@ -268,6 +291,16 @@ class TestDerivationPrompt:
         assert "DIRECT" in prompt
         assert "imperative" in prompt
         assert "target body length in words for each language" in prompt
+
+    def test_carries_the_house_style(self, examples: list[ExampleLetter]) -> None:
+        """The guide must not teach the writer what the house style forbids."""
+        client = FakeLLMClient([GOOD_GUIDE])
+
+        derive_style_guide(examples, client)
+
+        prompt = _prompt(client)
+        assert_styled_prompt(prompt)
+        assert "whether bulleted lists are used" not in prompt
 
     def test_leaves_out_file_names(self, examples: list[ExampleLetter]) -> None:
         """File names often name the employer, so they stay out of the prompt."""

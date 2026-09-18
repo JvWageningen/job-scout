@@ -23,6 +23,7 @@ from job_scout.evaluator import _extract_json
 from job_scout.llm.base import LLMError
 from job_scout.models import CareerTrack, CvProfile
 from job_scout.tracks import slugify_track_id
+from job_scout.writing_style import HOUSE_STYLE, humanise
 
 if TYPE_CHECKING:
     from job_scout.llm.base import LLMClient
@@ -73,7 +74,7 @@ def baseline_questions(cv: CvProfile | None) -> list[CoachQuestion]:
             id="direction",
             question=(
                 "Roughly what kind of work are you after next? A vague answer "
-                "is fine -- pick whatever feels closest."
+                "is fine: pick whatever feels closest."
             ),
             hint="You can pick more than one, or say you're not sure.",
             options=[
@@ -124,7 +125,7 @@ def baseline_questions(cv: CvProfile | None) -> list[CoachQuestion]:
             ),
             hint=(
                 "For example some coding or AI tooling alongside the main "
-                "work -- useful, but not a job you'd want full-time."
+                "work. Useful, but not a job you'd want full-time."
             ),
         ),
         CoachQuestion(
@@ -176,11 +177,11 @@ THEIR CV:
 {_format_cv(cv)}
 
 THEIR ANSWERS:
-{replies or "(they answered nothing useful -- rely on the CV)"}
+{replies or "(they answered nothing useful, so rely on the CV)"}
 
-Produce 2-{_MAX_TRACKS} directions. Rules:
+Produce 2 to {_MAX_TRACKS} directions. Rules:
 - Each STANDALONE direction must be a real job advertised in the Netherlands,
-  specific enough to search for -- "Quality & Process Engineering" not
+  specific enough to search for: "Quality & Process Engineering", not
   "something technical". If they were vague or said they don't know, infer
   plausible directions from the CV and say so in the summary.
 - Make the directions genuinely DIFFERENT from each other. Do not split one
@@ -189,11 +190,14 @@ Produce 2-{_MAX_TRACKS} directions. Rules:
   (for example some coding or AI tooling alongside other work), that is NOT a
   standalone direction: return it with "mode": "blend". Never make a blend the
   only entry.
-- description: 1-3 sentences written for a matching engine -- what the role
-  involves and what makes it a good fit for them.
+- description: 1 to 3 sentences, also used by a matching engine, on what the
+  role involves and what makes it a good fit for them.
 - keywords: real Dutch and English job titles used on Dutch job boards.
 - negative_description: what to rule out, drawn from what they want to avoid.
 
+The candidate reads summary, negative_description, follow_up and every
+description, so write them in the house style below.
+{HOUSE_STYLE}
 Respond with this exact JSON structure:
 {{
   "summary": "<2-3 sentences: what you concluded and why, in plain language>",
@@ -244,9 +248,9 @@ def propose_tracks(
     )
     return CoachProposal(
         tracks=tracks,
-        summary=str(data.get("summary") or ""),
-        negative_description=str(data.get("negative_description") or ""),
-        follow_up=str(data.get("follow_up") or ""),
+        summary=humanise(str(data.get("summary") or "")),
+        negative_description=humanise(str(data.get("negative_description") or "")),
+        follow_up=humanise(str(data.get("follow_up") or "")),
     )
 
 
@@ -278,7 +282,7 @@ def _coerce_tracks(value: object) -> list[CareerTrack]:
             CareerTrack(
                 id=track_id,
                 name=name,
-                description=str(item.get("description") or "").strip(),
+                description=humanise(str(item.get("description") or "").strip()),
                 mode="blend" if item.get("mode") == "blend" else "standalone",
                 required=bool(item.get("required")),
                 keywords_dutch=_as_str_list(item.get("keywords_dutch")),

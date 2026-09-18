@@ -69,6 +69,7 @@ class WarningKind(StrEnum):
     CV_FALLBACK = "cv_fallback"
     NO_NAME = "no_name"
     SOURCES = "sources"
+    STYLE = "style"
 
 
 class LetterWarning(BaseModel):

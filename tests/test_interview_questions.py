@@ -43,6 +43,7 @@ from job_scout.models import (
 )
 from job_scout.websearch import SearchResult
 from tests.helpers import FakeLLMClient
+from tests.style_checks import GENERATED, PLAIN, assert_plain, assert_styled_prompt
 
 USER = "Sam"
 COMPANY = "Deltameet Institute"
@@ -768,6 +769,25 @@ def test_prompt_carries_the_real_grounding(db: Database, dutch_job: int) -> None
     assert NL_EMPLOYER in prompt
     assert "meetmethoden bewaakt" in prompt
     assert "natural Dutch" in prompt
+
+
+def test_every_field_the_user_reads_comes_back_plain(
+    db: Database, dutch_job: int
+) -> None:
+    """The question, why and source label lose the marks of generated text."""
+    first = _question(GENERATED, "role", grounded="company review \u2014 cons")
+    first["why"] = GENERATED
+    others = [_question(text, theme) for text, theme in THEMED[1:]]
+    client = FakeLLMClient([_payload([first, *others])])
+
+    result = generate_interview_questions(USER, dutch_job, client)
+
+    question = result.questions[0]
+    assert (question.question, question.why) == (PLAIN, PLAIN)
+    assert question.grounded_in == "company review, cons"
+    for item in result.questions:
+        assert_plain(item.question + item.why + item.grounded_in)
+    assert_styled_prompt(client.calls[0][0])
 
 
 def test_prompt_states_the_rules_that_make_this_worth_having(

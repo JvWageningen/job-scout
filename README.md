@@ -156,6 +156,7 @@ Everything the pipeline produces is browsable and editable from a self-hosted we
 | [docs/LLM_PROVIDERS.md](docs/LLM_PROVIDERS.md) | The four backends and per-stage routing |
 | [docs/NOTIFICATIONS.md](docs/NOTIFICATIONS.md) | ntfy, email, Slack and Discord; modes and retry |
 | [docs/CV_BUILDER.md](docs/CV_BUILDER.md) | The CV editor, the designed PDF, vacancy tailoring and the ATS trade-off |
+| [docs/WRITING_STYLE.md](docs/WRITING_STYLE.md) | The house style every generated letter, answer and review follows, and why |
 | [docs/WEB_DASHBOARD.md](docs/WEB_DASHBOARD.md) | Dashboard tabs, token auth and security posture |
 | [docs/DEPLOY.md](docs/DEPLOY.md) | Docker, NAS and server deployment |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | How the pieces fit together, and why |

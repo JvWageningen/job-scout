@@ -34,6 +34,7 @@ from job_scout.letters.writer import (
 from job_scout.models import JobListing
 from job_scout.web.app import create_app
 from tests.helpers import FakeLLMClient
+from tests.style_checks import GENERATED, PLAIN, assert_styled_prompt
 
 
 @pytest.fixture
@@ -176,6 +177,57 @@ def test_live_cv_and_explicit_choice(private_data: int) -> None:
     assert "Sam Example" not in traversal.calls[0][0]
     with pytest.raises(LetterError):
         write_letter("../Alex", LetterRequest(job_id=private_data), fake())
+
+
+def test_the_letter_comes_back_plain_and_its_prompt_carries_the_house_style(
+    private_data: int,
+) -> None:
+    """Dashes and bold go; a paragraph that holds a list keeps its lines."""
+    listed = "Wat ik meebreng:\n- CRO \u2014 A/B-testen\n- SEO"
+    client = FakeLLMClient([json.dumps({"paragraphs": [GENERATED, listed, "\u2728"]})])
+
+    letter = write_letter("Alex", LetterRequest(job_id=private_data), client)
+
+    assert letter.paragraphs == [PLAIN, "Wat ik meebreng:\n- CRO, A/B-testen\n- SEO"]
+    prompt = client.calls[0][0]
+    assert_styled_prompt(prompt)
+    assert "short list" not in prompt
+    assert "bulleted list is fine" not in prompt
+
+
+@pytest.mark.parametrize(
+    ("body", "phrase"),
+    [
+        ("I am passionate about measurement and calibration.", "passionate"),
+        ("Met veel passie werk ik aan metingen bij CurrentWorks.", "passie"),
+    ],
+)
+def test_stock_phrases_are_named_for_the_applicant_to_rewrite(
+    private_data: int, body: str, phrase: str
+) -> None:
+    """A rule cannot rewrite a stock phrase, so the applicant is told where it is."""
+    client = FakeLLMClient([json.dumps({"paragraphs": [body]})])
+
+    letter = write_letter("Alex", LetterRequest(job_id=private_data), client)
+
+    style = [w for w in letter.warnings if w.kind is WarningKind.STYLE]
+    assert len(style) == 1
+    assert f'"{phrase}"' in style[0].message
+    assert WarningKind.NO_STYLE_GUIDE in [w.kind for w in letter.warnings]
+
+
+def test_a_plain_letter_has_no_style_warning(private_data: int) -> None:
+    letter = write_letter("Alex", LetterRequest(job_id=private_data), fake())
+
+    assert WarningKind.STYLE not in [w.kind for w in letter.warnings]
+
+
+def test_a_letter_of_nothing_but_marks_is_refused(private_data: int) -> None:
+    """Nothing is left once the emoji are gone, so there is no letter to show."""
+    client = FakeLLMClient([json.dumps({"paragraphs": ["\U0001f680", "**\u2728**"]})])
+
+    with pytest.raises(LetterError, match="empty letter"):
+        write_letter("Alex", LetterRequest(job_id=private_data), client)
 
 
 def test_example_leak_warning(private_data: int) -> None:
