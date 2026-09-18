@@ -7,7 +7,13 @@ from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
-from job_scout.llm.base import CallPurpose, LLMError, LLMUnavailableError
+from job_scout.llm.base import (
+    WRITING_PURPOSES,
+    CallPurpose,
+    LLMError,
+    LLMTimeoutError,
+    LLMUnavailableError,
+)
 
 # Purposes where the model's reasoning earns its cost: the answer is a
 # judgement, not a sieve. Kept in sync with Config.local_reasoning_purposes.
@@ -69,6 +75,7 @@ class LocalLLMClient:
         reasoning_purposes: Sequence[str] | None = None,
         max_tokens_reasoning: int = 8000,
         max_tokens_direct: int = 1200,
+        writing_timeout: float = 600,
     ) -> None:
         """Initialise the local LLM client.
 
@@ -93,6 +100,8 @@ class LocalLLMClient:
                 enabled. Every other purpose asks the model to answer directly.
             max_tokens_reasoning: Output ceiling for a reasoning call.
             max_tokens_direct: Output ceiling for a direct call.
+            writing_timeout: HTTP read timeout in seconds for calls that write
+                long prose for the applicant (see ``WRITING_PURPOSES``).
         """
         self._base_urls = _dedupe_urls([base_url, *(fallback_base_urls or [])])
         self._api_key = api_key or "not-needed"
@@ -102,6 +111,7 @@ class LocalLLMClient:
         self._quick_eval_model = quick_eval_model or self._screening_model
         self._evaluation_timeout = evaluation_timeout
         self._screening_timeout = screening_timeout
+        self._writing_timeout = writing_timeout
         self._connect_timeout = connect_timeout
         self._probe_timeout = probe_timeout
         self._reasoning_purposes = frozenset(
@@ -188,8 +198,18 @@ class LocalLLMClient:
                 response = self._call_with_thinking_fallback(
                     base_url, read_timeout, model, prompt, purpose
                 )
+            except openai.APITimeoutError as exc:
+                if not _is_connect_timeout(exc):
+                    # The server was there and working; the same machine behind
+                    # the next address would take just as long.
+                    raise LLMTimeoutError(
+                        f"Local LLM at {base_url} did not answer within "
+                        f"{read_timeout:.0f}s",
+                        waited=read_timeout,
+                    ) from exc
+                failures.append(f"{base_url}: {type(exc).__name__}: {exc}")
+                continue
             except openai.APIConnectionError as exc:
-                # Covers APITimeoutError, which subclasses it.
                 failures.append(f"{base_url}: {type(exc).__name__}: {exc}")
                 logger.warning(
                     "Local LLM endpoint {} unreachable ({}); trying next",
@@ -322,6 +342,8 @@ class LocalLLMClient:
             return self._quick_eval_model, self._screening_timeout
         if purpose == "keywords":
             return self._keywords_model, self._evaluation_timeout
+        if purpose in WRITING_PURPOSES:
+            return self._evaluation_model, self._writing_timeout
         return self._evaluation_model, self._evaluation_timeout
 
     def check_available(self) -> tuple[bool, str | None]:
@@ -485,3 +507,18 @@ def list_models(
         for entry in entries
         if isinstance(entry, dict) and "id" in entry
     ]
+
+
+def _is_connect_timeout(exc: BaseException) -> bool:
+    """Tell a connection that never opened from an answer that never came.
+
+    Args:
+        exc: The timeout the OpenAI client raised.
+
+    Returns:
+        True when the underlying httpx error was a connect timeout, meaning
+        the endpoint is unreachable and the next one is worth trying.
+    """
+    import httpx  # noqa: PLC0415
+
+    return isinstance(exc.__cause__, httpx.ConnectTimeout)

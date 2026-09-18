@@ -262,10 +262,10 @@ _NO_STORIES = (
 )
 
 # These calls are long-form: a dozen questions, each with a spoken-length
-# answer, plus whatever reasoning the model emits before it commits. The
-# provider default of 120s was measured failing on exactly this prompt, and a
-# timeout here costs the whole retry budget before anything is shown.
-_ANSWER_TIMEOUT = 360.0
+# answer, plus whatever reasoning the model emits before it commits. A set of
+# answers takes longer than the questions, which took 407 seconds on Z.AI on
+# 2026-09-18. A call that times out this late is not repeated (see llm.retry).
+_ANSWER_TIMEOUT = 900.0
 
 _PUNCTUATION = re.compile(r"[^\w\s]|_", re.UNICODE)
 

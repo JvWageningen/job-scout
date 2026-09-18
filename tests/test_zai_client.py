@@ -213,3 +213,35 @@ def test_api_key_and_base_url_forwarded_to_openai() -> None:
         base_url="https://api.z.ai/api/coding/paas/v4",
         max_retries=0,
     )
+
+
+def test_writing_calls_get_the_writing_timeout() -> None:
+    """A letter or interview set may take minutes; scoring a vacancy may not."""
+    client, mock = _make_client()
+    mock.chat.completions.create.return_value = _fake_response("ok")
+
+    client.complete("prompt", purpose="behavioral_questions")
+    writing = mock.chat.completions.create.call_args[1]["timeout"]
+    client.complete("prompt", purpose="evaluation")
+    scoring = mock.chat.completions.create.call_args[1]["timeout"]
+
+    assert writing == 600
+    assert scoring == 120
+
+
+def test_a_timeout_says_how_long_it_waited() -> None:
+    """The retry wrapper decides from this whether trying again is worth it."""
+    import openai
+
+    from job_scout.llm.base import LLMTimeoutError
+
+    client, mock = _make_client()
+    mock.chat.completions.create.side_effect = openai.APITimeoutError(
+        request=MagicMock()
+    )
+
+    with pytest.raises(LLMTimeoutError) as excinfo:
+        client.complete("prompt", purpose="cover_letter", timeout=450)
+
+    assert excinfo.value.waited == 450
+    assert isinstance(excinfo.value, LLMUnavailableError)

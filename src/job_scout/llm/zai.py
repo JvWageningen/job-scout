@@ -4,7 +4,13 @@ from __future__ import annotations
 
 from loguru import logger
 
-from job_scout.llm.base import CallPurpose, LLMError, LLMUnavailableError
+from job_scout.llm.base import (
+    WRITING_PURPOSES,
+    CallPurpose,
+    LLMError,
+    LLMTimeoutError,
+    LLMUnavailableError,
+)
 
 
 class ZaiClient:
@@ -32,6 +38,7 @@ class ZaiClient:
         quick_eval_model: str | None = None,
         evaluation_timeout: float = 120,
         screening_timeout: float = 60,
+        writing_timeout: float = 600,
     ) -> None:
         """Initialise the Z AI client.
 
@@ -46,6 +53,8 @@ class ZaiClient:
                 falls back to ``screening_model``.
             evaluation_timeout: HTTP timeout in seconds for evaluation / keyword calls.
             screening_timeout: HTTP timeout in seconds for screening calls.
+            writing_timeout: HTTP timeout in seconds for calls that write long
+                prose for the applicant (see ``WRITING_PURPOSES``).
         """
         import openai
 
@@ -56,6 +65,7 @@ class ZaiClient:
         self._quick_eval_model = quick_eval_model or screening_model
         self._evaluation_timeout = evaluation_timeout
         self._screening_timeout = screening_timeout
+        self._writing_timeout = writing_timeout
 
     def complete(
         self,
@@ -90,7 +100,11 @@ class ZaiClient:
             default_timeout = self._evaluation_timeout
         else:
             model = self._evaluation_model
-            default_timeout = self._evaluation_timeout
+            default_timeout = (
+                self._writing_timeout
+                if purpose in WRITING_PURPOSES
+                else self._evaluation_timeout
+            )
         effective_timeout = timeout if timeout is not None else default_timeout
 
         try:
@@ -110,8 +124,12 @@ class ZaiClient:
                 response_format={"type": "json_object"},
                 timeout=effective_timeout,
             )
+        except openai.APITimeoutError as exc:
+            raise LLMTimeoutError(
+                f"Z AI did not answer within {effective_timeout:.0f}s",
+                waited=effective_timeout,
+            ) from exc
         except openai.APIConnectionError as exc:
-            # Covers APITimeoutError, which subclasses it.
             raise LLMUnavailableError(f"Z AI unreachable: {exc}") from exc
         except openai.OpenAIError as exc:
             raise LLMError(f"Z AI API error: {exc}") from exc

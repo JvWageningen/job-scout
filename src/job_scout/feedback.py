@@ -87,6 +87,12 @@ _POINT_PROSE = ("section", "issue", "suggestion", "example")
 _REWRITE = "example"
 
 
+# A review is a long piece of writing, not a score: the 120-second default for
+# the evaluation purpose suits scoring a vacancy, not ranked points with
+# examples from a reasoning model. Same budget as the other writing calls.
+_REVIEW_TIMEOUT = 600.0
+
+
 def _job_context(job: JobListing) -> str:
     """Render a vacancy as prompt context.
 
@@ -280,7 +286,7 @@ def _run(prompt: str, client: LLMClient, target: str) -> DocumentFeedback:
         message rather than an error page.
     """
     try:
-        raw = client.complete(prompt, purpose="evaluation")
+        raw = client.complete(prompt, purpose="evaluation", timeout=_REVIEW_TIMEOUT)
         data: dict[str, Any] = _extract_json(raw)
     except (LLMError, json.JSONDecodeError, ValueError) as exc:
         logger.error(f"Document review failed: {exc}")

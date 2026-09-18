@@ -331,11 +331,11 @@ _STYLE_RULE = (
     "follows the house style below.\n" + HOUSE_STYLE
 )
 
-# These calls are long-form: a dozen questions, each with a spoken-length
-# answer, plus whatever reasoning the model emits before it commits. The
-# provider default of 120s was measured failing on exactly this prompt, and a
-# timeout here costs the whole retry budget before anything is shown.
-_QUESTION_TIMEOUT = 240.0
+# These calls are long-form, plus whatever reasoning the model emits before it
+# commits. On 2026-09-18 Z.AI took 407 seconds for one set of questions (12,711
+# completion tokens) and the old 240-second limit failed it three times over.
+# A call that times out this late is not repeated (see llm.retry).
+_QUESTION_TIMEOUT = 600.0
 
 _PUNCTUATION = re.compile(r"[^\w\s]|_", re.UNICODE)
 

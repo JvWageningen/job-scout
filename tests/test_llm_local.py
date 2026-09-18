@@ -508,3 +508,55 @@ class TestReasoningPerPurpose:
         client.complete("prompt", purpose="screening")
         body = responder.chat.completions.create.call_args.kwargs["extra_body"]
         assert "chat_template_kwargs" not in body
+
+
+def test_writing_calls_get_the_writing_timeout() -> None:
+    client, mock = _make_client()
+    mock.chat.completions.create.return_value = _fake_response("ok")
+
+    client.complete("prompt", purpose="cover_letter")
+
+    assert mock.chat.completions.create.call_args[1]["timeout"] == 600
+
+
+def test_a_slow_answer_is_not_asked_again_at_the_next_address() -> None:
+    """Both addresses reach the same machine: a slow model is slow on both."""
+    import httpx
+    import openai
+
+    from job_scout.llm.base import LLMTimeoutError
+
+    client = _multi_client()
+    slow = MagicMock()
+    timeout = openai.APITimeoutError(request=MagicMock())
+    timeout.__cause__ = httpx.ReadTimeout("read timed out")
+    slow.chat.completions.create.side_effect = timeout
+    asked: list[str] = []
+
+    def endpoint(base_url: str, read_timeout: float) -> MagicMock:
+        asked.append(base_url)
+        return slow
+
+    client._client_for = endpoint  # type: ignore[method-assign]
+
+    with pytest.raises(LLMTimeoutError):
+        client.complete("prompt", purpose="behavioral_questions", timeout=500)
+    assert asked == ["http://primary:8080/v1"]
+
+
+def test_a_connection_that_never_opens_tries_the_next_address() -> None:
+    import httpx
+    import openai
+
+    client = _multi_client()
+    dead = MagicMock()
+    timeout = openai.APITimeoutError(request=MagicMock())
+    timeout.__cause__ = httpx.ConnectTimeout("connect timed out")
+    dead.chat.completions.create.side_effect = timeout
+    alive = MagicMock()
+    alive.chat.completions.create.return_value = _fake_response("ok")
+    client._client_for = lambda base_url, read_timeout: (  # type: ignore[method-assign]
+        dead if "primary" in base_url else alive
+    )
+
+    assert client.complete("prompt", purpose="evaluation") == "ok"

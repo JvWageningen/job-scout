@@ -612,7 +612,7 @@
                 next.focus();
             };
         });
-        el('generate').onclick = () => run('Writing your questions... If the company has not been researched yet, it is looked up on the web first, so this can take two to four minutes.', async ctx => {
+        el('generate').onclick = () => run('Writing your questions... This usually takes a few minutes. When the local model is off and the online model takes over, it can take up to ten, and a company that has not been looked up yet adds a minute.', async ctx => {
             const response = await api('/questions', ctx, json('POST', request(latest)));
             const set = await response.json();
             fresh(ctx); remember('questions', set); render(set);
@@ -627,7 +627,7 @@
                 + 'including the ones you rewrote. Download them first if you want to keep them. Continue?')) {
                 return;
             }
-            run('Predicting their questions and drafting your answers... If the company has not been researched yet, it is looked up on the web first, so this can take two to four minutes.', async ctx => {
+            run('Predicting their questions and drafting your answers... This usually takes a few minutes. When the local model is off and the online model takes over, it can take up to fifteen, and a company that has not been looked up yet adds a minute.', async ctx => {
                 const body = request(answers);
                 // An edit still on its way must land before the new set does,
                 // or it would be saved over the set just generated.

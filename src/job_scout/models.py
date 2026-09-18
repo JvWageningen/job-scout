@@ -360,6 +360,9 @@ class Config(BaseModel):
     keywords_provider: Literal["claude_cli", "zai", "kilo_cli", "local"] | None = None
     cv_parsing_provider: Literal["claude_cli", "zai", "kilo_cli", "local"] | None = None
     llm_max_attempts: int = 3
+    # Seconds a model may take to write a letter or interview material.
+    # A reasoning model needs minutes for these; see WRITING_PURPOSES.
+    llm_writing_timeout: float = 600
     llm_retry_base_delay: float = 1.0
     max_parallel_evaluations: int = 5
     jobspy_keyword_limit: int = Field(default=5, ge=1, le=20)

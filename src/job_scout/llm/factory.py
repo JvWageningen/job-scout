@@ -52,6 +52,7 @@ def _build_raw_client(
             evaluation_model=config.zai_model,
             screening_model=config.zai_screening_model or config.zai_model,
             quick_eval_model=config.zai_quick_eval_model,
+            writing_timeout=config.llm_writing_timeout,
         )
     elif provider == "kilo_cli":
         return KiloCliClient(
@@ -77,6 +78,7 @@ def _build_raw_client(
             reasoning_purposes=config.local_reasoning_purposes,
             max_tokens_reasoning=config.local_max_tokens_reasoning,
             max_tokens_direct=config.local_max_tokens_direct,
+            writing_timeout=config.llm_writing_timeout,
         )
     else:
         return ClaudeCliClient(

@@ -36,7 +36,9 @@ class FakeLLMClient:
         self.response = response
         self.prompts: list[str] = []
 
-    def complete(self, prompt: str, *, purpose: str = "") -> str:
+    def complete(
+        self, prompt: str, *, purpose: str = "", timeout: float | None = None
+    ) -> str:
         """Record the prompt and return the canned response."""
         self.prompts.append(prompt)
         if isinstance(self.response, Exception):
@@ -47,7 +49,9 @@ class FakeLLMClient:
 class FailingLLMClient:
     """Raises, to check a failed review degrades rather than 500s."""
 
-    def complete(self, prompt: str, *, purpose: str = "") -> str:
+    def complete(
+        self, prompt: str, *, purpose: str = "", timeout: float | None = None
+    ) -> str:
         """Always fail."""
         raise LLMError("model is down")
 

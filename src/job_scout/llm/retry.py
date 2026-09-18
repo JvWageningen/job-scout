@@ -5,7 +5,15 @@ from __future__ import annotations
 import time as _time
 from collections.abc import Callable
 
-from job_scout.llm.base import CallPurpose, LLMClient, LLMError
+from loguru import logger
+
+from job_scout.llm.base import CallPurpose, LLMClient, LLMError, LLMTimeoutError
+
+# A call given this long and still unanswered is not repeated: the model
+# was working, just slowly, and another attempt would likely take as long
+# again. Three attempts of 240 seconds once kept an applicant waiting 12
+# minutes for an error.
+LONG_WAIT_SECONDS = 300.0
 
 
 class RetryingLLMClient:
@@ -61,6 +69,13 @@ class RetryingLLMClient:
                 return self._inner.complete(prompt, purpose=purpose, timeout=timeout)
             except LLMError as exc:
                 last_exc = exc
+                if _waited_long(exc):
+                    logger.warning(
+                        "LLM call for {} gave up after {:.0f}s; not repeating it",
+                        purpose,
+                        getattr(exc, "waited", 0.0),
+                    )
+                    break
             if attempt < self._attempts - 1:
                 self._sleep(self._base_delay * (2**attempt))
         raise last_exc
@@ -72,3 +87,15 @@ class RetryingLLMClient:
             (True, None) if available, (False, error_message) otherwise.
         """
         return self._inner.check_available()
+
+
+def _waited_long(exc: LLMError) -> bool:
+    """Tell whether a failed call already waited too long to be worth repeating.
+
+    Args:
+        exc: The error the attempt raised.
+
+    Returns:
+        True for a timeout after at least :data:`LONG_WAIT_SECONDS`.
+    """
+    return isinstance(exc, LLMTimeoutError) and exc.waited >= LONG_WAIT_SECONDS

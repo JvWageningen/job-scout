@@ -32,6 +32,38 @@ class LLMUnavailableError(LLMError):
     """
 
 
+class LLMTimeoutError(LLMUnavailableError):
+    """Raised when a provider was reached but did not answer in time.
+
+    Kept apart from other unavailability because the right response differs:
+    a refused connection is worth another try a second later, but a call that
+    already waited minutes for a long piece of writing would most likely wait
+    that long again, with the applicant watching a spinner.
+
+    Attributes:
+        waited: Seconds the call was allowed to take before it was given up.
+    """
+
+    def __init__(self, message: str, *, waited: float) -> None:
+        """Record how long the call waited.
+
+        Args:
+            message: What timed out, for the log.
+            waited: Seconds the call was allowed to take.
+        """
+        super().__init__(message)
+        self.waited = waited
+
+
+# Calls that write a long piece of prose for the applicant. A reasoning model
+# spends thousands of tokens on these before it answers: on 2026-09-18 Z.AI
+# took 407 seconds for one set of interview questions (12,711 completion
+# tokens), three times the 120-second default that suits scoring a vacancy.
+WRITING_PURPOSES: frozenset[str] = frozenset(
+    {"cover_letter", "behavioral_questions", "resume_tailoring", "screening_answers"}
+)
+
+
 @runtime_checkable
 class LLMClient(Protocol):
     """Common interface for LLM provider clients."""

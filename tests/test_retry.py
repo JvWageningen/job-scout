@@ -87,3 +87,26 @@ def test_attempts_clamped_to_one() -> None:
     client = RetryingLLMClient(inner, attempts=0, base_delay=1.0, sleep=lambda _: None)
     assert client.complete("p", purpose="evaluation") == "x"
     assert inner.complete.call_count == 1
+
+
+def test_a_long_timeout_is_not_repeated() -> None:
+    """Waiting the full ten minutes again would only double the applicant's wait."""
+    from job_scout.llm.base import LLMTimeoutError
+
+    inner = _make_inner([LLMTimeoutError("slow", waited=600), "never reached"])
+    client = RetryingLLMClient(inner, attempts=3, base_delay=1.0, sleep=lambda _: None)
+
+    with pytest.raises(LLMTimeoutError):
+        client.complete("prompt", purpose="behavioral_questions")
+    assert inner.complete.call_count == 1
+
+
+def test_a_short_timeout_is_still_retried() -> None:
+    """A quick call that timed out is cheap to try again."""
+    from job_scout.llm.base import LLMTimeoutError
+
+    inner = _make_inner([LLMTimeoutError("blip", waited=60), "ok"])
+    client = RetryingLLMClient(inner, attempts=3, base_delay=1.0, sleep=lambda _: None)
+
+    assert client.complete("prompt", purpose="screening") == "ok"
+    assert inner.complete.call_count == 2
