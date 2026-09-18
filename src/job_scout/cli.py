@@ -3455,7 +3455,18 @@ def company_group() -> None:
 @click.argument("job_id", type=int)
 @click.option("--user", "user_name", default=None, help="User researching")
 def company_research_cmd(job_id: int, user_name: str | None) -> None:
-    """Research a company and suggest hiring managers for a job."""
+    """Research a company and suggest hiring managers for a job.
+
+    Always looks the company up now, even when a recent lookup is remembered:
+    asking for it is the way to refresh. The attempt is remembered like any
+    other, so interview preparation reuses what it found.
+    """
+    from job_scout.company_lookups import (  # noqa: PLC0415
+        LookupKind,
+        LookupOutcome,
+        remember,
+        store_research,
+    )
     from job_scout.company_research import (  # noqa: PLC0415
         CompanyResearchError,
         research_company,
@@ -3474,14 +3485,13 @@ def company_research_cmd(job_id: int, user_name: str | None) -> None:
     try:
         research = research_company(job, config, suggest_managers=True)
     except (CompanyResearchError, LLMError) as exc:
+        remember(db, job.company, LookupKind.RESEARCH, LookupOutcome.FAILED)
         click.echo(f"Research failed: {exc}", err=True)
         return
+    store_research(db, job_id, job.company, research)
     if research is None:
         click.echo(f"No public web information about {job.company} found.", err=True)
         return
-
-    # model_dump_json, not json.dumps(model_dump()): the timestamp is a datetime.
-    db.save_company_research(job_id, research.model_dump_json())
     _print_research(research)
 
 

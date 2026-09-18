@@ -7,14 +7,17 @@ does a typical day look like?".
 
 The questions are grounded in the vacancy text, the company research, the
 company review and the user's current CV. The company half is filled in when it
-is absent, by :func:`company_context`: with no usable stored research the
-company is researched from web evidence there and then, and a review that is
-missing or rests on fewer than three web sources is written again, once. Only
-what web search actually returned reaches the prompt; stored research that
-cites no source was written from model memory and is ignored. Whatever still
-cannot be found is reported in ``missing_context`` rather than invented by the
-model, worded so that "searched and found nothing", "the lookup failed" and
-"never searched" read differently.
+is absent, by :func:`company_context`: research stored for any vacancy at the
+same company is reused; with none usable the company is researched from web
+evidence there and then, and a review that is missing or rests on fewer than
+three web sources is written again. Each lookup is remembered per company, so
+within its cooldown it does not run again, whatever it found (see
+:mod:`job_scout.company_lookups`). Only what web search actually returned
+reaches the prompt; stored research that cites no source was written from model
+memory and is ignored. Whatever still cannot be found is reported in
+``missing_context`` rather than invented by the model, worded so that "searched
+and found nothing", "the lookup failed" and "never searched" read differently,
+and dated when the check was not made just now.
 
 :func:`company_context` is shared with :mod:`job_scout.interview_answers`, so
 both generators see the company the same way.
@@ -42,6 +45,16 @@ from job_scout.applicant import (
     ApplicantFacts,
     gather_applicant_facts,
 )
+from job_scout.company_lookups import (
+    LookupAttempt,
+    LookupKind,
+    LookupOutcome,
+    day,
+    outcome_of,
+    recall,
+    remember,
+    store_research,
+)
 from job_scout.company_research import CompanyResearchError, research_company
 from job_scout.company_review import (
     MIN_REVIEW_SOURCES,
@@ -54,7 +67,7 @@ from job_scout.letters.language import detect_language
 from job_scout.letters.models import LetterLanguage
 from job_scout.letters.writer import LetterError, require_user
 from job_scout.llm.base import LLMClient, LLMError
-from job_scout.models import CompanyResearch, CompanyReview, Config, JobListing
+from job_scout.models import CompanyResearch, CompanyReview, JobListing
 
 
 class InterviewQuestionError(RuntimeError):
@@ -131,20 +144,31 @@ class CompanyContext(BaseModel):
         research: Company research, or None when none could be found.
         review: Company work-quality review, or None when none exists.
         missing: What ``missing_context`` must say about these two sources.
+        research_checked_at: When a research lookup for this company last
+            completed, found or not, so a caller can say "company research
+            from <date>". For research stored before lookups were remembered
+            it is the research's own timestamp. None when never looked up.
+        review_checked_at: The same for the company review.
     """
 
     research: CompanyResearch | None = None
     review: CompanyReview | None = None
     missing: list[str] = Field(default_factory=list)
+    research_checked_at: datetime | None = None
+    review_checked_at: datetime | None = None
 
 
 # What missing_context says about the company. "Searched and found nothing" and
-# "never searched" are different facts, so they must not read the same.
+# "never searched" are different facts, so they must not read the same. When a
+# remembered lookup rules out a new one, the entry is the constant followed by
+# its date, e.g. "... (checked 18 September 2026)"; gap_kind() maps it back.
 NO_PUBLIC_INFO = "no public information found about the company"
 # The lookup itself failed, which says nothing about what the web holds.
 RESEARCH_FAILED = "company research could not be completed this time"
 NO_REVIEW = "no company review yet"
+# Never dated: the CLI and the dashboard compare this one exactly.
 THIN_REVIEW = "company review is based on little evidence"
+_COMPANY_GAPS = (NO_PUBLIC_INFO, RESEARCH_FAILED, NO_REVIEW, THIN_REVIEW)
 _THIN_CONFIDENCE = "low"
 
 # A review older than this is stale, but the vacancy list reads the cache with
@@ -332,51 +356,54 @@ def _facts(user: str, language: LetterLanguage, cv_slug: str | None) -> Applican
     return facts
 
 
-def _stored_research(db: Database, job_id: int) -> CompanyResearch | None:
-    """Read the cached research for a vacancy.
+def _parse_research(raw: str, company: str) -> CompanyResearch | None:
+    """Read one stored research row.
 
     Args:
-        db: The user's database.
-        job_id: Vacancy id, which is the research cache key.
+        raw: The stored JSON.
+        company: Company name, for the log line.
 
     Returns:
-        The research, or None when nothing readable is stored.
+        The research, or None when the row is unreadable.
     """
-    raw = db.get_company_research(job_id)
-    if not raw:
-        return None
     try:
         return CompanyResearch.model_validate_json(raw)
     except ValidationError:
-        logger.warning(f"Ignoring unreadable company research for job {job_id}")
+        logger.warning(f"Ignoring unreadable company research stored for {company!r}")
         return None
 
 
 def _research(db: Database, job: JobListing, job_id: int) -> CompanyResearch | None:
-    """Reuse research already on the job, else read the cache.
+    """Reuse research already on the job, else the newest stored for its company.
 
-    Research that cites no source was written from model memory, before
-    research required web evidence. It counts as absent, so the company is
-    researched again rather than grounded in what the model imagined.
+    Research describes the employer, not the vacancy, so research stored for
+    any vacancy at the same company (matched on the normalised name) serves
+    this one too. Research that cites no source was written from model memory,
+    before research required web evidence. It counts as absent, so the company
+    is looked up once; that attempt is then remembered like any other.
 
     Args:
         db: The user's database.
         job: The vacancy, possibly already enriched by the caller.
-        job_id: Vacancy id, which is the research cache key.
+        job_id: Vacancy id; its own research counts even when it was stored
+            under a differently written company name.
 
     Returns:
         The research, or None when nothing usable is stored.
     """
-    research = job.company_research
-    if research is None:
-        research = _stored_research(db, job_id)
-    if research is not None and not research.sources:
+    if job.company_research is not None and job.company_research.sources:
+        return job.company_research
+    stored = db.get_company_research_for_company(job.company, job_id=job_id)
+    for raw in stored:
+        research = _parse_research(raw, job.company)
+        if research is not None and research.sources:
+            return research
+    if stored or job.company_research is not None:
         logger.info(
-            f"Ignoring stored research for job {job_id}: it cites no web source, "
-            "so it was written from model memory"
+            f"Ignoring stored research for {job.company!r}: it cites no web "
+            "source, so it was written from model memory"
         )
-        return None
-    return research
+    return None
 
 
 def _review(db: Database, job: JobListing) -> CompanyReview | None:
@@ -420,14 +447,28 @@ def _is_thin(review: CompanyReview) -> bool:
     return review.confidence.strip().casefold() == _THIN_CONFIDENCE
 
 
+def _stamp(result: CompanyResearch | CompanyReview | None) -> datetime | None:
+    """Return when a stored result was produced, if it says.
+
+    Args:
+        result: Stored research or review, or None.
+
+    Returns:
+        The research timestamp or the review date, or None.
+    """
+    if isinstance(result, CompanyResearch):
+        return result.research_timestamp
+    return result.reviewed_at if result is not None else None
+
+
 def _run_research(
     db: Database,
     job: JobListing,
     job_id: int,
-    settings: Config,
     client: LLMClient,
+    now: datetime,
 ) -> CompanyResearch | None:
-    """Research the company from web evidence now, and store what is found.
+    """Research the company from web evidence now, store it and remember the lookup.
 
     Hiring managers are not asked for: nothing grounded here uses them, and
     asking would cost a second model call.
@@ -435,9 +476,9 @@ def _run_research(
     Args:
         db: The user's database.
         job: The vacancy whose company is researched.
-        job_id: Vacancy id, which is the research cache key.
-        settings: Configuration carrying the web-search backends.
+        job_id: Vacancy id, which is the research storage key.
         client: The generator's own client, so the host is not probed twice.
+        now: When the lookup runs.
 
     Returns:
         The stored research, or None when the web offered nothing to use.
@@ -446,12 +487,12 @@ def _run_research(
         CompanyResearchError: If the model's answer could not be used.
         LLMError: If the model could not be reached.
     """
+    settings = load_llm_config()
     research = research_company(job, settings, client=client, suggest_managers=False)
+    store_research(db, job_id, job.company, research, now=now)
     if research is None:
         logger.info(f"Researched {job.company!r} for job {job_id}: nothing found")
         return None
-    # model_dump_json, not json.dumps(model_dump()): the timestamp is a datetime.
-    db.save_company_research(job_id, research.model_dump_json())
     logger.info(
         f"Researched {job.company!r} for job {job_id} from "
         f"{len(research.sources)} web sources; stored"
@@ -460,23 +501,20 @@ def _run_research(
 
 
 def _look_up_research(
-    db: Database,
-    job: JobListing,
-    job_id: int,
-    settings: Config,
-    client: LLMClient,
+    db: Database, job: JobListing, job_id: int, client: LLMClient, now: datetime
 ) -> tuple[CompanyResearch | None, list[str], bool]:
     """Research the company now, and say what ``missing_context`` must report.
 
     "Found nothing" and "the lookup failed" are different facts, so they are
-    reported differently.
+    reported differently. A failure is remembered too, so the next generation
+    within :data:`FAILED_COOLDOWN` does not wait out the same timeout.
 
     Args:
         db: The user's database.
         job: The vacancy whose company is researched.
-        job_id: Vacancy id, which is the research cache key.
-        settings: Configuration carrying the web-search backends.
+        job_id: Vacancy id, which is the research storage key.
         client: The generator's own client.
+        now: When the lookup runs.
 
     Returns:
         The research or None, the ``missing_context`` entries it causes, and
@@ -484,37 +522,84 @@ def _look_up_research(
         again for the review.
     """
     try:
-        research = _run_research(db, job, job_id, settings, client)
+        research = _run_research(db, job, job_id, client, now)
     except LLMError as exc:
+        remember(db, job.company, LookupKind.RESEARCH, LookupOutcome.FAILED, now=now)
         logger.warning(
             f"Company research for {job.company!r} could not reach the model: "
             f"{exc}; no further company lookups for this generation"
         )
         return None, [RESEARCH_FAILED], False
     except CompanyResearchError as exc:
+        remember(db, job.company, LookupKind.RESEARCH, LookupOutcome.FAILED, now=now)
         logger.warning(f"Company research for {job.company!r} failed: {exc}")
         return None, [RESEARCH_FAILED], True
     return research, [] if research is not None else [NO_PUBLIC_INFO], True
 
 
+def _remembered_research_gap(block: LookupAttempt) -> str:
+    """Word the ``missing_context`` entry for research a remembered lookup rules out.
+
+    Args:
+        block: The remembered attempt still inside its cooldown.
+
+    Returns:
+        The entry, dated so the reader knows the check was not made just now.
+    """
+    if block.outcome is LookupOutcome.FAILED:
+        return f"{RESEARCH_FAILED} (tried {day(block.at)})"
+    return f"{NO_PUBLIC_INFO} (checked {day(block.at)})"
+
+
+def _settle_research(
+    db: Database, job: JobListing, job_id: int, client: LLMClient, now: datetime
+) -> tuple[CompanyResearch | None, list[str], bool]:
+    """Use stored research, or look the company up unless a recent lookup did.
+
+    Args:
+        db: The user's database.
+        job: The vacancy, possibly already enriched by the caller.
+        job_id: Vacancy id, which is the research storage key.
+        client: The generator's own client.
+        now: The current time.
+
+    Returns:
+        The research or None, its ``missing_context`` entries, and whether the
+        model host answered (True when it was not asked).
+    """
+    research = _research(db, job, job_id)
+    if research is not None:
+        return research, [], True
+    memory = recall(db, job.company, LookupKind.RESEARCH)
+    block = memory.blocking(now, on_file=False)
+    if block is None:
+        return _look_up_research(db, job, job_id, client, now)
+    logger.info(
+        f"Not researching {job.company!r} again: the {block.outcome} lookup of "
+        f"{day(block.at)} still stands"
+    )
+    return None, [_remembered_research_gap(block)], True
+
+
 def _refresh_review(
-    db: Database, job: JobListing, settings: Config, client: LLMClient
+    db: Database, job: JobListing, client: LLMClient, now: datetime
 ) -> CompanyReview | None:
     """Write the company review again from today's web evidence, and store it.
 
     Nothing is stored unless a new review was actually written: with no web
     evidence the model is not asked at all, and a failed call leaves the
-    stored review exactly as it was.
+    stored review exactly as it was. The attempt is remembered either way.
 
     Args:
         db: The user's database.
         job: The vacancy whose employer is reviewed.
-        settings: Configuration carrying the web-search backends.
         client: The generator's own client, so the host is not probed twice.
+        now: When the lookup runs.
 
     Returns:
         The new review, or None when there was no evidence or the call failed.
     """
+    settings = load_llm_config()
     try:
         review = review_company(
             job.company,
@@ -523,11 +608,10 @@ def _refresh_review(
             api_key=settings.brave_api_key,
         )
     except (CompanyReviewError, LLMError) as exc:
-        logger.warning(
-            f"Company review refresh failed for {job.company!r}: {exc}; "
-            "keeping what is stored"
-        )
+        remember(db, job.company, LookupKind.REVIEW, LookupOutcome.FAILED, now=now)
+        logger.warning(f"Company review refresh failed for {job.company!r}: {exc}")
         return None
+    remember(db, job.company, LookupKind.REVIEW, outcome_of(review), now=now)
     if review is None:
         logger.info(f"No web evidence names {job.company!r}; review left as stored")
         return None
@@ -539,61 +623,125 @@ def _refresh_review(
     return review
 
 
-def _review_gap(review: CompanyReview | None) -> list[str]:
+def _review_gap(
+    review: CompanyReview | None, block: LookupAttempt | None = None
+) -> list[str]:
     """Say what the review contributes to ``missing_context``.
 
     Args:
         review: The review the generation will use, if any.
+        block: The remembered lookup that ruled out a refresh, if one did.
 
     Returns:
         Nothing for a sound review, otherwise the one entry that describes it.
+        A remembered "nothing found" is dated; THIN_REVIEW never is, because
+        callers compare it exactly.
     """
-    if review is None:
-        return [NO_REVIEW]
-    return [THIN_REVIEW] if _is_thin(review) else []
+    if review is not None:
+        return [THIN_REVIEW] if _is_thin(review) else []
+    if block is not None and block.outcome is LookupOutcome.NOTHING_FOUND:
+        return [f"{NO_REVIEW} (checked {day(block.at)})"]
+    return [NO_REVIEW]
 
 
-def company_context(
-    db: Database, job: JobListing, job_id: int, client: LLMClient
-) -> CompanyContext:
-    """Read the company research and review for a vacancy, filling gaps once.
-
-    With no usable stored research the company is researched from web evidence
-    now. A review that is missing or rests on fewer than ``MIN_REVIEW_SOURCES``
-    web sources is written again. Each happens at most once per call, never in
-    a loop, and both reuse *client*; what is written is stored for the next
-    generation, and a failed or evidence-free attempt stores nothing.
-
-    Both lookups call the model with the ``evaluation`` purpose, which the LLM
-    factory may route to a separately configured provider. If that host cannot
-    be reached during research, the review is not attempted: one failure is
-    enough to know, and each retry would cost the full timeout.
+def _settle_review(
+    db: Database, job: JobListing, client: LLMClient, now: datetime, *, reachable: bool
+) -> tuple[CompanyReview | None, list[str]]:
+    """Use the stored review, or refresh a missing or thin one unless recently tried.
 
     Args:
         db: The user's database.
         job: The vacancy, possibly already enriched by the caller.
-        job_id: Vacancy id, which is the research cache key.
-        client: The generator's own LLM client.
+        client: The generator's own client.
+        now: The current time.
+        reachable: False when research just failed to reach the model host;
+            the review would ask the same host, so it is remembered as failed
+            instead of waiting out a second timeout.
 
     Returns:
-        The research and review to ground on, and what is missing from them.
+        The review to ground on, or None, and its ``missing_context`` entries.
     """
-    research = _research(db, job, job_id)
     review = _review(db, job)
-    refresh = review is None or _is_thin(review)
-    if research is not None and not refresh:
-        return CompanyContext(research=research, review=review)
-    settings = load_llm_config()
-    missing: list[str] = []
-    if research is None:
-        research, missing, reachable = _look_up_research(
-            db, job, job_id, settings, client
+    if review is not None and not _is_thin(review):
+        return review, []
+    memory = recall(db, job.company, LookupKind.REVIEW, found_at=_stamp(review))
+    block = memory.blocking(now, on_file=review is not None)
+    if block is None and not reachable:
+        remember(db, job.company, LookupKind.REVIEW, LookupOutcome.FAILED, now=now)
+    elif block is None:
+        review = _refresh_review(db, job, client, now) or review
+    else:
+        logger.info(
+            f"Using the {job.company!r} review as stored: the {block.outcome} "
+            f"lookup of {day(block.at)} still stands"
         )
-        refresh = refresh and reachable
-    if refresh:
-        review = _refresh_review(db, job, settings, client) or review
+    return review, _review_gap(review, block)
+
+
+def gap_kind(entry: str) -> str:
+    """Return the constant a ``missing_context`` entry was built from.
+
+    An entry caused by a remembered lookup carries its date after the constant,
+    e.g. "no public information found about the company (checked 18 September
+    2026)". Code that maps entries to sources compares the constant.
+
+    Args:
+        entry: One ``missing_context`` entry.
+
+    Returns:
+        The constant the entry starts with, or the entry itself.
+    """
+    return next((gap for gap in _COMPANY_GAPS if entry.startswith(gap)), entry)
+
+
+def company_context(
+    db: Database,
+    job: JobListing,
+    job_id: int,
+    client: LLMClient,
+    *,
+    now: datetime | None = None,
+) -> CompanyContext:
+    """Read the company research and review for a vacancy, filling gaps once.
+
+    Research stored for any vacancy at the same company is used. With none
+    usable the company is researched from web evidence now, and a review that
+    is missing or rests on fewer than ``MIN_REVIEW_SOURCES`` web sources is
+    written again. Every lookup is remembered per company (see
+    :mod:`job_scout.company_lookups`): within its cooldown the same lookup does
+    not run again whatever it returned, and what is stored is used as it is,
+    a thin review still reported as thin.
+
+    Both lookups call the model with the ``evaluation`` purpose, which the LLM
+    factory may route to a separately configured provider. If that host cannot
+    be reached during research, the review is not attempted and is remembered
+    as failed: one failure is enough to know, and each retry would cost the
+    full timeout.
+
+    Args:
+        db: The user's database.
+        job: The vacancy, possibly already enriched by the caller.
+        job_id: Vacancy id; its own stored research counts for its company.
+        client: The generator's own LLM client.
+        now: The current time; tests pass one to step past a cooldown.
+
+    Returns:
+        The research and review to ground on, what is missing from them, and
+        when each was last looked up.
+    """
+    moment = now or datetime.now(UTC)
+    research, missing, reachable = _settle_research(db, job, job_id, client, moment)
+    review, review_gap = _settle_review(db, job, client, moment, reachable=reachable)
+    research_memory = recall(
+        db, job.company, LookupKind.RESEARCH, found_at=_stamp(research)
+    )
+    review_memory = recall(db, job.company, LookupKind.REVIEW, found_at=_stamp(review))
     return CompanyContext(
-        research=research, review=review, missing=missing + _review_gap(review)
+        research=research,
+        review=review,
+        missing=missing + review_gap,
+        research_checked_at=research_memory.checked_at,
+        review_checked_at=review_memory.checked_at,
     )
 
 
@@ -852,7 +1000,7 @@ def _drop_unsupported(
     """
     if not missing:
         return questions
-    banned = {word for gap in missing for word in _SOURCE_WORDS.get(gap, ())}
+    banned = {word for gap in missing for word in _SOURCE_WORDS.get(gap_kind(gap), ())}
     if not banned:
         return questions
     kept = []

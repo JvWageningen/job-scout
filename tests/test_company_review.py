@@ -13,6 +13,7 @@ from unittest.mock import patch
 
 import pytest
 
+from job_scout.company_research import FENCE_CLOSE, FENCE_OPEN
 from job_scout.company_review import (
     MIN_REVIEW_SOURCES,
     CompanyReviewError,
@@ -25,6 +26,7 @@ from job_scout.database import Database
 from job_scout.llm.base import LLMError
 from job_scout.models import CompanyReview
 from job_scout.websearch import SearchResult
+from job_scout.writing_style import HOUSE_STYLE
 from tests.helpers import FakeLLMClient
 
 _COMPANY = "Kwadrant Meetlab"
@@ -255,3 +257,42 @@ def test_the_review_command_prints_a_review_without_a_score(
     assert result.exit_code == 0, result.output
     assert "work score: n/a (medium)" in result.output
     assert review_user.get_company_review(_COMPANY) is not None
+
+
+def test_the_prompt_carries_the_house_style_and_none_of_its_dashes() -> None:
+    """A model copies the punctuation of the instructions it is given."""
+    client = FakeLLMClient([_REVIEW_JSON])
+    with patch("job_scout.company_review.web_search", return_value=_results(2)):
+        review_company(_COMPANY, client=client)
+    prompt = client.calls[0][0]
+    assert HOUSE_STYLE in prompt
+    own = prompt[: prompt.rindex(FENCE_OPEN)] + prompt[prompt.rindex(FENCE_CLOSE) :]
+    for dash in ("\u2014", "\u2013", " - "):
+        assert dash not in own
+    assert "Kwadrant Meetlab reviews 1: Rated 1.5 out of 5 by employees." in prompt
+
+
+def test_review_prose_is_cleaned_but_its_sources_are_not() -> None:
+    """Dashes, emphasis and emoji go before the review can be stored."""
+    answer = json.dumps(
+        {
+            "work_score": 64,
+            "summary": "Collegiaal \u2014 maar druk rond de audits.",
+            "pros": ["**Vriendelijke collega's** \U0001f600", "\u2014"],
+            "cons": ["Werkdruk - vooral in december"],
+            "employee_sentiment": "Gemengd \u2013 3,6 van 5",
+            "financial_health": None,
+            "growth": "Gegroeid van 2019 \u2013 2021",
+            "company_age": "Opgericht in 1978",
+        }
+    )
+    with patch("job_scout.company_review.web_search", return_value=_results(3)):
+        review = review_company(_COMPANY, client=FakeLLMClient([answer]))
+    assert review is not None
+    assert review.summary == "Collegiaal, maar druk rond de audits."
+    assert review.pros == ["Vriendelijke collega's"]
+    assert review.cons == ["Werkdruk, vooral in december"]
+    assert review.employee_sentiment == "Gemengd, 3,6 van 5"
+    assert review.growth == "Gegroeid van 2019-2021"
+    assert review.company_age == "Opgericht in 1978"
+    assert review.sources == [r.url for r in _results(3)]

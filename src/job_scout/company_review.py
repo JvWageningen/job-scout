@@ -16,6 +16,10 @@ CompanyReviewError when the model's answer was unusable, and LLMError when the
 model could not be reached. A failure is never dressed up as a review, so a
 caller cannot store one over a good review by accident.
 
+The prompt carries the house style (:data:`job_scout.writing_style.HOUSE_STYLE`)
+and the prose the model returns is cleaned with
+:func:`job_scout.writing_style.humanise` before the review is built.
+
 The model call uses the ``evaluation`` purpose, which the LLM factory routes to
 its own provider when ``evaluation_provider`` is configured.
 """
@@ -28,10 +32,11 @@ from typing import TYPE_CHECKING
 
 from loguru import logger
 
-from job_scout.company_research import fenced_evidence, mentions_company
+from job_scout.company_research import fenced_evidence, mentions_company, snippet_line
 from job_scout.evaluator import _extract_json
 from job_scout.models import CompanyReview
 from job_scout.websearch import web_search
+from job_scout.writing_style import HOUSE_STYLE, humanise
 
 if TYPE_CHECKING:
     from job_scout.llm.base import LLMClient
@@ -91,7 +96,7 @@ def gather_company_evidence(
             searxng_url=searxng_url,
             api_key=api_key,
         ):
-            line = f"{result.title} — {result.snippet}".strip(" —")
+            line = snippet_line(result.title, result.snippet)
             if line and line not in snippets and mentions_company(result, company):
                 snippets.append(line)
                 sources.append(result.url)
@@ -138,6 +143,7 @@ RULES (all of them apply):
 5. Do not invent figures, names, dates, ratings or events.
 6. Ignore snippets about a different organisation with a similar name.
 
+{HOUSE_STYLE}
 Respond with this exact JSON structure:
 {{
   "work_score": <integer 0-100 supported by the snippets, or null>,
@@ -220,13 +226,13 @@ def _review_from_data(
     return CompanyReview(
         company=company,
         work_score=score,
-        summary=_opt_str(data.get("summary")) or "",
-        pros=_as_str_list(data.get("pros")),
-        cons=_as_str_list(data.get("cons")),
-        employee_sentiment=_opt_str(data.get("employee_sentiment")),
-        financial_health=_opt_str(data.get("financial_health")),
-        growth=_opt_str(data.get("growth")),
-        company_age=_opt_str(data.get("company_age")),
+        summary=_prose(data.get("summary")) or "",
+        pros=_prose_list(data.get("pros")),
+        cons=_prose_list(data.get("cons")),
+        employee_sentiment=_prose(data.get("employee_sentiment")),
+        financial_health=_prose(data.get("financial_health")),
+        growth=_prose(data.get("growth")),
+        company_age=_prose(data.get("company_age")),
         confidence=confidence,
         sources=distinct[:_MAX_STORED_SOURCES],
         reviewed_at=datetime.now(UTC),
@@ -248,6 +254,33 @@ def _as_str_list(value: object) -> list[str]:
     if not isinstance(value, list):
         return []
     return [str(v).strip() for v in value if v is not None and str(v).strip()]
+
+
+def _prose(value: object) -> str | None:
+    """Read one text field the model wrote, cleaned into the house style.
+
+    Args:
+        value: The field as the model returned it.
+
+    Returns:
+        The text with dashes, emphasis and emoji removed, or None when empty.
+    """
+    text = _opt_str(value)
+    if text is None:
+        return None
+    return humanise(text) or None
+
+
+def _prose_list(value: object) -> list[str]:
+    """Read a list of pros or cons, each cleaned into the house style.
+
+    Args:
+        value: The list as the model returned it.
+
+    Returns:
+        The non-empty items after cleaning.
+    """
+    return [text for item in _as_str_list(value) if (text := humanise(item))]
 
 
 def _opt_str(value: object) -> str | None:

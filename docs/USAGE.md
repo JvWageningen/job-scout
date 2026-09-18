@@ -473,6 +473,11 @@ lists hiring managers — only people a search result actually names, each with 
 that names them; an email or LinkedIn URL is shown only when that page prints it. When no
 result names the company it says no public web information was found and stores nothing.
 
+It always searches now, even when the company was looked up recently, so it is also the
+way to refresh research on purpose. The attempt is remembered like the ones interview
+preparation makes (see
+[How the company is looked up](INTERVIEW_QUESTIONS.md#how-the-company-is-looked-up)).
+
 | Argument / option | Default | Description |
 |---|---|---|
 | `JOB_ID` | required | Numeric job id |
@@ -730,7 +735,9 @@ asked for follows the grounding: 8 to 12 with both research and a review, 6 to 9
 one of them, 4 to 6 with neither.
 
 When the company has not been researched yet, or its review is missing or rests on fewer
-than three web sources, it is looked up on the web first and the result is stored (see
+than three web sources, it is looked up on the web first and the result is stored. Each
+lookup is remembered per company, so the next run, or another vacancy at the same
+employer, does not search again (see
 [How the company is looked up](INTERVIEW_QUESTIONS.md#how-the-company-is-looked-up)).
 Whatever grounding is still absent is listed at the end under *Not seen, so nothing above
 is based on it* rather than guessed at. Salary, holiday and benefit questions are omitted

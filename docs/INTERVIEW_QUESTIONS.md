@@ -23,8 +23,9 @@ found out by the person sitting opposite you, while you are saying it.
 Neither half saves the questions or answers it writes, and running one has no effect on
 the other. The one thing either half may store is company material: when a vacancy's
 company has not been researched yet, or its review is missing or rests on little
-evidence, it is looked up on the web first and the result is kept for next time (see
-[How the company is looked up](#how-the-company-is-looked-up)).
+evidence, it is looked up on the web first and the result is kept for next time, for
+every vacancy at that company. Each lookup is remembered, so the next click does not
+search again (see [How the company is looked up](#how-the-company-is-looked-up)).
 
 ## This is not interview prep, and not Document Review
 
@@ -238,9 +239,9 @@ with the result:
 | Reported as | Means | Half |
 | --- | --- | --- |
 | `no vacancy description` | The stored vacancy has no description text. | Both |
-| `no public information found about the company` | The company was searched for and no result named it, or what was found supported no finding. | Both |
-| `company research could not be completed this time` | Results were found but the model call failed or its answer was unusable. Nothing was stored; the next generation tries again. | Both |
-| `no company review yet` | No review is stored for this employer within the last year and none could be written now (no web result names it, or the call failed). | Both |
+| `no public information found about the company` | The company was searched for and no result named it, or what was found supported no finding. With `(checked <date>)` after it, that search was an earlier one, still inside its 30 day cooldown. | Both |
+| `company research could not be completed this time` | Results were found but the model call failed or its answer was unusable, or the model could not be reached. Nothing was stored; a generation after an hour tries again. With `(tried <date>)` after it, the failure was an earlier one inside that hour. | Both |
+| `no company review yet` | No review is stored for this employer within the last year and none could be written (no web result names it, or the call failed). With `(checked <date>)` after it, an earlier search found nothing and is still inside its 14 day cooldown. | Both |
 | `company review is based on little evidence` | The review rests on fewer than three web sources. Unlike the rows above, it *is* in the prompt, flagged so the model uses it with caution. | Both |
 | `no STAR stories saved yet` | The story bank is empty. | Answers |
 
@@ -254,22 +255,62 @@ with caution. There is no need to run
 
 ### How the company is looked up
 
-Before writing, both halves check what is stored about the company, and fill a gap at
-most once per generation:
+Before writing, both halves check what is stored about the company. Research and the
+review describe the employer, not one vacancy, so what was found for one vacancy is
+used for every vacancy at the same company. Names are compared lower-cased with their
+spaces collapsed, the same way the review cache has always matched them.
 
-- **No usable research** — none stored, or stored research that cites no web source
-  (written from model memory by an older version) — means the company is researched
-  now. Only search results that name the company count; a namesake's page is dropped.
-  The model summarises those snippets and nothing else, a size or growth figure that no
-  snippet prints is cleared, and the snippets are stored with the research so every
-  finding can be checked later. With no relevant result the model is not asked at all.
+- **No usable research** means none is stored for any vacancy at the company, or what
+  is stored cites no web source (an older version wrote it from model memory). The
+  company is then researched now. Only search results that name the company count; a
+  namesake's page is dropped. The model summarises those snippets and nothing else, a
+  size or growth figure that no snippet prints is cleared, and the snippets are stored
+  with the research so every finding can be checked later. With no relevant result the
+  model is not asked at all.
 - **A review that is missing or rests on fewer than three web sources** is written again
   from today's search results. How much a review can be trusted is counted from its
   sources, not taken from the review itself. With no relevant result the model is not
   asked and nothing is stored; a failed call keeps the stored review as it was.
-- **Both lookups use the `evaluation` routing purpose**, which may point at a different
+- **Every lookup is remembered** per company, with when it ran and how it went: found,
+  nothing found or failed. Within the cooldown below the same lookup does not run again,
+  whatever it returned, and what is stored is used as it is. A second click, the other
+  half, or another vacancy at the same employer therefore costs no web search and no
+  extra model call.
+
+| How the last lookup went | Research is looked up again | The review is looked up again |
+| --- | --- | --- |
+| Found | Not while the research is stored | After 14 days, and only if it is still thin |
+| Nothing found | After 30 days | After 14 days |
+| Failed (model unreachable, or its answer unusable) | After 1 hour | After 1 hour |
+
+Why these numbers: what a company does and how big it is changes over months, so a
+month between research lookups loses nothing. Employee reviews appear faster, and a thin
+review is the one result worth another look, so it gets one every two weeks instead of
+on every click. A failure says nothing about the company, only that the model or the
+search was not available just then (the local model asleep, for instance), so an hour is
+enough to stop a run of clicks each waiting out the same timeout.
+
+A few details:
+
+- A review's own date counts as a lookup. A thin review that the daily run or
+  `company-review` wrote last week is used as it is, not rewritten now.
+- Research that cites no source counts as absent once: the company is looked up, and
+  that lookup is then remembered like any other.
+- When a remembered lookup stands in for a new one, the entry in the missing list says
+  when it was made, for example `no public information found about the company (checked
+  18 September 2026)` or `company research could not be completed this time (tried 18
+  September 2026)`. `company review is based on little evidence` is never dated.
+- To refresh on purpose, run [`company research`](USAGE.md#company-research) or use
+  `POST /api/company/research/{job_id}`. Both always search now, whatever is
+  remembered, and the attempt is remembered in turn.
+- Both lookups use the `evaluation` routing purpose, which may point at a different
   provider than question writing. If research cannot reach that provider, the review is
-  not tried as well, so one unreachable host costs one timeout, not two.
+  not tried as well and is remembered as failed, so one unreachable host costs one
+  timeout, not two, and the next click within the hour costs none.
+- The research and review prompts carry the same house style as everything else the tool
+  writes, and the prose that comes back (summary, pros, cons, notes, culture and growth)
+  is cleaned of dashes, bold and emoji before it is stored. Names, web addresses and the
+  stored snippets are left exactly as they were read.
 
 Hiring managers are never looked up here: nothing in either half uses them.
 
@@ -322,8 +363,8 @@ you*.
 3. Choose the language and the CV, or leave both on *Automatic*.
 4. Add anything the model should know, then press the generate button for the half you
    are in: **Generate questions to ask** or **Generate questions & draft answers**. It
-   can take a minute or more, and two to four minutes when the company still has to be
-   looked up.
+   can take a minute or more, and two to four minutes the first time a company has to be
+   looked up. After that the lookup is remembered and not repeated.
 
 The setup — vacancy, language, CV, notes — is shared, so you can prepare one half and
 then the other without re-entering anything, and switching halves leaves a generated

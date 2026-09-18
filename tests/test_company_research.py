@@ -19,10 +19,12 @@ from fastapi.testclient import TestClient
 import job_scout.config as app_config
 from job_scout import company_research
 from job_scout.cli import cli
+from job_scout.company_lookups import LookupKind, LookupOutcome, recall, remember
 from job_scout.company_research import (
     FENCE_CLOSE,
     FENCE_OPEN,
     CompanyResearchError,
+    _build_managers_prompt,
     _build_research_prompt,
     _extract_json,
     _research_queries,
@@ -31,6 +33,7 @@ from job_scout.company_research import (
     gather_research_evidence,
     mentions_company,
     research_company,
+    snippet_line,
 )
 from job_scout.database import Database
 from job_scout.llm.base import LLMClient, LLMError
@@ -42,6 +45,7 @@ from job_scout.models import (
 )
 from job_scout.web.app import create_app
 from job_scout.websearch import SearchResult
+from job_scout.writing_style import HOUSE_STYLE
 from tests.helpers import FakeLLMClient
 
 _COMPANY = "Voorbeeld Robotica B.V."
@@ -917,3 +921,180 @@ class TestCompanyResearchEndpoint:
 
         assert response.status_code == 502
         assert "10.0.0.9" not in response.json()["detail"]
+
+
+def _research_memory(db: Database) -> dict[LookupOutcome, datetime]:
+    """Return what the database remembers about researching the company."""
+    return recall(db, _COMPANY, LookupKind.RESEARCH).last
+
+
+class TestExplicitResearchBypassesTheCooldown:
+    """Asking for research is how to refresh it, whatever was remembered."""
+
+    @pytest.mark.parametrize(
+        "remembered", [LookupOutcome.NOTHING_FOUND, LookupOutcome.FAILED]
+    )
+    def test_the_command_looks_up_and_remembers_it(
+        self,
+        entry_env: tuple[int, int],
+        monkeypatch: pytest.MonkeyPatch,
+        remembered: LookupOutcome,
+    ) -> None:
+        """A lookup remembered a minute ago does not stop the command."""
+        stub = _ResearchStub(_RESEARCHED)
+        _use(monkeypatch, stub)
+        db = Database(app_config.get_data_dir() / "jobs.db")
+        remember(db, _COMPANY, LookupKind.RESEARCH, remembered)
+
+        result = CliRunner().invoke(cli, ["company", "research", str(entry_env[0])])
+
+        assert result.exit_code == 0, result.output
+        assert stub.suggest_managers == [True]
+        assert LookupOutcome.FOUND in _research_memory(db)
+
+    @pytest.mark.parametrize(
+        ("outcome", "remembered"),
+        [
+            (None, LookupOutcome.NOTHING_FOUND),
+            (LLMError("host unreachable"), LookupOutcome.FAILED),
+        ],
+    )
+    def test_the_command_remembers_every_outcome(
+        self,
+        entry_env: tuple[int, int],
+        monkeypatch: pytest.MonkeyPatch,
+        outcome: Exception | None,
+        remembered: LookupOutcome,
+    ) -> None:
+        """Nothing found and a failure are remembered too, not only a find."""
+        _use(monkeypatch, _ResearchStub(outcome))
+        CliRunner().invoke(cli, ["company", "research", str(entry_env[0])])
+        db = Database(app_config.get_data_dir() / "jobs.db")
+        assert set(_research_memory(db)) == {remembered}
+
+    def test_the_endpoint_looks_up_and_remembers_it(
+        self, entry_env: tuple[int, int], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """POST /api/company/research runs even inside a cooldown."""
+        stub = _ResearchStub(_RESEARCHED)
+        _use(monkeypatch, stub)
+        db = Database(app_config.user_db_path(_USER))
+        remember(db, _COMPANY, LookupKind.RESEARCH, LookupOutcome.NOTHING_FOUND)
+
+        response = TestClient(create_app()).post(
+            f"/api/company/research/{entry_env[1]}?user={_USER}"
+        )
+
+        assert response.status_code == 200, response.text
+        assert stub.suggest_managers == [True]
+        assert LookupOutcome.FOUND in _research_memory(db)
+
+    @pytest.mark.parametrize(
+        ("outcome", "status", "remembered"),
+        [
+            (None, 404, LookupOutcome.NOTHING_FOUND),
+            (CompanyResearchError("not JSON"), 502, LookupOutcome.FAILED),
+        ],
+    )
+    def test_the_endpoint_remembers_every_outcome(
+        self,
+        entry_env: tuple[int, int],
+        monkeypatch: pytest.MonkeyPatch,
+        outcome: Exception | None,
+        status: int,
+        remembered: LookupOutcome,
+    ) -> None:
+        """What the endpoint found, or failed to find, is remembered."""
+        _use(monkeypatch, _ResearchStub(outcome))
+        response = TestClient(create_app()).post(
+            f"/api/company/research/{entry_env[1]}?user={_USER}"
+        )
+        assert response.status_code == status
+        db = Database(app_config.user_db_path(_USER))
+        assert set(_research_memory(db)) == {remembered}
+
+
+def _outside_the_evidence(prompt: str) -> str:
+    """Return the prompt's own text, without the fenced search snippets."""
+    return prompt[: prompt.rindex(FENCE_OPEN)] + prompt[prompt.rindex(FENCE_CLOSE) :]
+
+
+class TestHouseStyle:
+    """Research prose follows the house style, from the prompt to the store."""
+
+    def test_both_prompts_carry_the_style_and_none_of_its_dashes(
+        self, sample_job: JobListing
+    ) -> None:
+        """A model copies the punctuation of the instructions it is given."""
+        for prompt in (
+            _build_research_prompt(sample_job, _EVIDENCE),
+            _build_managers_prompt(sample_job, _EVIDENCE),
+        ):
+            assert HOUSE_STYLE in prompt
+            own = _outside_the_evidence(prompt)
+            for dash in ("\u2014", "\u2013", " - "):
+                assert dash not in own
+
+    def test_a_title_and_its_snippet_are_joined_with_a_colon(
+        self, sample_job: JobListing
+    ) -> None:
+        """The join was an em dash, which the model then echoed."""
+        prompt = _build_research_prompt(sample_job, _EVIDENCE)
+        assert f"{_EVIDENCE[1].title}: {_EVIDENCE[1].snippet}" in prompt
+        assert snippet_line("", "alleen tekst") == "alleen tekst"
+        assert snippet_line("Titel", " ") == "Titel"
+
+    def test_prose_is_cleaned_but_names_urls_and_snippets_are_not(
+        self,
+        search: _SearchRecorder,
+        sample_job: JobListing,
+        sample_config: Config,
+    ) -> None:
+        """Dashes and markup go; what was read and what things are called stay."""
+        answer = json.dumps(
+            {
+                "industry": "Robotica \u2013 landbouw",
+                "company_size": "45 medewerkers",
+                "culture_indicators": ["**korte lijnen**", "\u2014"],
+                "tech_stack_hints": ["C++ - ROS"],
+                "growth_signals": "Tweede fabriek \u2014 45 medewerkers",
+                "research_notes": "Bouwt sorteerrobots \u2014 voor kassen \U0001f331.",
+            }
+        )
+        research = research_company(sample_job, sample_config, FakeLLMClient([answer]))
+        assert research is not None
+        assert research.industry == "Robotica, landbouw"
+        assert research.company_size == "45 medewerkers"
+        assert research.growth_signals == "Tweede fabriek, 45 medewerkers"
+        assert research.research_notes == "Bouwt sorteerrobots, voor kassen."
+        assert research.culture_indicators == ["korte lijnen"]
+        assert research.tech_stack_hints == ["C++ - ROS"]
+        assert research.evidence[0].title == _EVIDENCE[0].title
+        assert research.sources == [_ABOUT_URL, _NEWS_URL]
+
+    def test_a_figure_is_checked_before_the_prose_is_cleaned(
+        self,
+        search: _SearchRecorder,
+        sample_job: JobListing,
+        sample_config: Config,
+    ) -> None:
+        """Cleaning never turns an invented figure into one that passes."""
+        answer = json.dumps(
+            {
+                "research_notes": "Bouwt sorteerrobots.",
+                "company_size": "40 \u2013 45 medewerkers",
+            }
+        )
+        research = research_company(sample_job, sample_config, FakeLLMClient([answer]))
+        assert research is not None
+        assert research.company_size is None
+
+    def test_a_managers_reasoning_is_cleaned(self, sample_job: JobListing) -> None:
+        """The reasoning is shown to the applicant, so it follows the style too."""
+        entry = _manager(
+            "Anouk van Dijkhuis", reasoning="Genoemd in [1] \u2014 leidt de techniek."
+        )
+        client = FakeLLMClient([json.dumps([entry])])
+        suggestions = _suggest_hiring_managers(sample_job, [_NAMED], client)
+        assert suggestions[0].reasoning == "Genoemd in [1], leidt de techniek."
+        assert HOUSE_STYLE in client.calls[0][0]

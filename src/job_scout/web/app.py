@@ -3227,6 +3227,10 @@ def create_app() -> FastAPI:
     ) -> dict[str, Any]:
         """Research a company and discover hiring managers.
 
+        Always looks the company up now, even when a recent lookup is
+        remembered: asking for it is the way to refresh. The attempt is
+        remembered like any other, so interview preparation reuses it.
+
         Args:
             job_id: ID of the job to research.
             user: User name (required).
@@ -3244,6 +3248,12 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail=f"User '{user}' not found")
 
         try:
+            from job_scout.company_lookups import (  # noqa: PLC0415
+                LookupKind,
+                LookupOutcome,
+                remember,
+                store_research,
+            )
             from job_scout.company_research import (  # noqa: PLC0415
                 CompanyResearchError,
                 research_company,
@@ -3264,21 +3274,21 @@ def create_app() -> FastAPI:
             try:
                 research = research_company(job, config, suggest_managers=True)
             except (CompanyResearchError, LLMError) as exc:
+                remember(db, job.company, LookupKind.RESEARCH, LookupOutcome.FAILED)
                 logger.warning(f"Company research failed for job {job_id}: {exc}")
                 raise HTTPException(
                     status_code=502,
                     detail="Company research failed. Check LLM settings and retry.",
                 ) from exc
+            store_research(db, job_id, job.company, research)
             if research is None:
                 raise HTTPException(
                     status_code=404,
                     detail=f"No public web information about {job.company} "
                     "was found; nothing was stored.",
                 )
-
-            # model_dump_json / mode="json": the timestamp is a datetime, which
-            # json.dumps cannot serialise.
-            db.save_company_research(job_id, research.model_dump_json())
+            # mode="json": the timestamp is a datetime, which json.dumps cannot
+            # serialise.
             return research.model_dump(mode="json")
         except HTTPException:
             raise
