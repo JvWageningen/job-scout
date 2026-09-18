@@ -24,7 +24,7 @@ from pydantic import ValidationError
 
 from job_scout.cv.images import ImageError, load_square
 from job_scout.cv.models import CVDocument
-from job_scout.cv.sample import sample_cv, sample_portrait
+from job_scout.cv.sample import blank_cv, is_untouched_example
 
 DATA_ENV_VAR = "CV_BUILDER_DATA"
 DEFAULT_PROFILE = "default"
@@ -32,7 +32,7 @@ STARTER_PROFILES: tuple[tuple[str, str], ...] = (
     (DEFAULT_PROFILE, "EN"),
     ("nederlands", "NL"),
 )
-"""Profiles seeded on a fresh install, as ``(slug, language)`` pairs."""
+"""Empty profiles created on a fresh install, as ``(slug, language)`` pairs."""
 _SLUG_SAFE = re.compile(r"[^a-z0-9]+")
 _MAX_SLUG_LENGTH = 60
 PORTRAIT_NAME = "portrait.png"
@@ -276,47 +276,56 @@ class ProfileStore:
 
     # -- bootstrap -----------------------------------------------------
 
-    def seed(self, slug: str, doc: CVDocument) -> None:
-        """Write a starter profile together with the bundled portrait.
+    def retire_untouched_examples(self) -> list[str]:
+        """Blank the profiles that still hold the example CV, untouched.
 
-        A missing or unreadable portrait is not fatal; the profile is simply saved
-        without one.
-
-        Args:
-            slug: Profile slug.
-            doc: Document to persist.
-        """
-        self.save(slug, doc)
-        portrait = sample_portrait()
-        if not portrait.is_file():
-            doc.photo = ""
-            self.save(slug, doc)
-            return
-        try:
-            self.save_photo(slug, portrait.read_bytes())
-        except (StorageError, OSError) as exc:
-            logger.warning("Could not seed sample portrait for {}: {}", slug, exc)
-            doc.photo = ""
-            self.save(slug, doc)
-
-    def ensure_default(self) -> str:
-        """Create the seeded starter profiles if no profiles exist yet.
-
-        Both language versions are seeded, so the English and Dutch CVs are
-        available side by side from the first run.
+        Earlier versions seeded every new user with a fictional example CV and
+        its portrait, saved like a real profile. Anything reading stored CVs
+        then wrote about that person's career. A profile nobody began editing is
+        replaced by an empty one under the same name; a profile someone started
+        to make their own is left alone.
 
         Returns:
-            The slug of an existing profile: the newly seeded English one, or the
-            first profile already present.
+            The slugs that were blanked.
         """
+        retired: list[str] = []
+        for slug in self.list_profiles():
+            try:
+                doc = self.load(slug)
+            except StorageError:
+                continue
+            if not is_untouched_example(doc):
+                continue
+            portrait = self.photo_path(slug, doc)
+            if portrait is not None:
+                portrait.unlink(missing_ok=True)
+            self.save(slug, blank_cv(doc.language))
+            retired.append(slug)
+        if retired:
+            logger.info("Replaced the untouched example CV in {}", ", ".join(retired))
+        return retired
+
+    def ensure_default(self) -> str:
+        """Create empty starter profiles if none exist, and retire the old example.
+
+        Both language versions are created, so the English and Dutch CVs are
+        available side by side from the first run. They start empty: the
+        editor's preview shows placeholder text until the user fills them in or
+        imports their own CV.
+
+        Returns:
+            The slug of an existing profile: the new English one, or the first
+            profile already present.
+        """
+        self.retire_untouched_examples()
         existing = self.list_profiles()
         if existing:
             return existing[0]
 
         for slug, language in STARTER_PROFILES:
-            self.seed(slug, sample_cv(language))
+            self.save(slug, blank_cv(language))
         logger.info(
-            "Seeded starter profiles {} in {}",
+            "Created empty starter profiles {} in {}",
             ", ".join(slug for slug, _ in STARTER_PROFILES),
             self.profiles_dir,
         )

@@ -64,6 +64,24 @@ mounted under `/api/cv` — inside the prefix `TokenAuthMiddleware` guards. The 
 and its assets sit outside `/api/`, exactly like `index.html`, and are inert until their
 API calls succeed.
 
+### Importing the CV you already have
+
+**Import CV**, next to **New**, turns a CV you already have into a profile you can edit
+here. Take the CV you uploaded under **Profile & Filters**, or upload a PDF, DOCX, ODT or text file,
+choose the profile's language and give it a name. The model transcribes the CV: it
+repairs words the PDF extraction split and translates faithfully when you choose the
+other language, but adds nothing. When your uploaded CV is used, roles and education
+from your parsed profile — which is where a LinkedIn import lands — are added where the
+CV lacks them. Every employer, school and year in the result is then looked up in the
+source, and anything that cannot be found there is listed for you to check.
+
+An import never overwrites a profile that already holds a CV; it can fill an empty one.
+It needs the dashboard's LLM settings, so the button only appears inside the dashboard.
+
+CV Builder stays optional. Letters and interview material read your own CV file whether
+or not you ever import it; importing is for when you want to edit and lay out that CV
+here.
+
 ### Standalone
 
 ```bash
@@ -142,11 +160,15 @@ hyphen, trimmed to 60 characters. That normalisation is the single gate stopping
 escaping the data directory, and it is why a profile called "Nederlands (2026)" lands in
 `nederlands-2026/`.
 
-Opening the editor with no profiles stored seeds two starter profiles — `default` (EN) and
-`nederlands` (NL) — both fully populated with sample content and the bundled sample
-portrait, so there is something to edit rather than an empty form. Seeding happens in
-`cv serve` and in `GET /profiles`; `cv list` reports an empty store rather than filling it,
-and `cv render` and `cv tailor` fail on a profile that does not exist. Saves are
+Opening the editor with no profiles stored creates two empty starter profiles —
+`default` (EN) and `nederlands` (NL), with their section titles in that language. Empty
+fields show lorem ipsum in the preview, so the layout is visible before anything is filled
+in; that placeholder text exists only in the preview and is never saved or downloaded.
+Older versions filled the starters with a fictional example CV instead; a profile that
+still holds that example untouched is blanked the next time the editor opens, and one you
+started editing is left alone. This happens in `cv serve` and in `GET /profiles`; `cv list`
+reports an empty store rather than filling it, and `cv render` and `cv tailor` fail on a
+profile that does not exist. Saves are
 atomic: the JSON goes to a sibling temporary file and is moved into place, so an interrupted
 save cannot truncate the previous version.
 
@@ -174,16 +196,18 @@ per request; standalone there is one store for the process and no user is sent.
 | Route | Does |
 | --- | --- |
 | `GET /meta` | Version, icon names, the seven section kinds and the theme defaults |
-| `GET /profiles` | List profiles, seeding the starters when empty |
-| `POST /profiles` | Create one, from the sample (`seed: true`) or an empty skeleton |
+| `GET /profiles` | List profiles, creating empty starters when there are none |
+| `POST /profiles` | Create an empty one |
 | `GET`/`PUT`/`DELETE /profiles/{slug}` | Read, overwrite or remove a document |
 | `POST`/`GET`/`DELETE /profiles/{slug}/photo` | Upload, serve or forget the portrait |
-| `POST /profiles/{slug}/preview` | Render the posted document inline, without saving |
+| `POST /profiles/{slug}/preview` | Render the posted document inline, without saving; empty fields show lorem ipsum |
 | `GET /profiles/{slug}/pdf` | Render the saved document as a download |
 | `POST /profiles/{slug}/tailor` | Tailor to a vacancy — dashboard only, see below |
+| `GET /import/options` | Whether an uploaded CV and a parsed profile exist — dashboard only |
+| `POST /import` | Transcribe a CV into a new profile — dashboard only, see above |
 
-Tailoring is the one route declared by job-scout rather than the vendored router, because it
-is the only CV operation that needs job-scout itself: the vacancy comes out of the user's
+Tailoring and import are declared by job-scout rather than the vendored router, because
+they are the CV operations that need job-scout itself: the vacancy comes out of the user's
 jobs database and the model comes from their LLM settings, neither of which the standalone
 editor knows anything about.
 

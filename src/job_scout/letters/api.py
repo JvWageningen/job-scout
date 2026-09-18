@@ -10,8 +10,9 @@ from loguru import logger
 from pydantic import BaseModel, Field
 from starlette.responses import Response
 
-from job_scout.config import build_effective_config, user_cv_dir
-from job_scout.cv.storage import ProfileStore, StorageError
+from job_scout.applicant import describe_sources, profile_choices
+from job_scout.config import build_effective_config
+from job_scout.cv.storage import StorageError
 from job_scout.letters.examples import (
     MAX_BYTES,
     ExampleError,
@@ -93,13 +94,10 @@ def build_api_router() -> APIRouter:
         is built by ``open_vacancy_choices``, which the interview tab calls too:
         one definition, so the two lists cannot drift apart.
         """
-        store = ProfileStore(user_cv_dir(user))
         return {
             "jobs": open_vacancy_choices(user),
-            "profiles": [
-                {"slug": s, "language": store.load(s).language}
-                for s in store.list_profiles()
-            ],
+            "profiles": profile_choices(user),
+            "sources": describe_sources(user),
         }
 
     @router.get("/examples")

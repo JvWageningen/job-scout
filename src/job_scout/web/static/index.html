@@ -90,8 +90,8 @@
                         <label for="letter-job">Vacancy</label><select id="letter-job"></select>
                         <label for="letter-language">Letter language</label>
                         <select id="letter-language"><option value="auto">Automatic — match the vacancy</option><option value="nl">Nederlands</option><option value="en">English</option></select>
-                        <label for="letter-cv">Current CV</label><select id="letter-cv"></select>
-                        <p class="letter-hint">Automatic uses a saved CV in the letter's language. Save any CV Builder changes first.</p>
+                        <label for="letter-cv">CV Builder profile <span class="letter-hint">(optional)</span></label><select id="letter-cv"></select>
+                        <p class="letter-hint">Your own CV file, LinkedIn import and profile are always used. A CV Builder profile is optional: Automatic uses every source you have. Save any CV Builder changes first.</p>
                         <label for="letter-recipient">Recipient <span class="letter-hint">(optional)</span></label>
                         <input id="letter-recipient" maxlength="120" placeholder="Name or hiring team">
                         <label for="letter-notes">What matters to you?</label>
@@ -151,11 +151,11 @@
                         <label for="interview-job">Vacancy</label><select id="interview-job"></select>
                         <label for="interview-language">Language</label>
                         <select id="interview-language"><option value="auto">Automatic — match the vacancy</option><option value="nl">Nederlands</option><option value="en">English</option></select>
-                        <label for="interview-cv">Current CV</label><select id="interview-cv"></select>
-                        <p class="letter-hint">Automatic uses a saved CV in that language. Save any CV Builder changes first.</p>
+                        <label for="interview-cv">CV Builder profile <span class="letter-hint">(optional)</span></label><select id="interview-cv"></select>
+                        <p class="letter-hint">Your own CV file, LinkedIn import and profile are always used. A CV Builder profile is optional: Automatic uses every source you have. Save any CV Builder changes first.</p>
                         <label for="interview-notes">Anything the model should know? <span class="letter-hint">(optional)</span></label>
                         <textarea id="interview-notes" maxlength="2000" rows="5" placeholder="A doubt you want answered, something from an earlier call, why you are leaving your current role, or a subject you want on the table."></textarea>
-                        <p class="letter-hint">Your CV facts, the vacancy, the company research already gathered and your notes go to your configured language model. Nothing new is looked up.</p>
+                        <p class="letter-hint">Your facts, the vacancy, what web search found about the company and your notes go to your configured language model. If the company has not been looked up yet, that happens first and adds some time. Company facts come only from web search results; the model is told not to add any of its own.</p>
                         <div class="letter-actions">
                             <button id="interview-generate" class="btn btn-primary" type="button">Generate questions to ask</button>
                             <button id="interview-answers-generate" class="btn btn-primary" type="button" hidden>Generate questions &amp; draft answers</button>

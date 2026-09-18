@@ -20,8 +20,11 @@ found out by the person sitting opposite you, while you are saying it.
 | **Questions to ask them** | You → employer | Questions grouped by theme, each with why it matters for you and what it was based on. | Vacancy, company research, company review, your CV. |
 | **Questions they may ask you** | Employer → you | Likely questions grouped by what they probe, each with why it is coming, a draft answer, and how much real evidence stands behind it. | The same four, plus your STAR story bank. |
 
-Neither half saves anything, neither researches anything on demand, and running one has
-no effect on the other.
+Neither half saves the questions or answers it writes, and running one has no effect on
+the other. The one thing either half may store is company material: when a vacancy's
+company has not been researched yet, or its review is missing or rests on little
+evidence, it is looked up on the web first and the result is kept for next time (see
+[How the company is looked up](#how-the-company-is-looked-up)).
 
 ## This is not interview prep, and not Document Review
 
@@ -45,8 +48,8 @@ stories whose keywords fit best. No company research, no CV, no draft answers, n
 dashboard, and it exits 1 if your story bank is empty. It is a fast way to ask "which
 of my stories do I need for this posting?".
 
-`interview answers` is the full version: it sees the vacancy *and* the cached company
-research and review *and* your CV Builder profile *and* the story bank, writes the
+`interview answers` is the full version: it sees the vacancy *and* the company research
+and review *and* your CV *and* the story bank, writes the
 answer rather than pointing at a story, marks how much evidence each answer really has,
 and works even with no stories saved. Use it when you have an actual interview.
 
@@ -58,16 +61,16 @@ Both remain supported and neither touches the other's data.
 
 ### What the questions are grounded in
 
-Four sources, all of them material the pipeline already gathered. Nothing is scraped,
-researched or reviewed on demand, so generating questions costs one model call and never
-changes your data.
+Four sources. The vacancy and your CV are used as they are; the company half is looked
+up first when it is missing (see
+[How the company is looked up](#how-the-company-is-looked-up)).
 
 | Source | What it contributes |
 | --- | --- |
 | **The vacancy** | Title, employer, location and the description text (the first 16,000 characters). This is what makes a question specific: a product, a technology, a standard, a stated challenge. |
-| **Company research** | Industry, company size, culture indicators, tech-stack hints, growth signals and research notes, read from the cache for that vacancy. |
-| **Company review** | The work-quality review for that employer, up to a year old: score, summary, pros, cons, employee sentiment, financial health, growth, company age and confidence. |
-| **Your CV** | The factual sections of the selected CV Builder profile — the same view the cover letter writer uses. Contact and personal-detail sections are excluded and stay excluded. |
+| **Company research** | Industry, company size, culture indicators, tech-stack hints, growth signals and research notes for that vacancy, summarised from web search results only. |
+| **Company review** | The work-quality review for that employer, up to a year old: score, summary, pros, cons, employee sentiment, financial health, growth, company age and confidence, summarised from web search results only. |
+| **Your CV** | Everything you have told job-scout about yourself — your own uploaded CV and notes, a CV Builder profile when one holds your real CV, the parsed profile with any LinkedIn import, your profile description and career tracks — the same view the cover letter writer uses. None of them is required on its own; CV Builder's example CV is never used. Contact and personal-detail sections are excluded and stay excluded. |
 
 The cons of a review and the culture indicators of the research are the most valuable
 material here. A question that quietly probes a real reported weakness — asked as "how
@@ -235,15 +238,40 @@ with the result:
 | Reported as | Means | Half |
 | --- | --- | --- |
 | `no vacancy description` | The stored vacancy has no description text. | Both |
-| `no company research yet` | No research is cached for this vacancy, or what is cached is unreadable. | Both |
-| `no company review yet` | No review is cached for this employer within the last year, or it is unreadable. | Both |
+| `no public information found about the company` | The company was searched for and no result named it, or what was found supported no finding. | Both |
+| `company research could not be completed this time` | Results were found but the model call failed or its answer was unusable. Nothing was stored; the next generation tries again. | Both |
+| `no company review yet` | No review is stored for this employer within the last year and none could be written now (no web result names it, or the call failed). | Both |
+| `company review is based on little evidence` | The review rests on fewer than three web sources. Unlike the rows above, it *is* in the prompt, flagged so the model uses it with caution. | Both |
 | `no STAR stories saved yet` | The story bank is empty. | Answers |
 
-The dashboard prints these under the result ("Some grounding was missing: …"), and the
-CLI prints them under *Not seen, so nothing above is based on it* (questions) or *Notes
-— not seen, so nothing above is based on it* (answers). If you want research-grounded
-preparation, run [`company research`](USAGE.md#company-research) and
-[`company-review`](USAGE.md#company-review) first, then generate.
+The dashboard prints the absent ones under the result ("Some grounding was missing: …"),
+and the CLI prints them under *Not seen, so nothing above is based on it* (questions) or
+*Notes — not seen, so nothing above is based on it* (answers). A thin review is not
+absent, so both say it separately: the review rests on little web evidence and was used
+with caution. There is no need to run
+[`company research`](USAGE.md#company-research) or
+[`company-review`](USAGE.md#company-review) first: generating does the same lookups.
+
+### How the company is looked up
+
+Before writing, both halves check what is stored about the company, and fill a gap at
+most once per generation:
+
+- **No usable research** — none stored, or stored research that cites no web source
+  (written from model memory by an older version) — means the company is researched
+  now. Only search results that name the company count; a namesake's page is dropped.
+  The model summarises those snippets and nothing else, a size or growth figure that no
+  snippet prints is cleared, and the snippets are stored with the research so every
+  finding can be checked later. With no relevant result the model is not asked at all.
+- **A review that is missing or rests on fewer than three web sources** is written again
+  from today's search results. How much a review can be trusted is counted from its
+  sources, not taken from the review itself. With no relevant result the model is not
+  asked and nothing is stored; a failed call keeps the stored review as it was.
+- **Both lookups use the `evaluation` routing purpose**, which may point at a different
+  provider than question writing. If research cannot reach that provider, the review is
+  not tried as well, so one unreachable host costs one timeout, not two.
+
+Hiring managers are never looked up here: nothing in either half uses them.
 
 A missing CV is different: it is a hard stop for both halves, not a gap. Save a CV in
 [CV Builder](CV_BUILDER.md) before generating.
@@ -283,7 +311,8 @@ rule, using the same helper — the three features cannot drift apart.
 
 **Prepare applications → Interview Questions**. One tab, two halves, switched with the
 pair of buttons under the heading (or with the left and right arrow keys). A badge beside
-the heading says which half you are in: *You ask the employer* or *They ask you*.
+the heading says which half you are in: *You ask the employer* or *The employer asks
+you*.
 
 1. Select a single user. The tab needs one user, not **all**.
 2. Choose the vacancy. The dropdown offers the vacancies still worth working on —
@@ -293,7 +322,8 @@ the heading says which half you are in: *You ask the employer* or *They ask you*
 3. Choose the language and the CV, or leave both on *Automatic*.
 4. Add anything the model should know, then press the generate button for the half you
    are in: **Generate questions to ask** or **Generate questions & draft answers**. It
-   can take a minute or more.
+   can take a minute or more, and two to four minutes when the company still has to be
+   looked up.
 
 The setup — vacancy, language, CV, notes — is shared, so you can prepare one half and
 then the other without re-entering anything, and switching halves leaves a generated
@@ -333,20 +363,22 @@ on:` where there is one, and the draft answer wrapped to 88 columns. Gaps are pr
 
 ### Privacy
 
-One model call per generation, both routed through the existing `behavioral_questions`
-purpose — the same routing entry interview prep uses, so no new provider setting appears
-and nothing needs configuring. See [LLM providers](LLM_PROVIDERS.md) for per-stage
+One model call writes the questions or answers, routed through the existing
+`behavioral_questions` purpose — the same routing entry interview prep uses, so no new
+provider setting appears and nothing needs configuring. When the company still has to be
+looked up, up to two more calls come first, routed through `evaluation`. See [LLM providers](LLM_PROVIDERS.md) for per-stage
 routing; a local provider keeps this request on your own infrastructure, a hosted one
 receives it.
 
 What that call carries: the vacancy title, employer, location and description; the
-cached company research and review fields listed above; the factual sections of the
-selected CV; your notes; and, for the answers half, your STAR stories. What it does not
-carry: your contact details and personal-detail sections, which `cv_facts` excludes on
-purpose, and anything from another user's data.
+company research and review fields listed above; your CV facts from every source
+listed above; your notes; and, for the answers half, your STAR stories. What it does not
+carry: the contact details and personal-detail sections of a CV Builder profile, which
+`applicant.cv_facts` excludes on purpose, and anything from another user's data.
 
-Nothing is written. Both generators read the database and the CV store and return a
-result; they store no questions and no answers, update no vacancy and start no research.
+The questions and answers are not written anywhere. The only thing either generator
+stores is company research or a company review it has just looked up; it updates no
+vacancy.
 The `/api/interview/*` routes sit behind the dashboard's optional shared bearer token
 like every other `/api/` route — see
 [Authentication](WEB_DASHBOARD.md#authentication).
@@ -357,10 +389,13 @@ Read this before you take a printout into a room.
 
 #### Both halves
 
-- **They are only as good as the company research behind them.** With no research and no
-  review, the model has the vacancy text and your CV and nothing else, and the output
-  gets noticeably more generic. The missing-context line is there so you can see that
-  rather than guess it. Research the company first if the interview matters.
+- **They are only as good as the company research behind them.** When the web has little
+  about the company, the model has the vacancy text and your CV and not much else, and
+  the output gets noticeably more generic. The missing-context line is there so you can
+  see that rather than guess it.
+- **Relevance is matched on the name.** A search result counts when it prints the
+  company name (legal forms such as B.V. ignored) in its title, snippet or address. A
+  different organisation that happens to carry the same name still gets through.
 - **The spread is asked for, not enforced.** No theme may take more than three questions
   and no kind more than four — but nothing in the code rejects a set that clusters.
 - **Only exact repeats are removed.** Two entries differing solely in punctuation or
@@ -370,7 +405,8 @@ Read this before you take a printout into a room.
 - **The review can be up to a year old.** Cached reviews are accepted within that window,
   which is the same window the vacancy list uses, so the preparation sees exactly what
   you see — including when it is stale.
-- **Nothing is saved.** Copy what you want to keep before you regenerate or switch user.
+- **Your questions and answers are not saved.** Copy what you want to keep before you
+  regenerate or switch user.
 
 #### The questions you ask them
 

@@ -321,7 +321,11 @@ def test_both_directions_share_one_context_endpoint(job_id: int) -> None:
 
     body = TestClient(app).get(f"/api/interview/context?user={USER}").json()
     assert [job["id"] for job in body["jobs"]] == [job_id]
-    assert body["profiles"] == [{"slug": "default", "language": "NL"}]
+    assert body["profiles"] == [
+        {"slug": "default", "language": "NL", "example": False, "empty": False}
+    ]
+    assert "used" in body["sources"]
+    assert "missing" in body["sources"]
 
 
 def test_an_unusable_request_is_the_callers_to_fix(

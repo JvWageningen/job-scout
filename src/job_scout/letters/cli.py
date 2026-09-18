@@ -75,7 +75,11 @@ def learn_style(name: str | None) -> None:
 @click.argument("job_id", type=int)
 @click.option("--user", "name")
 @click.option("--language", type=click.Choice(["auto", "nl", "en"]), default="auto")
-@click.option("--cv", "cv_slug")
+@click.option(
+    "--cv",
+    "cv_slug",
+    help="CV Builder profile to prefer; your own CV and profile are always used",
+)
 @click.option("--recipient", default="")
 @click.option("--notes", default="")
 @click.option(
@@ -117,6 +121,7 @@ def generate(
     except (ValueError, OSError, StorageError, LLMError) as exc:
         raise click.ClickException(str(exc)) from exc
     click.echo(draft.as_plain_text())
+    click.echo(f"Written from: {', '.join(draft.sources_used)}", err=True)
     for warning in draft.warnings:
         click.echo(f"Review: {warning.message}", err=True)
 

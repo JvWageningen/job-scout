@@ -250,7 +250,22 @@ def test_the_context_offers_vacancies_best_match_first(job_id: int) -> None:
     assert [job["fit_score"] for job in body["jobs"]] == [93, 88, 41]
     assert body["jobs"][0]["company"] == COMPANY
     assert body["jobs"][0]["status"] == "matched"
-    assert body["profiles"] == [{"slug": "default", "language": "NL"}]
+    assert body["profiles"] == [
+        {"slug": "default", "language": "NL", "example": False, "empty": False}
+    ]
+
+
+def test_the_context_describes_sources_exactly_as_the_letter_tab_does(
+    job_id: int,
+) -> None:
+    """One source summary for both tabs, so they cannot tell different stories."""
+    client = TestClient(create_app())
+    interview = client.get(f"/api/interview/context?user={USER}").json()
+    letters = client.get(f"/api/letters/context?user={USER}").json()
+
+    assert interview["sources"]["used"][0] == "CV Builder (default)"
+    assert interview["sources"] == letters["sources"]
+    assert interview["profiles"] == letters["profiles"]
 
 
 @pytest.mark.parametrize(
@@ -402,3 +417,21 @@ def test_both_endpoints_sit_behind_the_dashboard_token(
             ).status_code
             == 200
         )
+
+
+def test_the_command_does_not_call_a_thin_review_unseen(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A thin review was in the prompt; only absent sources are "not seen"."""
+    from job_scout.cli import _print_interview_questions
+    from job_scout.interview_questions import NO_PUBLIC_INFO, THIN_REVIEW
+
+    result = question_set(7).model_copy(
+        update={"missing_context": [NO_PUBLIC_INFO, THIN_REVIEW]}
+    )
+    _print_interview_questions(result)
+    printed = capsys.readouterr().out
+    unseen = printed.split("Not seen, so nothing above is based on it:")[1]
+    assert NO_PUBLIC_INFO in unseen
+    assert THIN_REVIEW not in printed
+    assert "rests on little web evidence" in printed

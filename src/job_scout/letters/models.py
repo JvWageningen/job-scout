@@ -67,6 +67,8 @@ class WarningKind(StrEnum):
     NO_STYLE_GUIDE = "no_style_guide"
     NO_EXAMPLES = "no_examples"
     CV_FALLBACK = "cv_fallback"
+    NO_NAME = "no_name"
+    SOURCES = "sources"
 
 
 class LetterWarning(BaseModel):
@@ -96,6 +98,7 @@ class Letter(BaseModel):
     signature: str = Field(max_length=500)
     warnings: list[LetterWarning] = Field(default_factory=list)
     examples_used: list[str] = Field(default_factory=list)
+    sources_used: list[str] = Field(default_factory=list)
     generated_at: datetime
     edited: bool = False
 

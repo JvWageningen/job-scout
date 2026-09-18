@@ -183,8 +183,9 @@ sent anywhere — the critique is generated and displayed.
 
 ### Cover Letter Writer
 
-Draft a Dutch or English motivational letter from a vacancy and a saved CV Builder
-profile. Add private example letters and an editable style guide, then review the
+Draft a Dutch or English motivational letter from a vacancy and everything you have
+told job-scout about yourself — your own CV, CV Builder, a LinkedIn import, your profile
+and STAR stories; none of them is required on its own. Add private example letters and an editable style guide, then review the
 wording, save separate language versions, and export PDF or text. Generation does
 not submit applications. See [Cover Letter Writer](LETTER_WRITER.md) for the complete
 workflow, privacy details and review limitations.
@@ -198,11 +199,11 @@ which half you are in. The setup is shared, so preparing one half and then the o
 costs nothing, and switching leaves a result already on screen standing.
 
 **Questions to ask them** is for the moment the interviewer asks whether you have any.
-The questions are built from the vacancy text, the company research and review already
-cached for it, and the factual sections of your CV, and arrive grouped by theme — the
-role, the team, the company, growth and future, ways of working, and what is worth
-probing — each with one line on why it matters for you and one naming what it was based
-on.
+The questions are built from the vacancy text, the company research and review (looked
+up on the web first when they are missing), and the factual sections of your CV, and
+arrive grouped by theme — the role, the team, the company, growth and future, ways of
+working, and what is worth probing — each with one line on why it matters for you and
+one naming what it was based on.
 
 **Questions they may ask you** predicts what this interviewer is likely to put to you
 and drafts an answer for each. They arrive grouped by what the question probes —

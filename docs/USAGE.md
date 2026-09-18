@@ -440,10 +440,14 @@ this command is for re-running it on demand.
 uv run job-scout company-review "ASML" --user alex --refresh
 ```
 
-Returns a work-quality review for a named company: a 0–100 work score with a confidence
-level, a summary, pros, cons, sentiment, financial health, growth and founding year, built
-from public web search plus the LLM. The result is cached in the user's database, so the
-second call is free.
+Returns a work-quality review for a named company: a summary, pros, cons, sentiment,
+financial health, growth and founding year, and a 0–100 work score when the search
+results report how employees rate it. Only results that name the company are used, and
+the LLM may summarise those and nothing else. The confidence level is counted from the
+number of distinct web sources: fewer than three is `low`, six or more is `high`. The
+result is cached in the user's database, so the second call is free. When no result
+names the company, or the model call fails, the command says so, exits 1 and stores
+nothing.
 
 | Argument / option | Default | Description |
 |---|---|---|
@@ -463,8 +467,11 @@ uv run job-scout company research 42 --user alex
 
 Different from `company-review`: this one is about a specific job's employer and how to get
 in. It researches industry, size, culture indicators, tech-stack hints, growth signals and
-notes, saves the JSON, and prints suggested hiring managers with role, email, LinkedIn URL,
-confidence and reasoning.
+notes from web search results that name the company, saves them with the pages they came
+from, and prints the sources. A size or growth figure no result prints is dropped. It then
+lists hiring managers — only people a search result actually names, each with the page
+that names them; an email or LinkedIn URL is shown only when that page prints it. When no
+result names the company it says no public web information was found and stores nothing.
 
 | Argument / option | Default | Description |
 |---|---|---|
@@ -716,24 +723,25 @@ uv run job-scout interview questions 42 --user alex --notes "Second round with t
 
 The inverse of [`interview answers`](#interview-answers): instead of preparing what the
 employer will ask you, this writes the questions *you* ask *them*. It reads the vacancy,
-the cached company research and review and a saved CV Builder profile — not the parsed CV
-PDF the rest of this section uses — and prints the questions grouped by theme, each with
+the company research and review and your CV facts from every source — your own CV,
+CV Builder, the parsed profile with any LinkedIn import and your profile — and prints the questions grouped by theme, each with
 one line on why it matters for you and one naming the source it came from. How many are
 asked for follows the grounding: 8 to 12 with both research and a review, 6 to 9 with
 one of them, 4 to 6 with neither.
 
-Nothing is researched on demand. Whatever grounding is absent is listed at the end under
-*Not seen, so nothing above is based on it* rather than guessed at, so run
-[`company research`](#company-research) and [`company-review`](#company-review) first if
-you want research-backed questions. Salary, holiday and benefit questions are omitted
-unless your `--notes` raise them. Nothing is saved.
+When the company has not been researched yet, or its review is missing or rests on fewer
+than three web sources, it is looked up on the web first and the result is stored (see
+[How the company is looked up](INTERVIEW_QUESTIONS.md#how-the-company-is-looked-up)).
+Whatever grounding is still absent is listed at the end under *Not seen, so nothing above
+is based on it* rather than guessed at. Salary, holiday and benefit questions are omitted
+unless your `--notes` raise them. The questions themselves are not saved.
 
 | Argument / option | Default | Description |
 |---|---|---|
 | `JOB_ID` | required | Numeric job id |
 | `--user TEXT` | the only user | User preparing |
 | `--language [auto\|nl\|en]` | `auto` | Language to write the questions in; `auto` reads it from the vacancy |
-| `--cv TEXT` | matched to the language | CV Builder profile slug to ground the questions in |
+| `--cv TEXT` | matched to the language | CV Builder profile to prefer; your own CV and profile are always used |
 | `--notes TEXT` | empty | Context only you know, e.g. what you want to raise |
 
 Exits 1 when the vacancy, the user or a usable CV profile is missing, or when the model
@@ -750,8 +758,8 @@ uv run job-scout interview answers 42 --user alex --notes "Leaving because the t
 
 The mirror of [`interview questions`](#interview-questions): instead of what you ask
 them, this predicts what the interviewer is likely to ask *you* and drafts the answer you
-could give. It reads the same material — the vacancy, the cached company research and
-review, and a saved CV Builder profile — plus your [STAR story
+could give. It reads the same material — the vacancy, the company research and
+review, and your CV facts from every source — plus your [STAR story
 bank](#profile-star-story), and prints each question with the kind it belongs to, why it
 is likely to come up, how much real evidence stands behind the answer, what the answer
 draws on, and the draft itself.
@@ -762,17 +770,17 @@ marked `!! GAP`, with a count at the end — those are the ones to rehearse. An 
 bank is allowed, unlike [`profile interview-prep`](#profile-interview-prep): the answers
 are then built from CV facts alone, and the missing bank is reported.
 
-Nothing is researched on demand and nothing is saved. Absent grounding is listed at the
-end under *Notes — not seen, so nothing above is based on it*, so run
-[`company research`](#company-research) and [`company-review`](#company-review) first if
-you want research-backed questions.
+The company is looked up first in the same way as for
+[`interview questions`](#interview-questions), and the answers themselves are not saved.
+Absent grounding is listed at the end under *Notes — not seen, so nothing above is based
+on it*.
 
 | Argument / option | Default | Description |
 |---|---|---|
 | `JOB_ID` | required | Numeric job id |
 | `--user TEXT` | the only user | User preparing |
 | `--language [auto\|nl\|en]` | `auto` | Language for both the questions and the answers; `auto` reads it from the vacancy |
-| `--cv TEXT` | matched to the language | CV Builder profile slug to ground the answers in |
+| `--cv TEXT` | matched to the language | CV Builder profile to prefer; your own CV and profile are always used |
 | `--notes TEXT` | empty | Context only you know, e.g. why you are leaving |
 
 Exits 1 when the vacancy, the user or a usable CV profile is missing, or when the model
@@ -1187,6 +1195,7 @@ Related reading: [CONFIGURATION.md](CONFIGURATION.md) ·
 
 ## Motivational letters (`letter`)
 
-The `letter` group drafts from saved CV Builder profiles, imports private style
+The `letter` group drafts from every applicant source (your own CV, CV Builder,
+a LinkedIn import, your profile and STAR stories), imports private style
 examples, learns a style guide and exports letters. See the [Letter Writer CLI
 guide](LETTER_WRITER.md#cli) for commands and saving behaviour.

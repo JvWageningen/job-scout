@@ -29,6 +29,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import FileResponse, HTMLResponse, JSONResponse, Response
 
 from job_scout import feedback, ntfy_topic, progress
+from job_scout.applicant import describe_sources, profile_choices
 from job_scout.config import (
     GLOBAL_FIELDS,
     SECRET_FIELDS,
@@ -78,6 +79,7 @@ from job_scout.models import (
 )
 from job_scout.notify.factory import build_raw_notifier_for_test
 from job_scout.scheduler import check_schedule_status, install_schedule, remove_schedule
+from job_scout.web.cv_import import build_cv_import_router
 from job_scout.web.vacancies import build_vacancies_router, open_vacancy_choices
 from job_scout.weekly_schedule import next_run_after, parse_slots
 from job_scout.wol import normalise_mac, wake_and_wait
@@ -504,28 +506,28 @@ def build_interview_router() -> APIRouter:
 
     @router.get("/context")
     def context(user: InterviewUser) -> dict[str, object]:
-        """Offer the same vacancies and CVs the letter writer offers.
+        """Offer the same vacancies, CVs and source summary the letter writer offers.
 
-        Both tabs call ``open_vacancy_choices``, so an interview can only ever be
-        prepared for a vacancy that is still live, and the two dropdowns cannot
-        drift apart.
+        Both tabs call ``open_vacancy_choices``, ``profile_choices`` and
+        ``describe_sources``, so an interview can only ever be prepared for a
+        vacancy that is still live, and the two setups cannot drift apart.
         """
-        store = ProfileStore(user_cv_dir(user))
         return {
             "jobs": open_vacancy_choices(user),
-            "profiles": [
-                {"slug": s, "language": store.load(s).language}
-                for s in store.list_profiles()
-            ],
+            "profiles": profile_choices(user),
+            "sources": describe_sources(user),
         }
 
     @router.post("/questions")
     def questions(body: InterviewRequest, user: InterviewUser) -> InterviewQuestionSet:
         """Write the questions this candidate should ask this employer.
 
-        Read-only with respect to the pipeline: it uses the vacancy, the cached
-        company research and review and the saved CV as they are, and reports
-        whatever is missing instead of researching it now.
+        Uses the vacancy, the applicant's facts from all their sources and the
+        company research and review. When no usable research is stored the
+        company is researched from web evidence first, and a missing or thinly
+        sourced review is written again once; what is written is stored, so this
+        can take a few minutes. Whatever still cannot be found is reported in
+        ``missing_context`` rather than invented.
         """
         return generate_interview_questions(
             user,
@@ -540,10 +542,11 @@ def build_interview_router() -> APIRouter:
     def answers(body: InterviewRequest, user: InterviewUser) -> InterviewAnswerSet:
         """Predict this interviewer's questions and draft this candidate's answers.
 
-        Read-only in the same way, and grounded in the same saved material plus
-        the applicant's own STAR stories: an answer that cites something the
-        candidate never did is found out in the room, so nothing is invented and
-        what is missing comes back in ``missing_context``.
+        Looks the company up in the same way as ``/questions`` and is grounded
+        in the same material plus the applicant's own STAR stories: an answer
+        that cites something the candidate never did is found out in the room,
+        so nothing is invented and what is missing comes back in
+        ``missing_context``.
         """
         return generate_interview_answers(
             user,
@@ -688,6 +691,9 @@ def create_app() -> FastAPI:
         return ProfileStore(user_cv_dir(_require_user(user)))
 
     app.include_router(build_cv_api_router(), prefix="/api/cv")
+    # Import needs the user's settings and LLM, which the vendored router
+    # does not have; like tailoring it is declared here, under the same prefix.
+    app.include_router(build_cv_import_router(), prefix="/api/cv")
     app.include_router(build_letters_api_router(), prefix="/api/letters")
     app.include_router(build_interview_router(), prefix="/api/interview")
     app.include_router(build_vacancies_router())
@@ -3229,7 +3235,8 @@ def create_app() -> FastAPI:
             Dictionary with company research data.
 
         Raises:
-            HTTPException: If user not provided or research fails.
+            HTTPException: 400/404 for a bad user or job, 404 when no public web
+                information names the company, 502 when the model failed.
         """
         if not user:
             raise HTTPException(status_code=400, detail="User is required")
@@ -3237,7 +3244,10 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail=f"User '{user}' not found")
 
         try:
-            from job_scout.company_research import research_company  # noqa: PLC0415
+            from job_scout.company_research import (  # noqa: PLC0415
+                CompanyResearchError,
+                research_company,
+            )
             from job_scout.config import (  # noqa: PLC0415
                 build_effective_config,
                 user_db_path,
@@ -3251,20 +3261,25 @@ def create_app() -> FastAPI:
             if not job:
                 raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
 
-            research = research_company(job, config)
-            if not research:
+            try:
+                research = research_company(job, config, suggest_managers=True)
+            except (CompanyResearchError, LLMError) as exc:
+                logger.warning(f"Company research failed for job {job_id}: {exc}")
                 raise HTTPException(
-                    status_code=500,
-                    detail="Company research failed or timed out",
+                    status_code=502,
+                    detail="Company research failed. Check LLM settings and retry.",
+                ) from exc
+            if research is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"No public web information about {job.company} "
+                    "was found; nothing was stored.",
                 )
 
-            # Save to database
-            import json
-
-            research_json = json.dumps(research.model_dump())
-            db.save_company_research(job_id, research_json)
-
-            return research.model_dump()
+            # model_dump_json / mode="json": the timestamp is a datetime, which
+            # json.dumps cannot serialise.
+            db.save_company_research(job_id, research.model_dump_json())
+            return research.model_dump(mode="json")
         except HTTPException:
             raise
         except Exception as exc:
@@ -3292,8 +3307,6 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail=f"User '{user}' not found")
 
         try:
-            import json
-
             from job_scout.config import user_db_path  # noqa: PLC0415
             from job_scout.database import Database  # noqa: PLC0415
             from job_scout.models import CompanyResearch  # noqa: PLC0415
@@ -3311,8 +3324,8 @@ def create_app() -> FastAPI:
                     detail=f"No research found for job {job_id}",
                 )
 
-            research = CompanyResearch.model_validate(json.loads(research_json))
-            return research.model_dump()
+            research = CompanyResearch.model_validate_json(research_json)
+            return research.model_dump(mode="json")
         except HTTPException:
             raise
         except Exception as exc:

@@ -88,6 +88,17 @@ class HiringManagerSuggestion(BaseModel):
     linkedin_url: str | None = None
     confidence: int = Field(default=50, ge=0, le=100)
     reasoning: str = ""
+    # The search result that names this person. Defaults to None so suggestions
+    # stored before this field existed still load.
+    source_url: str | None = None
+
+
+class ResearchEvidence(BaseModel):
+    """One web-search result a piece of company research was summarised from."""
+
+    url: str
+    title: str = ""
+    snippet: str = ""
 
 
 class CompanyResearch(BaseModel):
@@ -102,6 +113,12 @@ class CompanyResearch(BaseModel):
     research_notes: str = ""
     hiring_managers: list[HiringManagerSuggestion] = Field(default_factory=list)
     research_timestamp: datetime | None = None
+    # URLs of the web-search results the research was summarised from. Defaults
+    # to empty so research stored before this field existed still loads.
+    sources: list[str] = Field(default_factory=list)
+    # The results themselves, as the model saw them, so every finding can be
+    # checked against what was actually read. Empty for older stored research.
+    evidence: list[ResearchEvidence] = Field(default_factory=list)
 
 
 class CompanyReview(BaseModel):

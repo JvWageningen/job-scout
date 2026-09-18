@@ -26,6 +26,9 @@
         gap: 'Gap — rehearse this',
     };
     const NO_USER = 'Select a single user to prepare interview questions.';
+    // Must match THIN_REVIEW in interview_questions.py. A thin review is still
+    // in the prompt, so it must not be described as absent like the others.
+    const THIN_REVIEW = 'company review is based on little evidence';
     let epoch = 0, loadedUser = null, latest = null, keepInterviewTab = false;
     // The answer half keeps its set and the textareas holding it, because the
     // user's edits live in the DOM and Copy all must take them, not the draft.
@@ -88,7 +91,7 @@
         });
         el('ask-panel').hidden = !ask; el('answer-panel').hidden = ask;
         el('generate').hidden = !ask; el('answers-generate').hidden = ask;
-        el('badge').textContent = ask ? 'You ask the employer' : 'They ask you';
+        el('badge').textContent = ask ? 'You ask the employer' : 'The employer asks you';
     }
     // The server already sorts on fit, but the dropdown is only useful if the best
     // match is on top, so the page does not depend on that ordering silently.
@@ -98,8 +101,24 @@
         el('job').replaceChildren(new Option('Choose a vacancy', ''));
         byScore(data.jobs).forEach(j => el('job').add(new Option(
             `${j.title} — ${j.company}${j.fit_score == null ? '' : ` · ${j.fit_score}/100`}`, j.id)));
-        el('cv').replaceChildren(new Option('Automatic — match the chosen language', ''));
-        data.profiles.forEach(p => el('cv').add(new Option(`${p.slug} (${p.language})`, p.slug)));
+        fillCvs(data.profiles);
+    }
+    // Same as the letter tab: CV Builder is one source among several, so a
+    // profile is a preference, not a requirement. The example CV and empty
+    // profiles stay visible but cannot be chosen, so it is clear why they are
+    // not used.
+    function fillCvs(profiles) {
+        el('cv').replaceChildren(new Option('Automatic — all your sources', ''));
+        profiles.forEach(p => {
+            const skip = p.example ? ' — example CV, not used' : p.empty ? ' — empty, not used' : '';
+            const option = new Option(`CV Builder: ${p.slug} (${p.language})${skip}`, p.slug);
+            option.disabled = Boolean(skip);
+            el('cv').add(option);
+        });
+    }
+    function sourcesLine(sources) {
+        const used = `Using ${sources.used.join(', ')}.`;
+        return sources.missing.length ? `${used} Not used: ${sources.missing.join('; ')}.` : used;
     }
     async function load() {
         reset();
@@ -109,10 +128,24 @@
             fresh(ctx);
             choices(data);
             loadedUser = ctx.user;
-            status(!data.profiles.length ? 'Save a current CV in CV Builder to get started.' :
+            status(!data.sources.used.length ? data.sources.missing.join(' ') :
                 !data.jobs.length ? 'No open vacancies yet. Run your search first.' :
-                'Ready. Choose the vacancy you are being interviewed for.');
+                `Ready. Choose the vacancy you are being interviewed for. ${sourcesLine(data.sources)}`);
         });
+    }
+    // Where the applicant's own facts came from, so a surprising answer can be
+    // traced to the CV, the import or the profile that said it.
+    const factsLine = set => set.sources_used && set.sources_used.length
+        ? ` Your facts came from: ${set.sources_used.join(', ')}.` : '';
+    // A missing source was not in the prompt at all; a thin review was, with a
+    // warning. Saying "written without it" about the second would be false.
+    function missingLine(missing, what) {
+        const all = missing || [];
+        const absent = all.filter(m => m !== THIN_REVIEW);
+        return [
+            absent.length ? `Some grounding was missing: ${absent.join('; ')}. These ${what} were written without it, and nothing about it was assumed.` : '',
+            all.includes(THIN_REVIEW) ? `The company review rests on little web evidence, so it was used with caution.` : '',
+        ].filter(Boolean).join(' ');
     }
     const label = (value, names) => names[value] ||
         String(value).replace(/_/g, ' ').replace(/^./, c => c.toUpperCase());
@@ -157,10 +190,8 @@
             block.append(heading, ol);
             el('themes').append(block);
         });
-        el('source').textContent = `Vacancy #${set.job_id} · ${set.company} · ${String(set.language).toUpperCase()} · ${set.questions.length} questions`;
-        el('missing').textContent = set.missing_context && set.missing_context.length
-            ? `Some grounding was missing: ${set.missing_context.join('; ')}. These questions were written without it, and nothing about it was assumed.`
-            : '';
+        el('source').textContent = `Vacancy #${set.job_id} · ${set.company} · ${String(set.language).toUpperCase()} · ${set.questions.length} questions.${factsLine(set)}`;
+        el('missing').textContent = missingLine(set.missing_context, 'questions');
         el('results').hidden = false; el('empty').hidden = true;
     }
     function plainText(set) {
@@ -223,10 +254,8 @@
             el('answers-list').append(block);
         });
         const gaps = set.questions.filter(q => q.footing === 'gap').length;
-        el('answers-source').textContent = `Vacancy #${set.job_id} · ${set.company} · ${String(set.language).toUpperCase()} · ${set.questions.length} questions · ${gaps} marked as a gap`;
-        el('answers-missing').textContent = set.missing_context && set.missing_context.length
-            ? `Some grounding was missing: ${set.missing_context.join('; ')}. These answers were written without it, and nothing about it was assumed.`
-            : '';
+        el('answers-source').textContent = `Vacancy #${set.job_id} · ${set.company} · ${String(set.language).toUpperCase()} · ${set.questions.length} questions · ${gaps} marked as a gap.${factsLine(set)}`;
+        el('answers-missing').textContent = missingLine(set.missing_context, 'answers');
         el('answers-results').hidden = false; el('answers-empty').hidden = true;
     }
     // What is copied is what is on screen: the user's edits, not the draft.
@@ -299,7 +328,7 @@
                 next.focus();
             };
         });
-        el('generate').onclick = () => run('Writing your questions… This can take a minute or more.', async ctx => {
+        el('generate').onclick = () => run('Writing your questions… If the company has not been researched yet, it is looked up on the web first, so this can take two to four minutes.', async ctx => {
             const set = await (await api('/questions', ctx, json('POST', request()))).json();
             fresh(ctx); render(set);
             status('Your questions are ready. Read them before you use them, and drop any that no longer fit.');
@@ -314,7 +343,7 @@
                 + 'Generating again replaces every draft and your edits are lost. Continue?')) {
                 return;
             }
-            run('Predicting their questions and drafting your answers… This can take a minute or more.', async ctx => {
+            run('Predicting their questions and drafting your answers… If the company has not been researched yet, it is looked up on the web first, so this can take two to four minutes.', async ctx => {
                 const set = await (await api('/answers', ctx, json('POST', request()))).json();
                 fresh(ctx); renderAnswers(set);
                 status('Your draft answers are ready. Rewrite each one in your own words, starting with the ones marked as a gap.');

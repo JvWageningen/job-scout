@@ -75,14 +75,29 @@
             el('job').add(new Option('Choose a vacancy', ''));
             data.jobs.forEach(j => el('job').add(new Option(
                 `${j.title} — ${j.company}${j.fit_score == null ? '' : ` · ${j.fit_score}/100`}`, j.id)));
-            el('cv').add(new Option('Automatic — match the letter language', ''));
-            data.profiles.forEach(p => el('cv').add(new Option(`${p.slug} (${p.language})`, p.slug)));
+            fillCvs(data.profiles);
             el('guide').value = style.markdown;
             loadedUser = ctx.user;
-            status(!data.profiles.length ? 'Save a current CV in CV Builder to get started.' :
+            status(!data.sources.used.length ? data.sources.missing.join(' ') :
                 !data.jobs.length ? 'No open vacancies yet. Run your search first.' :
-                'Ready. Choose a vacancy and a language.');
+                `Ready. Choose a vacancy and a language. ${sourcesLine(data.sources)}`);
         });
+    }
+    // CV Builder is one source among several, so a profile is a preference, not
+    // a requirement. The example CV and empty profiles stay visible but cannot
+    // be chosen, so it is clear why they are not used.
+    function fillCvs(profiles) {
+        el('cv').replaceChildren(new Option('Automatic — all your sources', ''));
+        profiles.forEach(p => {
+            const skip = p.example ? ' — example CV, not used' : p.empty ? ' — empty, not used' : '';
+            const option = new Option(`CV Builder: ${p.slug} (${p.language})${skip}`, p.slug);
+            option.disabled = Boolean(skip);
+            el('cv').add(option);
+        });
+    }
+    function sourcesLine(sources) {
+        const used = `Using ${sources.used.join(', ')}.`;
+        return sources.missing.length ? `${used} Not used: ${sources.missing.join('; ')}.` : used;
     }
     function editedDraft() {
         if (!draft) throw new Error('Generate or load a letter first.');
@@ -101,7 +116,7 @@
         fields.forEach(key => { el(key).value = letter[key]; });
         el('body').value = letter.paragraphs.join('\n\n');
         el('editor').hidden = false; el('empty').hidden = true;
-        el('source').textContent = `Vacancy #${letter.job_id} · ${letter.language.toUpperCase()} · CV: ${letter.cv_slug} · ${letter.examples_used.length} style examples`;
+        el('source').textContent = `Vacancy #${letter.job_id} · ${letter.language.toUpperCase()} · Sources: ${(letter.sources_used || []).join(', ') || letter.cv_slug || '—'} · ${letter.examples_used.length} style examples`;
         el('warnings').replaceChildren();
         letter.warnings.forEach(w => { const li = document.createElement('li'); li.textContent = w.message; el('warnings').append(li); });
         count();
@@ -145,8 +160,7 @@
             el('job').replaceChildren(new Option('Choose a vacancy', ''));
             data.jobs.forEach(j => el('job').add(new Option(
                 `${j.title} — ${j.company}${j.fit_score == null ? '' : ` · ${j.fit_score}/100`}`, j.id)));
-            el('cv').replaceChildren(new Option('Automatic — match the letter language', ''));
-            data.profiles.forEach(p => el('cv').add(new Option(`${p.slug} (${p.language})`, p.slug)));
+            fillCvs(data.profiles);
             el('job').value = selectedJob; el('cv').value = selectedCv;
             if (el('cv').selectedIndex < 0) el('cv').selectedIndex = 0;
             status('Vacancies and CVs refreshed. Your editor contents are unchanged.');

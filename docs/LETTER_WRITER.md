@@ -1,18 +1,22 @@
 # Cover letter writer
 
-Write a Dutch or English letter from a saved CV Builder profile and a vacancy.
-Your previous letters teach the writer your voice; the current CV supplies your
-experience. The result is an editable draft, ready for your review.
+Write a Dutch or English letter from a vacancy and everything you have told
+job-scout about yourself: your own CV, CV Builder, a LinkedIn import, your profile and
+your STAR stories. Your previous letters teach the writer your voice. The result is an
+editable draft, ready for your review.
 
 ## In the dashboard
 
-1. Select one user and save their up-to-date CV under **CV Builder**.
+1. Select one user and make sure job-scout has their CV: upload it under
+   **Profile & Filters**, keep it in **CV Builder**, or both. Either is enough; see
+   [Where your facts come from](#where-your-facts-come-from).
 2. Open **Cover Letter Writer**, or click **Write cover letter** on a vacancy card.
-3. Choose the vacancy, language and CV. **Automatic** estimates Dutch or English
-   from the vacancy text; select a language explicitly for mixed-language listings.
-   Automatic CV selection prefers `nederlands` for Dutch and `default` for English,
-   then another saved profile in that language. If none matches, it uses an
-   available CV and flags the fallback. You can always choose a profile yourself.
+3. Choose the vacancy, language and CV Builder profile. **Automatic** estimates
+   Dutch or English from the vacancy text; select a language explicitly for
+   mixed-language listings. **Automatic — all your sources** uses every source and,
+   from CV Builder, prefers `nederlands` for Dutch and `default` for English, then
+   another real profile in that language, flagging a profile in the other language.
+   Choosing a profile yourself only changes which CV Builder profile is used.
 4. Optionally name the recipient and add a specific reason for applying, a prior
    conversation, or something you want to discuss. Notes are treated as facts you
    supply, so include only things that are true.
@@ -23,11 +27,42 @@ experience. The result is an editable draft, ready for your review.
    that language's previous version. To retrieve it, select Dutch or English and
    click **Load saved**. Generation alone does not overwrite a saved draft.
 7. Download PDF or text. Both include the editor's current changes, including
-   unsaved ones. PDF uses the selected CV's current colours, fonts and contact
-   details. Long letters flow onto further pages instead of being clipped.
+   unsaved ones. PDF uses the CV Builder profile's colours and fonts when one was
+   used, and the default theme otherwise; contact details come from the same
+   sources as the letter. Long letters flow onto further pages instead of being
+   clipped.
 
 The writer does not send applications or change a vacancy's workflow status.
 CV edits made after drafting apply to future generations, not the existing body.
+
+## Where your facts come from
+
+The letter draws on everything you have told job-scout about yourself. None of it is
+required on its own, and each source is labelled in the prompt so the writer can weigh
+overlapping or conflicting claims:
+
+| Source | Where you set it |
+| --- | --- |
+| Your own CV file | **Profile & Filters** → **Upload CV** (a PDF you made yourself is fine) |
+| Extra experience notes | **Profile & Filters**, next to the CV |
+| CV Builder profile | **CV Builder**, when a profile holds your real CV |
+| Parsed profile, including a LinkedIn import | Built from your CV; `profile import-linkedin` adds to it |
+| Profile description and career tracks | **Profile & Filters** — used for motivation, never as evidence of experience |
+| STAR stories | `profile star-story` |
+
+When two sources disagree about a date or about which job is current, the most
+recent information wins and the conflicting claims are not combined. The CV list in
+the tab only chooses which CV Builder profile to prefer; **Automatic — all your
+sources** uses every source. A CV Builder profile that is empty, or that still holds
+the example CV an older version created, is listed but cannot be chosen, and is
+never used: the letter would otherwise describe someone else's career. The letter
+says which sources it was written from, and names anything it skipped.
+
+The signature, place and PDF contact details come from a CV Builder profile when one
+holds your real CV. Otherwise the name comes from your CV file's name or its text,
+the place from your home address, and the email, mobile number and LinkedIn address
+from your own CV. A detail no source states is left empty with a warning to fill it
+in, never guessed.
 
 ## Teach it your writing style
 
@@ -102,6 +137,9 @@ warnings; saving requires `--save`. `--pdf` exports the generated text. The CLI'
 `learn-style` command saves its result immediately; the dashboard offers a review
 step before saving. Use `--help` on a command for its options.
 
-The older `profile generate-cover-letter` command remains available for workflows
-based on parsed CV PDFs. The new `letter` commands and Cover Letter Writer tab use the
-structured, saved CV Builder profile.
+`--cv` names the CV Builder profile to prefer; your own CV and profile are used
+either way. The command prints which sources the letter was written from.
+
+The older `profile generate-cover-letter` command remains available. The `letter`
+commands and the Cover Letter Writer tab use every source listed under
+[Where your facts come from](#where-your-facts-come-from).

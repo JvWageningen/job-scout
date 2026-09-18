@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterator
 from datetime import date
 from pathlib import Path
@@ -18,11 +19,21 @@ from job_scout.cv.storage import ProfileStore
 from job_scout.web.app import create_app as create_dashboard
 from tests.cv.conftest import make_image
 
-# The seeded profiles are the bundled sample, so the identity the API reports
-# back is whatever sample.py ships. Read it from there rather than repeating it:
-# these tests are about the plumbing, and a change of sample person must not
-# read as an API regression.
+# The example CV's person. New profiles start empty, so this name must never
+# appear in one; the download-name tests still use the example as a document.
 SAMPLE_NAME = sample_cv("EN").full_name
+
+
+def _pdf_text(payload: bytes) -> str:
+    """Extract a rendered PDF's text, upper-cased and without spacing.
+
+    The name is drawn letter-spaced and in capitals, so it is only comparable
+    once case and whitespace are gone.
+    """
+    with pymupdf.open(stream=payload, filetype="pdf") as document:
+        text = "".join(page.get_text() for page in document)
+    return "".join(text.split()).upper()
+
 
 # The dashboard fixture's users. Two of them, because the mounted API is
 # multi-user and one user's profiles must never appear in another's list.
@@ -93,18 +104,24 @@ def test_meta_describes_the_vocabulary(client: TestClient) -> None:
     assert body["theme_defaults"]["sidebar_bg"] == "#0B3D2C"
 
 
-def test_first_listing_seeds_both_language_profiles(client: TestClient) -> None:
+def test_first_listing_creates_both_language_profiles_empty(
+    client: TestClient,
+) -> None:
+    """Starter profiles hold nobody's career: the preview shows placeholders."""
     profiles = client.get("/api/profiles").json()
     assert [p["slug"] for p in profiles] == ["default", "nederlands"]
-    assert all(p["full_name"] == SAMPLE_NAME for p in profiles)
+    assert all(p["full_name"] == "" for p in profiles)
+    dutch = client.get("/api/profiles/nederlands").json()
     assert client.get("/api/profiles/default").json()["language"] == "EN"
-    assert client.get("/api/profiles/nederlands").json()["language"] == "NL"
+    assert dutch["language"] == "NL"
+    assert "Werkervaring" in [s["title"] for s in dutch["main"]]
+    assert SAMPLE_NAME not in json.dumps(dutch)
 
 
 def test_get_profile_returns_the_document(client: TestClient) -> None:
     client.get("/api/profiles")
     body = client.get("/api/profiles/default").json()
-    assert body["full_name"] == SAMPLE_NAME
+    assert body["full_name"] == ""
     assert any(section["kind"] == "experience" for section in body["main"])
 
 
@@ -143,13 +160,33 @@ def test_create_blank_profile(client: TestClient) -> None:
     assert doc["main"][0]["kind"] == "text"
 
 
-def test_create_seeded_profile(client: TestClient) -> None:
+def test_a_new_profile_never_starts_from_the_example(client: TestClient) -> None:
+    """The example option is gone; an old client still asking for it gets a blank."""
     client.post("/api/profiles", json={"name": "Copy", "seed": True})
     doc = client.get("/api/profiles/copy").json()
     experience = next(s for s in doc["main"] if s["kind"] == "experience")
-    seeded = next(s for s in sample_cv("EN").main if s.kind == "experience")
-    assert len(experience["entries"]) == len(seeded.entries) == 5
-    assert experience["entries"][0]["organisation"] == seeded.entries[0].organisation
+    assert [e["organisation"] for e in experience["entries"]] == [""]
+
+
+def test_the_preview_fills_empty_fields_with_lorem_ipsum(client: TestClient) -> None:
+    """Placeholders make the layout visible, and exist only in the preview."""
+    client.get("/api/profiles")
+    doc = client.get("/api/profiles/default").json()
+    preview = client.post("/api/profiles/default/preview", json=doc)
+    download = client.get("/api/profiles/default/pdf")
+    assert "LOREMIPSUM" in _pdf_text(preview.content)
+    assert "LOREM" not in _pdf_text(download.content)
+    assert client.get("/api/profiles/default").json() == doc
+
+
+def test_the_preview_leaves_filled_in_fields_alone(client: TestClient) -> None:
+    client.get("/api/profiles")
+    doc = client.get("/api/profiles/default").json()
+    doc["full_name"] = "Real Person"
+    preview = client.post("/api/profiles/default/preview", json=doc)
+    text = _pdf_text(preview.content)
+    assert text.startswith("REALPERSON")
+    assert "LOREMIPSUMLOREMIPSUM" not in text
 
 
 def test_duplicate_profile_is_rejected(client: TestClient) -> None:
@@ -202,9 +239,12 @@ def test_download_filename_survives_missing_pieces() -> None:
 
 def test_live_download_filename_matches_today(client: TestClient) -> None:
     client.get("/api/profiles")
+    doc = client.get("/api/profiles/default").json()
+    doc["full_name"] = "Real Person"
+    client.put("/api/profiles/default", json=doc)
     disposition = client.get("/api/profiles/default/pdf").headers["content-disposition"]
     stamp = date.today().strftime("%Y%m%d")
-    assert f'filename="{stamp} {SAMPLE_NAME} CV EN.pdf"' in disposition
+    assert f'filename="{stamp} Real Person CV EN.pdf"' in disposition
 
 
 def test_dutch_profile_downloads_with_its_own_name(client: TestClient) -> None:
@@ -318,7 +358,7 @@ def test_unreadable_profile_is_skipped_in_listing(
 def test_mounted_api_answers_under_the_cv_prefix(dashboard: TestClient) -> None:
     profiles = dashboard.get(f"/api/cv/profiles?user={MOUNTED_USER}").json()
     assert [p["slug"] for p in profiles] == ["default", "nederlands"]
-    assert all(p["full_name"] == SAMPLE_NAME for p in profiles)
+    assert all(p["full_name"] == "" for p in profiles)
 
 
 def test_mounted_api_does_not_leak_onto_the_flat_prefix(dashboard: TestClient) -> None:

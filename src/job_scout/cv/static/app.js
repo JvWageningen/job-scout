@@ -323,12 +323,15 @@ const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(doc),
     }).then((r) => r.json()),
-  create: (name, seed) =>
+  create: (name) =>
     request(apiUrl("/profiles"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name, seed }),
+      body: JSON.stringify({ name }),
     }).then((r) => r.json()),
+  importOptions: () => request(apiUrl("/import/options")).then((r) => r.json()),
+  importCv: (form) =>
+    request(apiUrl("/import"), { method: "POST", body: form }).then((r) => r.json()),
   remove: (slug) => request(apiUrl(`/profiles/${slug}`), { method: "DELETE" }),
   uploadPhoto: (slug, file) => {
     const form = new FormData();
@@ -432,10 +435,10 @@ function renderIdentity() {
   const doc = state.doc;
 
   panel.append(
-    labelled("Full name", bind(doc, "full_name", { placeholder: "Jane Doe" })),
+    labelled("Full name", bind(doc, "full_name", { placeholder: "Lorem Ipsum" })),
     labelled(
       "Headline (optional)",
-      bind(doc, "headline", { placeholder: "Photonics Engineer" })
+      bind(doc, "headline", { placeholder: "Lorem ipsum dolor sit amet" })
     ),
     labelled(
       "Language tag (used in the PDF filename)",
@@ -580,7 +583,10 @@ const EDITORS = {
     return [
       labelled(
         "Body",
-        bind(section, "body", { rows: 5, placeholder: "A short profile…" })
+        bind(section, "body", {
+          rows: 5,
+          placeholder: "Lorem ipsum dolor sit amet, consectetur adipiscing elit…",
+        })
       ),
     ];
   },
@@ -652,7 +658,7 @@ const EDITORS = {
   skills(section, rerender) {
     const rows = section.items.map((item, index) =>
       el("div", { class: "grid two" }, [
-        bind(item, "name", { placeholder: "Python" }),
+        bind(item, "name", { placeholder: "Lorem ipsum" }),
         el("div", { class: "row-actions" }, [
           section.show_levels ? levelInput(item) : null,
           rowButtons(section.items, index, rerender),
@@ -685,9 +691,9 @@ const EDITORS = {
   details(section, rerender) {
     const rows = section.items.map((item, index) =>
       el("div", { class: "grid two" }, [
-        bind(item, "label", { placeholder: "Residence" }),
+        bind(item, "label", { placeholder: "Lorem" }),
         el("div", { class: "row-actions" }, [
-          bind(item, "value", { placeholder: "Utrecht" }),
+          bind(item, "value", { placeholder: "Ipsum dolor" }),
           rowButtons(section.items, index, rerender),
         ]),
       ])
@@ -709,7 +715,7 @@ const EDITORS = {
           iconSelect(item),
           rowButtons(section.items, index, rerender),
         ]),
-        labelled("Text", bind(item, "value", { placeholder: "you@example.com" })),
+        labelled("Text", bind(item, "value", { placeholder: "lorem@ipsum.com" })),
         labelled("Link (optional)", bind(item, "url", { placeholder: "https://…" })),
       ])
     );
@@ -828,7 +834,9 @@ async function refreshProfileList(selected) {
     picker.append(
       el("option", {
         value: profile.slug,
-        text: profile.full_name || profile.slug,
+        text: profile.full_name
+          ? `${profile.full_name} (${profile.slug})`
+          : `${profile.slug} (empty)`,
       })
     );
   }
@@ -868,11 +876,8 @@ function wire() {
   document.getElementById("new-profile").addEventListener("click", async () => {
     const name = prompt("Name for the new CV profile:");
     if (!name) return;
-    const seed = confirm(
-      "Start from the example CV?\n\nOK = example content, Cancel = empty skeleton."
-    );
     try {
-      const created = await api.create(name, seed);
+      const created = await api.create(name);
       await refreshProfileList(created.slug);
       setStatus("Profile created");
     } catch (error) {
@@ -929,10 +934,119 @@ function wire() {
   });
 }
 
+/* ------------------------------------------------------------------ */
+/* Importing an existing CV                                            */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Import turns a CV the user already has - the file they gave job-scout in
+ * Profile & Filters, or one they upload here - into a profile they can edit. It needs
+ * the host's LLM settings, so only job-scout's dashboard provides it: the
+ * button stays hidden when /import/options is not there (standalone).
+ */
+let importOptions = null;
+
+async function setupImport() {
+  try {
+    importOptions = await api.importOptions();
+  } catch (error) {
+    return; /* no import endpoint on this host */
+  }
+  const button = document.getElementById("import-profile");
+  button.hidden = false;
+  button.addEventListener("click", openImportDialog);
+}
+
+function importDialog() {
+  const settingsName = importOptions.settings_cv;
+  const source = el("select", { name: "source" }, [
+    settingsName
+      ? el("option", { value: "settings", text: `My uploaded CV (${settingsName})` })
+      : null,
+    el("option", { value: "upload", text: "Upload a file (PDF, DOCX, ODT or text)" }),
+  ]);
+  const file = el("input", { type: "file", name: "file", accept: ".pdf,.docx,.odt,.txt" });
+  const fileField = labelled("File", file);
+  const toggleFile = () => {
+    fileField.hidden = source.value !== "upload";
+  };
+  source.addEventListener("change", toggleFile);
+  toggleFile();
+  const language = el("select", { name: "language" }, [
+    el("option", { value: "NL", text: "Nederlands" }),
+    el("option", { value: "EN", text: "English" }),
+  ]);
+  const name = el("input", { name: "name", required: true, value: "mijn-cv" });
+  const note = el("p", {
+    class: "import-note",
+    text:
+      "Your CV is read and laid out as an editable profile. Nothing is added " +
+      "that is not in it" +
+      (importOptions.linkedin
+        ? ", apart from roles your parsed profile or LinkedIn import adds"
+        : "") +
+      ". Check the result before you use it.",
+  });
+  const status = el("p", { class: "import-status", role: "status" });
+  const submit = el("button", { class: "primary solid", type: "submit", text: "Import" });
+  const cancel = el("button", { class: "ghost", type: "button", text: "Cancel" });
+  const form = el("form", { method: "dialog", class: "import-form" }, [
+    el("h2", { text: "Import your CV" }),
+    labelled("Take the CV from", source),
+    fileField,
+    labelled("Profile language", language),
+    labelled("Profile name", name),
+    note,
+    status,
+    el("div", { class: "import-actions" }, [cancel, submit]),
+  ]);
+  const dialog = el("dialog", { class: "import-dialog" }, [form]);
+  cancel.addEventListener("click", () => dialog.close());
+  dialog.addEventListener("close", () => dialog.remove());
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    runImport({ dialog, source, file, language, name, status, submit });
+  });
+  return dialog;
+}
+
+function openImportDialog() {
+  const dialog = importDialog();
+  document.body.append(dialog);
+  dialog.showModal();
+}
+
+async function runImport({ dialog, source, file, language, name, status, submit }) {
+  const form = new FormData();
+  form.append("source", source.value);
+  form.append("language", language.value);
+  form.append("name", name.value.trim());
+  if (source.value === "upload") {
+    if (!file.files.length) {
+      status.textContent = "Choose a file to upload.";
+      return;
+    }
+    form.append("file", file.files[0]);
+  }
+  submit.disabled = true;
+  status.textContent = "Reading your CV… this can take a minute or two.";
+  try {
+    const result = await api.importCv(form);
+    dialog.close();
+    await refreshProfileList(result.slug);
+    const checks = result.warnings.length ? ` Check: ${result.warnings.join(" ")}` : "";
+    setStatus(`Imported from ${result.sources_used.join(", ")}.${checks}`, false);
+  } catch (error) {
+    status.textContent = error.message;
+    submit.disabled = false;
+  }
+}
+
 async function boot() {
   try {
     state.meta = await api.meta();
     wire();
+    setupImport();
     await refreshProfileList();
   } catch (error) {
     setStatus(error.message, true);

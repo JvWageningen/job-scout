@@ -29,7 +29,6 @@ from job_scout.letters.writer import (
     letter_pdf_bytes,
     load_letter,
     save_letter,
-    select_cv,
     write_letter,
 )
 from job_scout.models import JobListing
@@ -113,9 +112,9 @@ def test_current_cv_language_and_source_separation(private_data: int) -> None:
     assert letter.signature == "Alex Example"
     prompt, purpose = client.calls[0]
     assert purpose == "cover_letter"
-    sources = json.loads(prompt[prompt.index('{"current_cv_facts"') :])
-    assert "CurrentWorks" in json.dumps(sources["current_cv_facts"])
-    assert "ObsoleteCompany" not in json.dumps(sources["current_cv_facts"])
+    sources = json.loads(prompt[prompt.index('{"applicant_sources"') :])
+    assert "CurrentWorks" in json.dumps(sources["applicant_sources"])
+    assert "ObsoleteCompany" not in json.dumps(sources["applicant_sources"])
     assert "ObsoleteCompany" in sources["style_examples_NOT_facts"][0]
     assert "Sam" not in prompt
     assert "never reuse that chronology" in prompt
@@ -165,10 +164,18 @@ def test_live_cv_and_explicit_choice(private_data: int) -> None:
     assert "UpdatedWorks" in client.calls[0][0]
     assert result.cv_slug == "default"
     assert WarningKind.CV_FALLBACK in [w.kind for w in result.warnings]
+    # A crafted profile name is only ever compared with Alex's own profiles, so
+    # it falls back to one of them and never reaches another user's CV.
+    traversal = fake()
+    chosen = write_letter(
+        "Alex",
+        LetterRequest(job_id=private_data, language="nl", cv_slug="../../Sam"),
+        traversal,
+    )
+    assert chosen.cv_slug == "nederlands"
+    assert "Sam Example" not in traversal.calls[0][0]
     with pytest.raises(LetterError):
-        select_cv("Alex", LetterLanguage.NL, "../../Sam")
-    with pytest.raises(LetterError):
-        select_cv("../Alex", LetterLanguage.NL)
+        write_letter("../Alex", LetterRequest(job_id=private_data), fake())
 
 
 def test_example_leak_warning(private_data: int) -> None:

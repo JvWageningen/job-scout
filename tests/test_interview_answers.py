@@ -35,6 +35,7 @@ from job_scout.letters.models import LetterLanguage
 from job_scout.models import (
     CompanyResearch,
     CompanyReview,
+    Config,
     HiringManagerSuggestion,
     JobListing,
 )
@@ -74,6 +75,7 @@ RESEARCH = CompanyResearch(
     growth_signals="Tweede vestiging geopend in 2025",
     research_notes="Werkt vooral voor publieke opdrachtgevers.",
     hiring_managers=[HiringManagerSuggestion(name=MANAGER, role="Teamleider")],
+    sources=["https://voorbeeld.example/deltameet/over-ons"],
 )
 REVIEW = CompanyReview(
     company=COMPANY,
@@ -86,7 +88,23 @@ REVIEW = CompanyReview(
     growth="licht groeiend",
     company_age="18 jaar",
     confidence="medium",
-    sources=["https://voorbeeld.example/reviews"],
+    sources=[f"https://voorbeeld.example/reviews/{n}" for n in range(3)],
+)
+
+FRESH_GROWTH = "Nieuwe meethal in aanbouw naast het hoofdkantoor"
+FRESH_CON = "inwerken gebeurt vooral naast een collega op de werkvloer"
+STALE_CON = "niemand weet wie de audits plant"
+SEARXNG = "http://searxng.voorbeeld.example"
+NO_PUBLIC_INFO = "no public information found about the company"
+THIN_REVIEW = "company review is based on little evidence"
+NO_STORIES = "no STAR stories saved yet"
+
+FOUND = CompanyResearch(
+    company_name=COMPANY,
+    industry="Meetdiensten",
+    growth_signals=FRESH_GROWTH,
+    research_notes="Voert metingen uit voor publieke opdrachtgevers.",
+    sources=["https://voorbeeld.example/over-ons"],
 )
 
 ASKED = [
@@ -131,6 +149,67 @@ def _good() -> str:
 def fake() -> FakeLLMClient:
     """Return a client that answers with the well-formed set."""
     return FakeLLMClient([_good()])
+
+
+class CompanyLookups:
+    """Stands in for web research and the company review, recording each call.
+
+    Both search the web for real, so every test replaces them. They are looked
+    up in job_scout.interview_questions, whose helper both generators share.
+    """
+
+    def __init__(self) -> None:
+        """Start with nothing found and every rewritten review still thin."""
+        self.found: CompanyResearch | None = None
+        self.confidence = "low"
+        self.review_sources = 1
+        self.research_calls: list[tuple[JobListing, Config, object]] = []
+        self.suggest_managers: list[bool] = []
+        self.review_calls: list[tuple[str, object, str | None]] = []
+
+    def research(
+        self,
+        job: JobListing,
+        settings: Config,
+        client: object = None,
+        *,
+        suggest_managers: bool = False,
+    ) -> CompanyResearch | None:
+        """Record a research request and return what the web "found"."""
+        self.research_calls.append((job, settings, client))
+        self.suggest_managers.append(suggest_managers)
+        return self.found
+
+    def review(
+        self,
+        company: str,
+        *,
+        client: object,
+        timeout: int = 15,
+        searxng_url: str | None = None,
+        api_key: str | None = None,
+    ) -> CompanyReview:
+        """Record a review request and return a review of the set confidence."""
+        self.review_calls.append((company, client, searxng_url))
+        return CompanyReview(
+            company=company,
+            summary="Opnieuw beoordeeld op basis van openbare bronnen.",
+            cons=[FRESH_CON],
+            confidence=self.confidence,
+            sources=[
+                f"https://voorbeeld.example/ervaringen/{n}"
+                for n in range(self.review_sources)
+            ],
+        )
+
+
+@pytest.fixture(autouse=True)
+def lookups(monkeypatch: pytest.MonkeyPatch) -> CompanyLookups:
+    """Keep every test off the network by stubbing research and review."""
+    stub = CompanyLookups()
+    monkeypatch.setattr("job_scout.interview_questions.research_company", stub.research)
+    monkeypatch.setattr("job_scout.interview_questions.review_company", stub.review)
+    return stub
 
 
 @pytest.fixture
@@ -292,9 +371,9 @@ def test_missing_context_names_absent_sources(db: Database) -> None:
     result = generate_interview_answers(USER, bare, client)
     assert result.missing_context == [
         "no vacancy description",
-        "no company research yet",
-        "no company review yet",
-        "no STAR stories saved yet",
+        NO_PUBLIC_INFO,
+        THIN_REVIEW,
+        NO_STORIES,
     ]
     prompt = client.calls[0][0]
     assert "These sources are absent" in prompt
@@ -309,10 +388,114 @@ def test_a_saved_story_removes_it_from_missing_context(db: Database) -> None:
     _add_story(db)
     result = generate_interview_answers(USER, job_id, fake())
     assert "no STAR stories saved yet" not in result.missing_context
-    assert result.missing_context == [
-        "no company research yet",
-        "no company review yet",
-    ]
+    assert result.missing_context == [NO_PUBLIC_INFO, THIN_REVIEW]
+
+
+def _thin_review() -> CompanyReview:
+    """Return a stored review written while web search found nothing."""
+    return REVIEW.model_copy(update={"cons": [STALE_CON], "confidence": "low"})
+
+
+def test_missing_research_is_run_stored_and_used(
+    db: Database, lookups: CompanyLookups
+) -> None:
+    """With no research stored the company is researched now, and it sticks."""
+    config.write_global_config({"llm_provider": "local", "searxng_url": SEARXNG})
+    job_id = _add_job(db, slug="fresh", description=DUTCH_DESCRIPTION)
+    db.save_company_review(COMPANY, REVIEW.model_dump_json())
+    lookups.found = FOUND
+    client = fake()
+    result = generate_interview_answers(USER, job_id, client)
+    assert len(lookups.research_calls) == 1
+    assert lookups.suggest_managers == [False]
+    job, settings, _ = lookups.research_calls[0]
+    assert job.company == COMPANY
+    assert settings.searxng_url == SEARXNG
+    stored = db.get_company_research(job_id)
+    assert stored is not None
+    assert CompanyResearch.model_validate_json(stored) == FOUND
+    assert FRESH_GROWTH in client.calls[0][0]
+    assert result.missing_context == [NO_STORIES]
+
+
+def test_research_reuses_the_generators_own_client(
+    db: Database, lookups: CompanyLookups
+) -> None:
+    """A second client would probe the model host a second time."""
+    job_id = _add_job(db, slug="client", description=DUTCH_DESCRIPTION)
+    client = fake()
+    generate_interview_answers(USER, job_id, client)
+    assert lookups.research_calls[0][2] is client
+    assert lookups.review_calls[0][1] is client
+
+
+def test_stored_research_is_not_run_again(
+    db: Database, lookups: CompanyLookups
+) -> None:
+    """Research already on file is used as it is."""
+    job_id = _add_job(db, slug="stored", description=DUTCH_DESCRIPTION)
+    db.save_company_research(job_id, RESEARCH.model_dump_json())
+    generate_interview_answers(USER, job_id, fake())
+    assert lookups.research_calls == []
+
+
+def test_research_that_finds_nothing_says_so(
+    db: Database, lookups: CompanyLookups
+) -> None:
+    """Searched and found nothing must not read like never searched."""
+    job_id = _add_job(db, slug="unknown", description=DUTCH_DESCRIPTION)
+    db.save_company_review(COMPANY, REVIEW.model_dump_json())
+    client = fake()
+    result = generate_interview_answers(USER, job_id, client)
+    assert len(lookups.research_calls) == 1
+    assert result.missing_context == [NO_PUBLIC_INFO, NO_STORIES]
+    assert "no company research yet" not in result.missing_context
+    assert db.get_company_research(job_id) is None
+    assert '"company_research"' not in client.calls[0][0]
+
+
+def test_a_low_confidence_review_is_refreshed_exactly_once(
+    db: Database, lookups: CompanyLookups
+) -> None:
+    """Cons from a review written on no evidence must not reach the answers."""
+    job_id = _add_job(db, slug="thin", description=DUTCH_DESCRIPTION)
+    db.save_company_research(job_id, RESEARCH.model_dump_json())
+    db.save_company_review(COMPANY, _thin_review().model_dump_json())
+    lookups.confidence = "medium"
+    lookups.review_sources = 3
+    client = fake()
+    result = generate_interview_answers(USER, job_id, client)
+    assert [call[0] for call in lookups.review_calls] == [COMPANY]
+    prompt = client.calls[0][0]
+    assert FRESH_CON in prompt
+    assert STALE_CON not in prompt
+    stored = db.get_company_review(COMPANY)
+    assert stored is not None
+    assert CompanyReview.model_validate_json(stored).confidence == "medium"
+    assert result.missing_context == [NO_STORIES]
+
+
+def test_a_review_still_thin_after_refresh_is_used_and_flagged(
+    db: Database, lookups: CompanyLookups
+) -> None:
+    """One refresh per generation, never a loop, and the weakness is stated."""
+    job_id = _add_job(db, slug="thin2", description=DUTCH_DESCRIPTION)
+    db.save_company_research(job_id, RESEARCH.model_dump_json())
+    db.save_company_review(COMPANY, _thin_review().model_dump_json())
+    client = fake()
+    result = generate_interview_answers(USER, job_id, client)
+    assert len(lookups.review_calls) == 1
+    assert FRESH_CON in client.calls[0][0]
+    assert result.missing_context == [THIN_REVIEW, NO_STORIES]
+
+
+def test_a_sound_review_is_not_refreshed(
+    db: Database, dutch_job: int, lookups: CompanyLookups
+) -> None:
+    """With research and a confident review on file, nothing is looked up."""
+    generate_interview_answers(USER, dutch_job, fake())
+    assert lookups.review_calls == []
+    assert lookups.research_calls == []
 
 
 def test_star_stories_reach_the_prompt_and_can_back_an_answer(db: Database) -> None:
@@ -441,7 +624,7 @@ def test_missing_job_user_and_cv_all_raise(db: Database) -> None:
     config.save_user_config("Robin", {})
     other = Database(config.user_db_path("Robin"))
     job_id = _add_job(other, slug="robin", description=DUTCH_DESCRIPTION)
-    with pytest.raises(InterviewAnswerError, match="No usable CV"):
+    with pytest.raises(InterviewAnswerError, match="No CV information"):
         generate_interview_answers("Robin", job_id, fake())
 
 

@@ -69,11 +69,23 @@ def _office_text(data: bytes, member: str) -> str:
     return "\n\n".join(paragraphs)
 
 
-def extract_text(filename: str, data: bytes) -> str:
-    """Extract text from a supported, bounded upload; reject empty scans."""
+def extract_text(filename: str, data: bytes, *, kind: str = "letter") -> str:
+    """Extract text from a supported, bounded upload; reject empty scans.
+
+    Args:
+        filename: The uploaded file's name; its suffix decides the format.
+        data: The uploaded bytes.
+        kind: What the document is, for the error messages ("letter", "CV").
+
+    Returns:
+        The document's text.
+
+    Raises:
+        ExampleError: If the file is empty, too large, unreadable or a scan.
+    """
     suffix = Path(_name(filename)).suffix.lower()
     if not data or len(data) > MAX_BYTES:
-        raise ExampleError("Examples must be nonempty and at most 8 MB.")
+        raise ExampleError("The file must be nonempty and at most 8 MB.")
     try:
         if suffix == ".pdf":
             reader = PdfReader(io.BytesIO(data))
@@ -94,10 +106,10 @@ def extract_text(filename: str, data: bytes) -> str:
         ValueError,
         OSError,
     ) as exc:
-        raise ExampleError(f"Could not read example: {exc}") from exc
+        raise ExampleError(f"Could not read the {kind}: {exc}") from exc
     text = text.strip()
     if len(text) < 40 or len(text) > MAX_TEXT:
-        raise ExampleError("Use a text-based letter between 40 and 80,000 characters.")
+        raise ExampleError(f"Use a text-based {kind} between 40 and 80,000 characters.")
     return text
 
 

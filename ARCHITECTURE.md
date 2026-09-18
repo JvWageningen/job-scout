@@ -70,8 +70,8 @@ Everything under `src/job_scout/`. Roughly in pipeline order.
 | --- | --- |
 | `pruner.py` | Fetches a posting and decides whether the vacancy is still open. Conservative by design: only an explicit filled/closed notice or a gone page prunes; ambiguous or unreachable pages are left alone. |
 | `official_source.py` | Searches for the same vacancy on the employer's own site or ATS rather than a job board, then re-checks availability there using the pruner's detection. |
-| `company_review.py` | Synthesises a cached work-quality review (score, confidence, pros, cons, financial health, growth) from keyless web search plus the LLM. |
-| `company_research.py` | Per-job company research and hiring-manager suggestions. |
+| `company_review.py` | Synthesises a cached work-quality review (score, pros, cons, financial health, growth) from web search results that name the company. The LLM may use only those snippets; confidence is counted from the number of distinct sources, and with no evidence the model is not called. Failures raise `CompanyReviewError` or `LLMError` instead of returning a placeholder. |
+| `company_research.py` | Per-job company research from web search results that name the company (namesakes dropped, unsupported size and growth figures cleared, snippets stored as `CompanyResearch.evidence`). Returns None when nothing is found and raises `CompanyResearchError` or `LLMError` when the lookup fails. Hiring managers are suggested only on request and only when a search result prints the name. |
 | `websearch.py` | Keyless web search via the DuckDuckGo HTML endpoint, shared by the three modules above and by `person_search`. Returns an empty list on failure rather than raising. |
 
 ### Profile and application toolkit
@@ -86,21 +86,22 @@ Everything under `src/job_scout/`. Roughly in pipeline order.
 | `feedback.py` | Critiques a document the candidate already has — a CV on its own or against one vacancy, a motivational letter always against a vacancy — as ranked, specific points. |
 | `resume_tailor.py` | Extracts high-value keywords from a job description, rewrites the resume around them, and renders the result to PDF with ReportLab. |
 | `cover_letter_generator.py` | Drafts a cover letter from `CvProfile` + job, extracts the screening questions a posting implies, and answers them in the candidate's voice. |
+| `applicant.py` | Everything the applicant has told job-scout about themselves: their own CV file and notes, a real CV Builder profile, the parsed profile (which is where a LinkedIn import lands), profile description, career tracks and STAR stories, each labelled by source for the prompt. No source is mandatory and CV Builder's example CV is never one of them. Also finds the name, place and contact details a letter heading needs. Used by the letter writer and both interview generators. |
 | `interview_prep.py` | Derives likely behavioural questions for a job and matches each to the best STAR story from the saved bank. |
-| `interview_questions.py` | The inverse direction: the questions the *candidate* asks the employer. Reads the vacancy, the cached `CompanyResearch` and `CompanyReview` and the CV Builder profile, makes one LLM call, and returns a themed `InterviewQuestionSet` that names every grounding source it did not have. Read-only — it never triggers research, a review or a scrape, and stores nothing. |
-| `interview_answers.py` | The mirror of `interview_questions.py`: what the *interviewer* asks the candidate, each prediction carrying a draft answer. Same grounding plus the saved STAR stories, same read-only contract, same single `behavioral_questions` call, and an `InterviewAnswerSet` of `LikelyQuestion` objects with a `kind`, a `why_asked`, the draft, the sources it drew on and an `AnswerFooting` of `strong`, `partial` or `gap`. The hard rule lives in the prompt: an answer may use only the CV facts, the STAR stories and the applicant's notes, and a gap is stated rather than filled. |
+| `interview_questions.py` | The inverse direction: the questions the *candidate* asks the employer. Reads the vacancy, the stored `CompanyResearch` and `CompanyReview` and the applicant's facts, and returns a themed `InterviewQuestionSet` that names every grounding source it did not have. `company_context` fills company gaps first, once per generation: research that is missing or cites no source is looked up, and a review that is missing or rests on fewer than three web sources is rewritten; what is found is stored, nothing is stored on failure or when the web has nothing, and an unreachable `evaluation` provider stops further lookups. The questions themselves are not stored. |
+| `interview_answers.py` | The mirror of `interview_questions.py`: what the *interviewer* asks the candidate, each prediction carrying a draft answer. Same grounding plus the saved STAR stories, the same `company_context` lookups, the same single `behavioral_questions` generation call, and an `InterviewAnswerSet` of `LikelyQuestion` objects with a `kind`, a `why_asked`, the draft, the sources it drew on and an `AnswerFooting` of `strong`, `partial` or `gap`. The hard rule lives in the prompt: an answer may use only the CV facts, the STAR stories and the applicant's notes, and a gap is stated rather than filled. |
 | `letters/` | Per-user examples, style guides, CV-grounded letter generation, structured draft storage, PDF rendering, and the `/api/letters` router and `letter` CLI group. See [Cover Letter Writer](docs/LETTER_WRITER.md). |
 | `cv/` | The CV builder — a self-contained subpackage with its own document model, storage, renderer, FastAPI router, Click group and front end. See [the CV subpackage](#the-cv-subpackage) below. |
 
 **Why the three interview modules sit beside each other rather than inside one.**
 `interview_prep.py` consumes a job description and the STAR bank and returns questions
-matched to stories; the other two consume company research, a company review and the CV
-Builder profile as well, and return their own models — different inputs, different output
+matched to stories; the other two consume company research, a company review and the
+applicant's facts as well, and return their own models — different inputs, different output
 models, different failure modes, and the only overlap is the `behavioral_questions`
 routing purpose all three borrow. Folding them together would have entangled the STAR
-matcher with CV-profile selection to save a file. They reuse
-`letters.writer.select_cv` / `cv_facts` and `letters.language` instead, because the CV
-view and the Dutch/English decision are genuinely one behaviour and must not drift
+matcher with applicant-fact gathering to save a file. They reuse
+`applicant.gather_applicant_facts` and `letters.language` instead, because the view of the
+applicant and the Dutch/English decision are genuinely one behaviour and must not drift
 between the letter writer and the interview tab.
 
 `interview_answers.py` is a sibling of `interview_questions.py`, not a branch inside it:
@@ -377,7 +378,10 @@ asset links rewritten from `/static/` to `/cv/` and a one-line script injected t
 `window.CV_API_BASE = "/api/cv"`. The vendored markup is never modified on disk, so the
 standalone server keeps serving the same file unchanged. `app.js` sets the iframe's `src`
 the first time the tab is opened and again when the selected user changes — never on page
-load, because the editor renders a PDF preview as it starts. Tailoring
+load, because the editor renders a PDF preview as it starts. Importing an existing CV
+(`GET /api/cv/import/options`, `POST /api/cv/import`, in `web/cv_import.py`) is declared on
+the dashboard too, for the same reason as tailoring: it needs the user's settings and LLM.
+The editor only shows its Import button when the options route answers. Tailoring
 (`POST /api/cv/profiles/{slug}/tailor`) is declared on the dashboard rather than on the
 vendored router, because it is the only CV operation that needs the jobs database and the
 user's LLM settings; it answers 502, not 500, when the model returns something unusable.
@@ -443,8 +447,9 @@ therefore loses Wake-on-LAN. See [docs/DEPLOY.md](docs/DEPLOY.md).
 
 ### Letter writer
 
-`letters/writer.py` reads the current `CVDocument` without modifying it, separates
-facts from historical style examples, and calls the existing `cover_letter` LLM
+`letters/writer.py` reads the applicant's facts from every source through
+`applicant.py` without modifying any of them, separates facts from historical style
+examples, and calls the existing `cover_letter` LLM
 purpose. `letters/api.py` is mounted under the dashboard token middleware. The
 separate `web/static/letters.js` editor discards stale responses after a user switch.
 Drafts and examples live in `user_letters_dir(name)`; the last saved draft is also

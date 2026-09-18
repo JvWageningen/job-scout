@@ -1,4 +1,4 @@
-"""Draft editable letters using current CV facts and private style references."""
+"""Draft editable letters from every applicant source and private style references."""
 
 from __future__ import annotations
 
@@ -7,17 +7,20 @@ import json
 import re
 import tempfile
 from datetime import UTC, date, datetime
-from functools import cache
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, Field, ValidationError
 
-from job_scout.config import list_users, user_cv_dir, user_db_path, user_letters_dir
-from job_scout.cv.models import ContactSection, CVDocument, DetailsSection
-from job_scout.cv.sample import sample_cv
-from job_scout.cv.storage import ProfileStore
+from job_scout.applicant import (
+    SOURCE_GUIDE,
+    ApplicantError,
+    ApplicantFacts,
+    gather_applicant_facts,
+)
+from job_scout.applicant import require_user as require_applicant
+from job_scout.config import user_db_path, user_letters_dir
 from job_scout.database import Database
 from job_scout.letters.conventions import (
     CONVENTIONS,
@@ -55,142 +58,10 @@ class Draft(BaseModel):
 
 def require_user(user: str) -> str:
     """Resolve an existing user before constructing any private data path."""
-    if not user or user in {".", "..", "all"} or re.search(r"[\\/\x00]", user):
-        raise LetterError("Select a single existing user.")
-    if user not in list_users():
-        raise LetterError("User not found.")
-    return user
-
-
-@cache
-def _sample_organisations() -> frozenset[str]:
-    """Return every employer and school named in the bundled example CV.
-
-    Read from the sample itself rather than kept as a second list, so the guard
-    cannot drift out of step when the example changes.
-
-    Returns:
-        The example CV's organisations and schools, case-folded.
-    """
-    names: set[str] = set()
-    for language in ("EN", "NL"):
-        for section in sample_cv(language).all_sections():
-            for entry in getattr(section, "entries", None) or []:
-                for field in ("organisation", "school"):
-                    value = getattr(entry, field, "") or ""
-                    if value.strip():
-                        names.add(value.strip().casefold())
-    return frozenset(names)
-
-
-def _example_content(doc: CVDocument) -> list[str]:
-    """Name the example-CV employers and schools still present in a CV.
-
-    CV Builder seeds a new profile with the bundled example so the editor is not
-    empty, and that seed is saved to disk like any other profile. Anything reading
-    stored CVs therefore cannot tell a real one from an untouched example unless it
-    looks. Without this, an applicant who never opened CV Builder gets letters and
-    interview answers describing a fictional person's career.
-
-    Args:
-        doc: A stored CV.
-
-    Returns:
-        The example organisations it still contains, empty for a real CV.
-    """
-    sample = _sample_organisations()
-    found: list[str] = []
-    for section in doc.all_sections():
-        for entry in getattr(section, "entries", None) or []:
-            for field in ("organisation", "school"):
-                value = (getattr(entry, field, "") or "").strip()
-                if value and value.casefold() in sample and value not in found:
-                    found.append(value)
-    return found
-
-
-def _refuse_example(slug: str, found: list[str]) -> LetterError:
-    """Explain that a CV is still (partly) the example, and what to do about it.
-
-    Args:
-        slug: The CV profile.
-        found: Example organisations it still contains.
-
-    Returns:
-        The error to raise.
-    """
-    return LetterError(
-        f"The CV '{slug}' in CV Builder still contains the example CV "
-        f"({', '.join(found[:3])}). Replace it with your own details first: "
-        "otherwise the result would describe someone else's career."
-    )
-
-
-def select_cv(
-    user: str, language: LetterLanguage, slug: str | None = None
-) -> tuple[str, CVDocument]:
-    """Read current saved CV data, preferring a base CV in the target language."""
-    store = ProfileStore(user_cv_dir(require_user(user)))
-    slugs = store.list_profiles()
-    if slug:
-        if slug not in slugs:
-            raise LetterError("The selected CV profile no longer exists.")
-        doc = store.load(slug)
-        found = _example_content(doc)
-        if found:
-            raise _refuse_example(slug, found)
-        return slug, doc
-    docs = {candidate: store.load(candidate) for candidate in slugs}
-    examples = {s: _example_content(d) for s, d in docs.items()}
-    real = {s: d for s, d in docs.items() if not examples[s]}
-    if not real:
-        if examples:
-            first = next(iter(examples))
-            raise _refuse_example(first, examples[first])
-        raise LetterError("Save your CV in CV Builder before writing a letter.")
-    preferred = "nederlands" if language is LetterLanguage.NL else "default"
-    if preferred in real and real[preferred].language.lower() == language.value:
-        return preferred, real[preferred]
-    for candidate, doc in real.items():
-        if doc.language.lower() == language.value:
-            return candidate, doc
-    first = next(iter(real))
-    return first, real[first]
-
-
-def cv_facts(doc: CVDocument) -> str:
-    """Serialize enabled factual sections, excluding design and contact details.
-
-    Shared with the interview-question writer: both need the same view of the CV,
-    and both must exclude contact and personal details, which are never prompt
-    material.
-    """
-    sections = [
-        s.model_dump(exclude={"id", "icon"})
-        for s in doc.all_sections()
-        if s.enabled and s.kind not in {"contact", "details"}
-    ]
-    return json.dumps(
-        {"headline": doc.headline, "sections": sections}, ensure_ascii=False
-    )
-
-
-def _place(doc: CVDocument) -> str:
-    """Take residence only from an explicitly labelled CV detail."""
-    for section in doc.all_sections():
-        if not isinstance(section, DetailsSection):
-            continue
-        if not section.enabled:
-            continue
-        for item in section.items:
-            if item.label.lower().strip(": ") in {
-                "residence",
-                "city",
-                "woonplaats",
-                "plaats",
-            }:
-                return item.value
-    return ""
+    try:
+        return require_applicant(user)
+    except ApplicantError as exc:
+        raise LetterError(str(exc)) from exc
 
 
 def _parse_draft(raw: str) -> Draft:
@@ -237,7 +108,7 @@ def _example_warnings(
 
 
 def _prompt(
-    facts: str,
+    facts: ApplicantFacts,
     vacancy: dict[str, Any],
     request: LetterRequest,
     language: LetterLanguage,
@@ -246,7 +117,7 @@ def _prompt(
 ) -> str:
     """Separate current facts from historical prose supplied only for style."""
     sources = {
-        "current_cv_facts": json.loads(facts),
+        "applicant_sources": facts.sources,
         "target_vacancy": vacancy,
         "applicant_notes": request.notes,
         "style_examples_NOT_facts": [e.text[:4500] for e in examples],
@@ -265,8 +136,9 @@ def _prompt(
         "The vacancy describes the employer's needs, "
         "NOT skills the applicant possesses. "
         "Do not infer possession of a qualification from a vacancy requirement. "
-        "Only current_cv_facts and applicant_notes establish applicant facts. "
-        "Historical examples may describe former jobs as current; "
+        "Only applicant_sources and applicant_notes establish applicant facts. "
+        + SOURCE_GUIDE
+        + " Historical examples may describe former jobs as current; "
         "never reuse that chronology. "
         "Do not invent prior contact, results, completed degrees "
         "or a reason for leaving. "
@@ -277,10 +149,33 @@ def _prompt(
     )
 
 
+def _applicant(
+    user: str, language: LetterLanguage, cv_slug: str | None, *, stories: bool
+) -> ApplicantFacts:
+    """Gather the applicant's facts, reporting a missing CV as a letter problem.
+
+    Args:
+        user: Name of an existing user.
+        language: The letter's language.
+        cv_slug: A CV Builder profile to prefer, or None.
+        stories: Whether the STAR stories are needed.
+
+    Returns:
+        The applicant's facts from every source they have provided.
+
+    Raises:
+        LetterError: If no source describes the applicant's career.
+    """
+    try:
+        return gather_applicant_facts(user, language, cv_slug=cv_slug, stories=stories)
+    except ApplicantError as exc:
+        raise LetterError(str(exc)) from exc
+
+
 def write_letter(
     user: str, request: LetterRequest, client: LLMClient, *, today: date | None = None
 ) -> Letter:
-    """Draft from the user's live CV; saving is a separate explicit operation."""
+    """Draft from every source of applicant facts; saving is a separate operation."""
     require_user(user)
     job = Database(user_db_path(user)).get_job(request.job_id)
     if not job or not job.description:
@@ -290,12 +185,9 @@ def write_letter(
         if request.language == "auto"
         else LetterLanguage(request.language)
     )
-    slug, cv = select_cv(user, language, request.cv_slug)
-    if not cv.full_name.strip():
-        raise LetterError("Add your name and current experience in CV Builder first.")
+    facts = _applicant(user, language, request.cv_slug, stories=True)
     guide = load_style_guide(user)
     examples = [e for e in list_examples(user) if e.language is language][:3]
-    facts = cv_facts(cv)
     vacancy = {
         "title": job.title,
         "company": job.company,
@@ -320,9 +212,9 @@ def write_letter(
     letter = Letter(
         job_id=request.job_id,
         language=language,
-        cv_slug=slug,
+        cv_slug=facts.cv_slug,
         place_date=format_place_date(
-            _place(cv),
+            facts.place,
             today or datetime.now(ZoneInfo("Europe/Amsterdam")).date(),
             language,
         ),
@@ -330,46 +222,101 @@ def write_letter(
         salutation=salutation,
         paragraphs=draft.paragraphs,
         closing=default_closing(language),
-        signature=cv.full_name,
+        signature=facts.name,
         examples_used=[e.name for e in examples],
+        sources_used=facts.used,
         generated_at=datetime.now(UTC),
     )
-    if not guide:
-        letter.warnings.append(
+    letter.warnings.extend(_warnings(letter, facts, bool(guide), bool(examples)))
+    allowed = facts.evidence() + json.dumps(vacancy) + request.notes + recipient
+    letter.warnings.extend(
+        _example_warnings(letter.body_text(), examples, allowed + facts.name)
+    )
+    return letter
+
+
+def _warnings(
+    letter: Letter, facts: ApplicantFacts, has_guide: bool, has_examples: bool
+) -> list[LetterWarning]:
+    """List what the applicant should check before sending this letter.
+
+    Args:
+        letter: The drafted letter.
+        facts: The applicant facts it was written from.
+        has_guide: Whether a personal style guide exists.
+        has_examples: Whether example letters in this language exist.
+
+    Returns:
+        The warnings, most important first.
+    """
+    warnings = _source_warnings(facts, letter.language)
+    if not has_guide:
+        warnings.append(
             LetterWarning(
                 kind=WarningKind.NO_STYLE_GUIDE,
                 message="No personal style guide yet. "
                 "Add examples and learn your style.",
             )
         )
-    if not examples:
-        letter.warnings.append(
+    if not has_examples:
+        warnings.append(
             LetterWarning(
                 kind=WarningKind.NO_EXAMPLES,
                 message="No examples in this language; "
                 "using the style guide and conventions.",
             )
         )
-    if cv.language.lower() != language.value:
-        letter.warnings.append(
-            LetterWarning(
-                kind=WarningKind.CV_FALLBACK,
-                message=f"Using CV '{slug}' in {cv.language}; "
-                f"output is {language.value}.",
-            )
-        )
-    low, high = LENGTH_BOUNDS[language]
+    low, high = LENGTH_BOUNDS[letter.language]
     if not low <= letter.word_count() <= high:
-        letter.warnings.append(
+        warnings.append(
             LetterWarning(
                 kind=WarningKind.LENGTH,
                 message=f"Body is {letter.word_count()} words; "
                 f"review length ({low}-{high}).",
             )
         )
-    allowed = facts + json.dumps(vacancy) + request.notes + cv.full_name + recipient
-    letter.warnings.extend(_example_warnings(letter.body_text(), examples, allowed))
-    return letter
+    return warnings
+
+
+def _source_warnings(
+    facts: ApplicantFacts, language: LetterLanguage
+) -> list[LetterWarning]:
+    """Report gaps in the applicant facts that affect this letter.
+
+    Args:
+        facts: The applicant facts the letter was written from.
+        language: The letter's language.
+
+    Returns:
+        Warnings about a missing name, skipped sources and a CV Builder
+        profile in another language.
+    """
+    warnings: list[LetterWarning] = []
+    if not facts.name:
+        warnings.append(
+            LetterWarning(
+                kind=WarningKind.NO_NAME,
+                message="None of your sources states your full name; "
+                "fill in the signature.",
+            )
+        )
+    if facts.missing:
+        warnings.append(
+            LetterWarning(
+                kind=WarningKind.SOURCES,
+                message="Not used: " + "; ".join(facts.missing) + ".",
+            )
+        )
+    doc = facts.cv_doc
+    if doc is not None and doc.language.lower() != language.value:
+        warnings.append(
+            LetterWarning(
+                kind=WarningKind.CV_FALLBACK,
+                message=f"Using CV '{facts.cv_slug}' in {doc.language}; "
+                f"output is {language.value}.",
+            )
+        )
+    return warnings
 
 
 def generated_letter_path(user: str, job_id: int, language: LetterLanguage) -> Path:
@@ -408,14 +355,13 @@ def save_letter(user: str, letter: Letter) -> None:
 
 
 def letter_pdf_bytes(user: str, letter: Letter) -> bytes:
-    """Render the edited draft with the currently selected CV's theme."""
-    _, cv = select_cv(user, letter.language, letter.cv_slug)
-    contacts: list[str] = []
-    for section in cv.all_sections():
-        if not isinstance(section, ContactSection):
-            continue
-        if section.enabled:
-            contacts.extend(item.value for item in section.items if item.value)
+    """Render the edited draft, in the CV Builder theme when a real CV is there.
+
+    The heading's contact details come from the same sources as the letter:
+    the CV Builder profile when it holds a real CV, else the applicant's own CV.
+    """
+    facts = _applicant(user, letter.language, letter.cv_slug, stories=False)
+    theme = facts.cv_doc.theme if facts.cv_doc is not None else None
     buffer = io.BytesIO()
-    render_letter_pdf(letter, buffer, theme=cv.theme, contact_lines=contacts)
+    render_letter_pdf(letter, buffer, theme=theme, contact_lines=facts.contacts)
     return buffer.getvalue()

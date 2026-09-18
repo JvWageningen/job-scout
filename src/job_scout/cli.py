@@ -51,6 +51,7 @@ from job_scout.interview_answers import (
     generate_interview_answers,
 )
 from job_scout.interview_questions import (
+    THIN_REVIEW,
     InterviewQuestionError,
     InterviewQuestionSet,
     QuestionTheme,
@@ -62,8 +63,10 @@ from job_scout.llm.base import LLMClient, LLMError
 from job_scout.llm.factory import get_llm_client
 from job_scout.models import (
     CareerTrack,
+    CompanyResearch,
     CompanyReview,
     Config,
+    HiringManagerSuggestion,
     JobListing,
     JobStatus,
     PersonSearchResult,
@@ -1009,6 +1012,9 @@ def _get_or_build_review(
     except Exception as exc:  # noqa: BLE001 - never block notification
         logger.warning(f"Company review failed for {company!r}: {exc}")
         return None
+    if review is None:
+        # No web result names the company, so there is nothing to cache or show.
+        return None
     if not dry_run:
         db.save_company_review(company, review.model_dump_json())
     return review
@@ -1769,25 +1775,59 @@ def find_sources(user_name: str | None, browser: bool) -> None:
 @click.option("--refresh", is_flag=True, help="Ignore any cached review")
 def company_review_cmd(company: str, user_name: str | None, refresh: bool) -> None:
     """Summarise how good a COMPANY is to work for, from public web info."""
-    from job_scout.company_review import review_company  # noqa: PLC0415
-    from job_scout.llm.factory import get_llm_client  # noqa: PLC0415
-
     target = _require_single_user(user_name)
-    config = build_effective_config(target)
     db = Database(user_db_path(target))
     cached = None if refresh else db.get_company_review(company)
     if cached:
         review = CompanyReview.model_validate_json(cached)
         click.echo("(cached)")
     else:
+        review = _fresh_company_review(company, build_effective_config(target))
+        db.save_company_review(company, review.model_dump_json())
+    _print_company_review(review)
+
+
+def _fresh_company_review(company: str, config: Config) -> CompanyReview:
+    """Write a new review for *company*, or exit with a plain explanation.
+
+    Args:
+        company: Company name.
+        config: The user's effective configuration.
+
+    Returns:
+        The new review.
+
+    Raises:
+        click.ClickException: If no web result names the company, or the model
+            call or its answer failed. Nothing is stored in either case.
+    """
+    from job_scout.company_review import (  # noqa: PLC0415
+        CompanyReviewError,
+        review_company,
+    )
+
+    try:
         review = review_company(
             company,
             client=get_llm_client(config),
             searxng_url=config.searxng_url,
             api_key=config.brave_api_key,
         )
-        db.save_company_review(company, review.model_dump_json())
+    except (CompanyReviewError, LLMError) as exc:
+        raise click.ClickException(f"Could not write the review: {exc}") from exc
+    if review is None:
+        raise click.ClickException(
+            f"No public web information about {company} was found; nothing stored."
+        )
+    return review
 
+
+def _print_company_review(review: CompanyReview) -> None:
+    """Print a company review with its score, pros, cons and signals.
+
+    Args:
+        review: The review to print.
+    """
     score = "n/a" if review.work_score is None else f"{review.work_score}/100"
     click.echo(f"\n{review.company} — work score: {score} ({review.confidence})")
     click.echo(f"  {review.summary}")
@@ -3416,7 +3456,10 @@ def company_group() -> None:
 @click.option("--user", "user_name", default=None, help="User researching")
 def company_research_cmd(job_id: int, user_name: str | None) -> None:
     """Research a company and suggest hiring managers for a job."""
-    from job_scout.company_research import research_company
+    from job_scout.company_research import (  # noqa: PLC0415
+        CompanyResearchError,
+        research_company,
+    )
 
     user_name = _require_single_user(user_name)
     config = _require_llm()
@@ -3428,51 +3471,18 @@ def company_research_cmd(job_id: int, user_name: str | None) -> None:
         return
 
     click.echo(f"Researching {job.company}...")
-    research = research_company(job, config)
-
-    if not research:
-        click.echo("Research failed or timed out", err=True)
+    try:
+        research = research_company(job, config, suggest_managers=True)
+    except (CompanyResearchError, LLMError) as exc:
+        click.echo(f"Research failed: {exc}", err=True)
+        return
+    if research is None:
+        click.echo(f"No public web information about {job.company} found.", err=True)
         return
 
-    # Save to database
-    import json
-
-    research_json = json.dumps(research.model_dump())
-    db.save_company_research(job_id, research_json)
-
-    # Display results
-    click.echo(f"\nCompany Research for {research.company_name}")
-    click.echo("=" * 50)
-    if research.industry:
-        click.echo(f"Industry: {research.industry}")
-    if research.company_size:
-        click.echo(f"Company Size: {research.company_size}")
-    if research.culture_indicators:
-        click.echo(f"Culture Indicators: {', '.join(research.culture_indicators)}")
-    if research.tech_stack_hints:
-        click.echo(f"Tech Stack Hints: {', '.join(research.tech_stack_hints)}")
-    if research.growth_signals:
-        click.echo(f"Growth Signals: {research.growth_signals}")
-    if research.research_notes:
-        click.echo(f"Notes: {research.research_notes}")
-
-    click.echo("\nSuggested Hiring Managers:")
-    click.echo("-" * 50)
-    if research.hiring_managers:
-        for i, manager in enumerate(research.hiring_managers, 1):
-            click.echo(f"{i}. {manager.name}")
-            if manager.role:
-                click.echo(f"   Role: {manager.role}")
-            if manager.email:
-                click.echo(f"   Email: {manager.email}")
-            if manager.linkedin_url:
-                click.echo(f"   LinkedIn: {manager.linkedin_url}")
-            click.echo(f"   Confidence: {manager.confidence}%")
-            if manager.reasoning:
-                click.echo(f"   Reasoning: {manager.reasoning}")
-            click.echo()
-    else:
-        click.echo("No hiring managers suggested")
+    # model_dump_json, not json.dumps(model_dump()): the timestamp is a datetime.
+    db.save_company_research(job_id, research.model_dump_json())
+    _print_research(research)
 
 
 @company_group.command("view")
@@ -3480,7 +3490,7 @@ def company_research_cmd(job_id: int, user_name: str | None) -> None:
 @click.option("--user", "user_name", default=None, help="User viewing")
 def company_view_cmd(job_id: int, user_name: str | None) -> None:
     """View saved company research for a job."""
-    import json
+    from job_scout.models import CompanyResearch  # noqa: PLC0415
 
     user_name = _require_single_user(user_name)
     db = _get_db()
@@ -3495,42 +3505,61 @@ def company_view_cmd(job_id: int, user_name: str | None) -> None:
         click.echo(f"No research found for job {job_id}", err=True)
         return
 
-    from job_scout.models import CompanyResearch
+    _print_research(CompanyResearch.model_validate_json(research_json))
 
-    research = CompanyResearch.model_validate(json.loads(research_json))
 
-    click.echo(f"Company Research for {research.company_name}")
+def _print_research(research: CompanyResearch) -> None:
+    """Print company research, the pages it came from and any hiring managers.
+
+    Args:
+        research: The research to print.
+    """
+    click.echo(f"\nCompany Research for {research.company_name}")
     click.echo("=" * 50)
-    if research.industry:
-        click.echo(f"Industry: {research.industry}")
-    if research.company_size:
-        click.echo(f"Company Size: {research.company_size}")
-    if research.culture_indicators:
-        click.echo(f"Culture Indicators: {', '.join(research.culture_indicators)}")
-    if research.tech_stack_hints:
-        click.echo(f"Tech Stack Hints: {', '.join(research.tech_stack_hints)}")
-    if research.growth_signals:
-        click.echo(f"Growth Signals: {research.growth_signals}")
-    if research.research_notes:
-        click.echo(f"Notes: {research.research_notes}")
+    for label, value in (
+        ("Industry", research.industry),
+        ("Company Size", research.company_size),
+        ("Culture Indicators", ", ".join(research.culture_indicators)),
+        ("Tech Stack Hints", ", ".join(research.tech_stack_hints)),
+        ("Growth Signals", research.growth_signals),
+        ("Notes", research.research_notes),
+    ):
+        if value:
+            click.echo(f"{label}: {value}")
+    if research.sources:
+        click.echo("\nSources:")
+        for url in research.sources:
+            click.echo(f"  {url}")
+    else:
+        click.echo("\nSources: none recorded (written before research needed any)")
+    _print_hiring_managers(research.hiring_managers)
 
+
+def _print_hiring_managers(managers: list[HiringManagerSuggestion]) -> None:
+    """Print hiring manager suggestions, each with the page that names them.
+
+    Args:
+        managers: Suggestions stored with the research.
+    """
     click.echo("\nSuggested Hiring Managers:")
     click.echo("-" * 50)
-    if research.hiring_managers:
-        for i, manager in enumerate(research.hiring_managers, 1):
-            click.echo(f"{i}. {manager.name}")
-            if manager.role:
-                click.echo(f"   Role: {manager.role}")
-            if manager.email:
-                click.echo(f"   Email: {manager.email}")
-            if manager.linkedin_url:
-                click.echo(f"   LinkedIn: {manager.linkedin_url}")
-            click.echo(f"   Confidence: {manager.confidence}%")
-            if manager.reasoning:
-                click.echo(f"   Reasoning: {manager.reasoning}")
-            click.echo()
-    else:
-        click.echo("No hiring managers suggested")
+    if not managers:
+        click.echo("Nobody suitable is named in the search results")
+        return
+    for i, manager in enumerate(managers, 1):
+        click.echo(f"{i}. {manager.name}")
+        for label, value in (
+            ("Role", manager.role),
+            ("Email", manager.email),
+            ("LinkedIn", manager.linkedin_url),
+            ("Named in", manager.source_url),
+        ):
+            if value:
+                click.echo(f"   {label}: {value}")
+        click.echo(f"   Confidence: {manager.confidence}%")
+        if manager.reasoning:
+            click.echo(f"   Reasoning: {manager.reasoning}")
+        click.echo()
 
 
 @cli.group("schedule")
@@ -3663,10 +3692,31 @@ def _print_interview_questions(result: InterviewQuestionSet) -> None:
             click.echo(f"  - {question.question}")
             click.echo(f"    why:  {question.why}")
             click.echo(f"    from: {question.grounded_in}")
-    if result.missing_context:
-        click.echo("\nNot seen, so nothing above is based on it:")
-        for gap in result.missing_context:
+    _print_missing_context(
+        result.missing_context, "Not seen, so nothing above is based on it:"
+    )
+
+
+def _print_missing_context(missing: list[str], heading: str) -> None:
+    """Print what the generation lacked, keeping a thin review apart.
+
+    A thin review was in the prompt, flagged as resting on little evidence, so
+    listing it under "not seen" would be false.
+
+    Args:
+        missing: The result's ``missing_context``.
+        heading: The line printed above the sources that were absent.
+    """
+    absent = [gap for gap in missing if gap != THIN_REVIEW]
+    if absent:
+        click.echo(f"\n{heading}")
+        for gap in absent:
             click.echo(f"  - {gap}")
+    if THIN_REVIEW in missing:
+        click.echo(
+            "\nThe company review rests on little web evidence; "
+            "it was used with caution."
+        )
 
 
 @interview.command("questions")
@@ -3678,7 +3728,12 @@ def _print_interview_questions(result: InterviewQuestionSet) -> None:
     default="auto",
     help="Language to write the questions in; auto reads it from the vacancy",
 )
-@click.option("--cv", "cv_slug", default=None, help="CV profile to ground them in")
+@click.option(
+    "--cv",
+    "cv_slug",
+    default=None,
+    help="CV Builder profile to prefer; your own CV and profile are always used",
+)
 @click.option("--notes", default="", help="Context only you know, e.g. what to raise")
 def interview_questions(
     job_id: int,
@@ -3785,10 +3840,10 @@ def _print_interview_answers(result: InterviewAnswerSet) -> None:
                 width=_ANSWER_WIDTH,
             )
         )
-    if result.missing_context:
-        click.echo("\nNotes -- not seen, so nothing above is based on it:")
-        for gap in result.missing_context:
-            click.echo(f"  - {gap}")
+    _print_missing_context(
+        result.missing_context,
+        "Notes -- not seen, so nothing above is based on it:",
+    )
 
 
 @interview.command("answers")
@@ -3800,7 +3855,12 @@ def _print_interview_answers(result: InterviewAnswerSet) -> None:
     default="auto",
     help="Language to write the questions and answers in; auto reads the vacancy",
 )
-@click.option("--cv", "cv_slug", default=None, help="CV profile to ground them in")
+@click.option(
+    "--cv",
+    "cv_slug",
+    default=None,
+    help="CV Builder profile to prefer; your own CV and profile are always used",
+)
 @click.option(
     "--notes", default="", help="Context only you know, e.g. why you are leaving"
 )

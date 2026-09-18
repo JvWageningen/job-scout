@@ -13,6 +13,7 @@ checker then requires every field to be translated.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import cache
 from importlib import resources
 from pathlib import Path
 
@@ -349,6 +350,11 @@ DUTCH = Strings(
 
 LANGUAGES: dict[str, Strings] = {ENGLISH.language: ENGLISH, DUTCH.language: DUTCH}
 
+# The example's person. Kept as a constant so is_untouched_example can
+# recognise profiles that earlier versions seeded with it.
+EXAMPLE_NAME = "Sam de Vries"
+_SKILLS_TITLE = {"EN": "Skills", "NL": "Vaardigheden"}
+
 
 def sample_portrait() -> Path:
     """Return the path to the bundled sample portrait.
@@ -370,7 +376,7 @@ def _build(text: Strings) -> CVDocument:
         A fully populated document.
     """
     return CVDocument(
-        full_name="Sam de Vries",
+        full_name=EXAMPLE_NAME,
         headline=text.headline,
         language=text.language,
         # Five roles plus certifications no longer fit at the 9pt default, so the
@@ -470,26 +476,152 @@ def sample_cv(language: str = "EN") -> CVDocument:
     return _build(LANGUAGES.get(language.upper(), ENGLISH))
 
 
-def blank_cv() -> CVDocument:
+def blank_cv(language: str = "EN") -> CVDocument:
     """Build an empty CV with the standard section skeleton.
+
+    Nothing in it is content. The preview shows placeholder text in the empty
+    fields (see :func:`job_scout.cv.placeholders.with_placeholders`) and that
+    text is never saved, so a blank profile can never be mistaken for anyone's
+    career.
+
+    Args:
+        language: Language tag; the section titles follow it. Unknown tags fall
+            back to English.
 
     Returns:
         A :class:`~job_scout.cv.models.CVDocument` with titled but empty sections.
     """
+    text = LANGUAGES.get(language.upper(), ENGLISH)
     return CVDocument(
-        full_name="Your Name",
+        full_name="",
+        language=text.language,
         sidebar=[
-            ContactSection(title="Contact", items=[ContactItem()]),
-            SkillsSection(title="Skills", items=[SkillItem()]),
-            DetailsSection(title="Personal information", items=[DetailItem()]),
+            ContactSection(title=text.contact_title, items=[ContactItem()]),
+            SkillsSection(title=_SKILLS_TITLE[text.language], items=[SkillItem()]),
+            DetailsSection(title=text.personal_title, items=[DetailItem()]),
         ],
         main=[
-            TextSection(title="Profile", icon="person"),
+            TextSection(title=text.profile_title, icon="person"),
             ExperienceSection(
-                title="Work experience", icon="laptop", entries=[ExperienceEntry()]
+                title=text.work_title,
+                icon="laptop",
+                entries=[ExperienceEntry()],
+                description_label=text.description_label,
             ),
             EducationSection(
-                title="Education", icon="graduation", entries=[EducationEntry()]
+                title=text.education_title,
+                icon="graduation",
+                entries=[EducationEntry()],
+                school_label=text.school_label,
+                period_label=text.period_label,
+                courses_label=text.courses_label,
             ),
         ],
     )
+
+
+def is_untouched_example(doc: CVDocument) -> bool:
+    """Tell whether a profile is still the example CV nobody started editing.
+
+    Earlier versions seeded every new user with the example, saved like a real
+    CV. A profile counts as untouched only while it carries the example's name
+    and every employer and school in it is the example's, so a profile someone
+    began to make their own is never mistaken for one.
+
+    Args:
+        doc: A stored CV.
+
+    Returns:
+        True for an unedited example CV.
+    """
+    if doc.full_name.strip() != EXAMPLE_NAME:
+        return False
+    names = [
+        value.strip()
+        for section in doc.all_sections()
+        for entry in getattr(section, "entries", None) or []
+        for value in (
+            getattr(entry, "organisation", "") or "",
+            getattr(entry, "school", "") or "",
+        )
+        if value.strip()
+    ]
+    sample = example_organisations()
+    return bool(names) and all(name.casefold() in sample for name in names)
+
+
+@cache
+def example_organisations() -> frozenset[str]:
+    """Return every employer and school named in the example CV, in any language.
+
+    Read from the example itself rather than kept as a second list, so the check
+    cannot drift out of step when the example changes.
+
+    Returns:
+        The example CV's organisations and schools, case-folded.
+    """
+    names: set[str] = set()
+    for strings in LANGUAGES.values():
+        for section in _build(strings).all_sections():
+            for entry in getattr(section, "entries", None) or []:
+                for field in ("organisation", "school"):
+                    value = (getattr(entry, field, "") or "").strip()
+                    if value:
+                        names.add(value.casefold())
+    return frozenset(names)
+
+
+def example_content(doc: CVDocument) -> list[str]:
+    """Name the example-CV employers and schools still present in a CV.
+
+    CV Builder seeds a new profile with the example so the editor is not empty,
+    and that seed is saved like any other profile. Anything reading stored CVs
+    cannot tell a real one from an untouched example unless it looks: without
+    this, an applicant who never opened CV Builder got letters and interview
+    answers about a fictional person's career.
+
+    Args:
+        doc: A stored CV.
+
+    Returns:
+        The example organisations it still contains; empty for a real CV.
+    """
+    sample = example_organisations()
+    found: list[str] = []
+    for section in doc.all_sections():
+        for entry in getattr(section, "entries", None) or []:
+            for field in ("organisation", "school"):
+                value = (getattr(entry, field, "") or "").strip()
+                if value and value.casefold() in sample and value not in found:
+                    found.append(value)
+    return found
+
+
+def has_career_content(doc: CVDocument) -> bool:
+    """Tell whether a CV says anything about the person's work or education.
+
+    A blank profile is saved with empty entries and an empty profile text, which
+    carry no facts at all. Contact and personal details do not count: a name and
+    a phone number say nothing about a career.
+
+    Args:
+        doc: A stored CV.
+
+    Returns:
+        True when any factual section has been filled in.
+    """
+    for section in doc.all_sections():
+        if not section.enabled or section.kind in {"contact", "details"}:
+            continue
+        if (getattr(section, "body", "") or "").strip():
+            return True
+        for entry in getattr(section, "entries", None) or []:
+            values = entry.model_dump(exclude={"id"}).values()
+            texts = [v for v in values if isinstance(v, str)]
+            texts += [b for v in values if isinstance(v, list) for b in v]
+            if any(str(text).strip() for text in texts):
+                return True
+        for item in getattr(section, "items", None) or []:
+            if (item if isinstance(item, str) else getattr(item, "name", "")).strip():
+                return True
+    return False

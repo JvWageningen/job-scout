@@ -29,9 +29,10 @@ from pydantic import BaseModel, Field
 
 from job_scout.cv import __version__
 from job_scout.cv.models import CVDocument, Theme
+from job_scout.cv.placeholders import with_placeholders
 from job_scout.cv.render import render_pdf
 from job_scout.cv.render.icons import icon_names
-from job_scout.cv.sample import blank_cv, sample_cv
+from job_scout.cv.sample import blank_cv
 from job_scout.cv.storage import ProfileStore, StorageError, normalise_slug
 
 MAX_PHOTO_BYTES = 12 * 1024 * 1024
@@ -51,10 +52,6 @@ class CreateProfileRequest(BaseModel):
     """Payload for creating a profile."""
 
     name: str = Field(min_length=1, max_length=120)
-    seed: bool = Field(
-        default=False,
-        description="Start from the fully populated sample rather than a skeleton.",
-    )
 
 
 class PhotoResponse(BaseModel):
@@ -100,7 +97,7 @@ def _download_name(doc: CVDocument, today: date | None = None) -> str:
 
     Returns:
         An ASCII-safe filename such as
-        ``20260809 Sam de Vries CV EN.pdf``.
+        ``20260809 Jane Doe CV EN.pdf``.
     """
     stamp = (today or date.today()).strftime("%Y%m%d")
     stem = _UNSAFE_FILENAME.sub("", doc.full_name).strip()
@@ -165,7 +162,7 @@ def build_api_router() -> APIRouter:
 
     @router.get("/profiles")
     def list_profiles(profiles: StoreDep) -> list[ProfileSummary]:
-        """List every stored profile, seeding a starter one when empty."""
+        """List every stored profile, creating empty starter ones when none exist."""
         profiles.ensure_default()
         summaries: list[ProfileSummary] = []
         for slug in profiles.list_profiles():
@@ -181,7 +178,7 @@ def build_api_router() -> APIRouter:
     def create_profile(
         payload: CreateProfileRequest, profiles: StoreDep
     ) -> ProfileSummary:
-        """Create a profile from either the sample or an empty skeleton."""
+        """Create an empty profile; the preview shows placeholders until filled."""
         try:
             slug = normalise_slug(payload.name)
         except StorageError as exc:
@@ -192,9 +189,8 @@ def build_api_router() -> APIRouter:
                 status_code=409, detail=f"Profile {slug!r} already exists"
             )
 
-        doc = sample_cv() if payload.seed else blank_cv()
+        doc = blank_cv()
         doc.full_name = payload.name
-        doc.photo = ""
         try:
             profiles.save(slug, doc)
         except StorageError as exc:
@@ -297,8 +293,13 @@ def build_api_router() -> APIRouter:
 
     @router.post("/profiles/{slug}/preview")
     def preview(slug: str, doc: CVDocument, profiles: StoreDep) -> StreamingResponse:
-        """Render the posted document inline, without saving it."""
-        payload = _render(profiles, slug, doc)
+        """Render the posted document inline, without saving it.
+
+        Empty fields are shown as lorem ipsum so the layout is visible before
+        anything is filled in. Only this preview does that: the download renders
+        exactly what is saved.
+        """
+        payload = _render(profiles, slug, with_placeholders(doc))
         return StreamingResponse(
             io.BytesIO(payload),
             media_type="application/pdf",

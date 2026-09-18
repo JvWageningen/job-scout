@@ -105,7 +105,7 @@ def test_sample_covers_every_section_kind_used_by_the_template() -> None:
 
 def test_blank_cv_is_a_valid_skeleton() -> None:
     doc = blank_cv()
-    assert doc.full_name == "Your Name"
+    assert doc.full_name == ""
     assert {section.kind for section in doc.main} == {
         "text",
         "experience",

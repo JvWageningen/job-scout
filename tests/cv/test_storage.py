@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from job_scout.cv.models import CVDocument, TextSection
+from job_scout.cv.sample import example_content, sample_cv, sample_portrait
 from job_scout.cv.storage import (
     DATA_ENV_VAR,
     ProfileStore,
@@ -163,20 +164,52 @@ def test_photo_path_is_none_without_a_photo(
     assert store.photo_path("me", cv) is None
 
 
-def test_ensure_default_seeds_both_languages(store: ProfileStore) -> None:
+def test_ensure_default_creates_both_languages_empty(store: ProfileStore) -> None:
     slug = store.ensure_default()
     assert slug == "default"
     assert store.list_profiles() == ["default", "nederlands"]
 
     for name, language in (("default", "EN"), ("nederlands", "NL")):
         doc = store.load(name)
-        assert doc.full_name == "Sam de Vries"
+        assert doc.full_name == ""
         assert doc.language == language
-        assert store.photo_path(name, doc) is not None
+        assert not example_content(doc)
+        assert store.photo_path(name, doc) is None
 
     # A second call must not create anything further.
     assert store.ensure_default() == "default"
     assert store.list_profiles() == ["default", "nederlands"]
+
+
+def test_an_untouched_example_seeded_by_an_old_version_is_blanked(
+    store: ProfileStore,
+) -> None:
+    """Old installs saved the example as a real profile, portrait and all."""
+    store.save("nederlands", sample_cv("NL"))
+    store.save_photo("nederlands", sample_portrait().read_bytes())
+    doc = store.load("nederlands")
+    doc.photo = "portrait.png"
+    store.save("nederlands", doc)
+
+    store.ensure_default()
+
+    blanked = store.load("nederlands")
+    assert blanked.full_name == ""
+    assert blanked.language == "NL"
+    assert not example_content(blanked)
+    assert store.photo_path("nederlands", blanked) is None
+    assert not (store.uploads_dir("nederlands") / "portrait.png").exists()
+
+
+def test_an_example_someone_started_editing_is_left_alone(store: ProfileStore) -> None:
+    """Blanking a profile with the user's own edits in it would lose them."""
+    doc = sample_cv("EN")
+    doc.full_name = "Real Person"
+    store.save("default", doc)
+
+    store.ensure_default()
+
+    assert store.load("default").full_name == "Real Person"
 
 
 def test_ensure_default_keeps_existing_profiles(
