@@ -4,6 +4,19 @@ Format: [Keep a Changelog](https://keepachangelog.com)
 
 <!-- version list -->
 
+## v2.7.1 (2026-09-18)
+
+### Bug Fixes
+
+- **llm**: Give long writing calls time to finish and stop repeating slow ones
+  ([`dc373c7`](https://github.com/JvWageningen/job-scout/commit/dc373c790f3c4ad664dbe9efc30ee4d13ce409e4))
+
+### Chores
+
+- Sync uv.lock to 2.7.0 [skip ci]
+  ([`556bf00`](https://github.com/JvWageningen/job-scout/commit/556bf00d17c3a84618a7ffba99396d3e9f1ef907))
+
+
 ## v2.7.0 (2026-09-18)
 
 ### Bug Fixes
