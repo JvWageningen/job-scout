@@ -51,7 +51,7 @@ Everything under `src/job_scout/`. Roughly in pipeline order.
 
 | Module | Role |
 | --- | --- |
-| `scraper.py` | Fetches from all configured sources in parallel and normalises them to `JobListing`. Indeed and LinkedIn via `python-jobspy`, Nationalevacaturebank via its JSON API, custom career pages via fetched (optionally Playwright-rendered) HTML that the LLM extracts listings from. |
+| `scraper.py` | Fetches from all configured sources in parallel and normalises them to `JobListing`. Indeed and LinkedIn via `python-jobspy`, Nationalevacaturebank via its JSON API, custom career pages via fetched (optionally Playwright-rendered) HTML that the LLM extracts listings from. `recover_missing_locations` fills in the place for the LinkedIn listings jobspy returns without one, because LinkedIn writes some of them as an area ("Amsterdam Area", "Rotterdam and The Hague") rather than as city, state, country: without it the commute filter dropped about 7% of LinkedIn results before anything scored them. |
 | `title_filter.py` | Rule-based, morpheme-aware title filter. Deliberately not substring matching — on a Dutch board, `"AI"` as a substring hits *Maintenance*, *Trainee* and *detail*. |
 | `title_screener.py` | Batched LLM title screening; many titles per call, several calls in parallel. |
 | `tracks.py` | Resolves `career_tracks` into the searches actually run: standalone versus blend tracks, the effective description and negative text per track, and the interleaved deduplicated keyword lists. |
