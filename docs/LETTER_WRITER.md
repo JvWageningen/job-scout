@@ -19,7 +19,9 @@ editable draft, ready for your review.
    Choosing a profile yourself only changes which CV Builder profile is used.
 4. Optionally name the recipient and add a specific reason for applying, a prior
    conversation, or something you want to discuss. Notes are treated as facts you
-   supply, so include only things that are true.
+   supply, so include only things that are true. After the letter is written, the
+   facts about you in them are kept as [memories](MEMORIES.md) for later letters,
+   interviews and CVs, unless you switch that off in the Memories tab.
 5. Click **Generate full letter**. Edit the date, subject, salutation, body, closing and
    signature. Separate paragraphs with blank lines. The writer uses plain paragraphs;
    a line you start with `- ` still prints as a bullet.
@@ -123,6 +125,11 @@ plain-text cover-letter field with the most recently saved language.
 Generation sends the selected CV's factual sections, vacancy, notes, guide and
 selected examples to your configured LLM. Learning style sends example text. Both
 use the existing `cover_letter` routing purpose; see [LLM providers](LLM_PROVIDERS.md).
+In the dashboard, with automatic memory capture on, notes of three words or more are
+sent once more afterwards, in the background, to turn the facts about you in them into
+memories, together with your non-private memories and the wording of non-private deleted
+ones so that those are not proposed again (see [Memories](MEMORIES.md#privacy)); the
+same notes are sent only once.
 A local provider keeps these requests on your own infrastructure; a hosted provider
 receives them. No new service or API key is required.
 

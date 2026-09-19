@@ -226,7 +226,10 @@ two or three stories and the difference is immediate.
 The notes box carries what only you know: why you are leaving, something from an earlier
 call, a constraint you want handled well. It is quoted into the grounding like any other
 source, and it is the only place a fact that is in neither your CV nor your stories can
-legitimately enter an answer.
+legitimately enter an answer. In the dashboard, once the set is written, the facts about
+you in the notes are kept as [memories](MEMORIES.md), so the next letter or interview can
+use them too; this happens once per notes text, in the background, and can be switched
+off in the Memories tab.
 
 ---
 

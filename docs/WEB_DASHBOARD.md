@@ -87,8 +87,8 @@ that mode.
 Navigation is grouped by purpose:
 
 - **Find & track jobs:** Dashboard and Analytics.
-- **Prepare applications:** CV Builder, Cover Letter Writer, Document Review and
-  Interview Questions.
+- **Prepare applications:** CV Builder, Memories, Cover Letter Writer, Document Review
+  and Interview Questions.
 - **Settings:** Profile & Filters, Keywords, Custom Sites, Notifications, Schedule,
   LLM Settings and Secrets.
 
@@ -181,14 +181,49 @@ either in general or as an application for a specific vacancy, or paste a motiva
 letter and have it judged against the vacancy it answers. Nothing here is saved or
 sent anywhere — the critique is generated and displayed.
 
+### Memories
+
+Facts about you that are not on your CV, or not for every vacancy: a project that only
+matters for some roles, a result you would rather not print, a wish about hours or
+travel. Letters, interview preparation and CV tailoring use the memories whose hint or
+tags fit the vacancy, and leave private ones out entirely.
+
+- **Add a memory** by hand: the statement, its kind, where it may be used (CV, letters,
+  interviews), tags, an optional hint on when it applies, and *Private* for health,
+  family, religion, politics, money and similar matters. Nothing goes to a model.
+- **Turn a text into memories**: paste anything about yourself, or read a TXT, Markdown,
+  PDF, DOCX or ODT file into the box, and press **Propose memories**. Your configured
+  model proposes memories (at most 20 per run, from at most 20,000 characters); you tick
+  the ones to keep, correct them, and save them together. Nothing is saved before that.
+  The model also sees your memories, private ones excepted, so it leaves out what you
+  already have.
+- **Your memories**: newest first, with the label a draft answer cites them by, where
+  each may be used, whether it is private, and where it came from and when. Search
+  filters on text, tags, hint and kind; each memory can be edited in place or deleted
+  after a confirmation. **Refresh** picks up memories added in the background.
+- **From your notes**: the switch for automatic capture, and the list of deleted
+  memories, which notes you type again will not bring back, with **Erase this list**.
+
+With automatic capture on, the notes you type in the Cover Letter Writer and Interview
+Questions tabs are read once more after the letter or interview set is on screen, in the
+background, and any new facts about you in them are saved here with the vacancy they came
+from. Both tabs say so when it happens. The same notes are read only once. That reading
+sends your notes to the model a second time, along with your memories and the wording of
+the ones you deleted, private ones excepted, so that it does not propose those again.
+Erasing the list of deleted memories stops sending their wording. See
+[Memories](MEMORIES.md) for what a memory holds, how memories are chosen for a vacancy
+and what stays private.
+
 ### Cover Letter Writer
 
 Draft a Dutch or English motivational letter from a vacancy and everything you have
 told job-scout about yourself — your own CV, CV Builder, a LinkedIn import, your profile
 and STAR stories; none of them is required on its own. Add private example letters and an editable style guide, then review the
 wording, save separate language versions, and export PDF or text. Generation does
-not submit applications. See [Cover Letter Writer](LETTER_WRITER.md) for the complete
-workflow, privacy details and review limitations.
+not submit applications. Facts about you in your notes are kept as
+[memories](MEMORIES.md) unless you switch that off in the Memories tab. See
+[Cover Letter Writer](LETTER_WRITER.md) for the complete workflow, privacy details and
+review limitations.
 
 ### Interview Questions
 
@@ -254,6 +289,10 @@ that list but still has saved preparation, often because the employer took the p
 down once the interviews started, is listed below it under *No longer on your
 shortlist, with saved preparation*. **Refresh vacancies & CVs** re-reads it without
 disturbing anything already on screen.
+
+Facts about you in the notes are kept as [memories](MEMORIES.md), once per notes text
+and unless you switch that off in the Memories tab; the status line says so after a
+generation that starts it.
 
 If the company research, the review or your story bank is missing, the tab says so under
 the result instead of filling the gap in. Read everything before you use it. See
@@ -426,6 +465,8 @@ It is worth being concrete about the blast radius, because it is larger than "so
 see my job list":
 
 - Read the parsed CV profile, every matched and rejected job, and the full run logs.
+- Read, change and delete the applicant's memories, private ones included, and the
+  wording of the ones they deleted.
 - Write API keys into `data/secrets.yaml` and webhook URLs into the user config.
 - Trigger pipeline runs, which spend real money on LLM and routing API calls.
 - Change the ntfy topic or webhook URL, redirecting your notifications elsewhere.
@@ -470,5 +511,7 @@ default, not a control this project implements — do not rely on it.
 - [LLM_PROVIDERS.md](LLM_PROVIDERS.md) — backends and per-stage routing
 - [INTERVIEW_QUESTIONS.md](INTERVIEW_QUESTIONS.md) — the questions you ask the employer,
   and the ones they ask you with a draft answer for each
+- [MEMORIES.md](MEMORIES.md): the facts about you that job-scout keeps for later letters,
+  interviews and CVs, and what stays private
 - [DEPLOY.md](DEPLOY.md) — Docker, NAS and update procedures
 - [SECURITY.md](../SECURITY.md) — reporting a vulnerability

@@ -14,6 +14,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import uvicorn
 from fastapi import (
     APIRouter,
+    BackgroundTasks,
     Depends,
     FastAPI,
     File,
@@ -82,6 +83,7 @@ from job_scout.letters.models import LetterLanguage
 from job_scout.letters.writer import LetterError, require_user
 from job_scout.llm.base import LLMError
 from job_scout.llm.factory import build_raw_client_for_test, get_llm_client
+from job_scout.memories import MemorySource
 from job_scout.models import (
     Config,
     CvProfile,
@@ -92,6 +94,7 @@ from job_scout.models import (
 from job_scout.notify.factory import build_raw_notifier_for_test
 from job_scout.scheduler import check_schedule_status, install_schedule, remove_schedule
 from job_scout.web.cv_import import build_cv_import_router
+from job_scout.web.memories_api import build_memories_router, start_capture
 from job_scout.web.vacancies import build_vacancies_router, open_vacancy_choices
 from job_scout.weekly_schedule import next_run_after, parse_slots
 from job_scout.wol import normalise_mac, wake_and_wait
@@ -527,6 +530,37 @@ def _keep_generated(user: str, interview: InterviewSet, response: Response) -> N
     response.headers[_SAVED_HEADER] = "true"
 
 
+def _capture_notes(
+    tasks: BackgroundTasks,
+    response: Response,
+    user: str,
+    body: InterviewRequest,
+    client: LLMClient,
+) -> None:
+    """Turn the notes of an interview request into memories in the background.
+
+    Both halves call this after their set is generated and saved. The same
+    notes are read only once, so generating the other half with them adds no
+    second model call.
+
+    Args:
+        tasks: The request's background tasks.
+        response: The response whose header says a capture started.
+        user: The validated user.
+        body: The request, with the notes and the vacancy.
+        client: The model the generation used.
+    """
+    start_capture(
+        tasks,
+        response,
+        user,
+        body.notes,
+        source=MemorySource.INTERVIEW_NOTES,
+        job_id=body.job_id,
+        client=client,
+    )
+
+
 def _attachment(exported: ExportedFile) -> Response:
     """Send a rendered file as a download.
 
@@ -590,7 +624,10 @@ def build_interview_router() -> APIRouter:
 
     @router.post("/questions")
     def questions(
-        body: InterviewRequest, user: InterviewUser, response: Response
+        body: InterviewRequest,
+        user: InterviewUser,
+        response: Response,
+        tasks: BackgroundTasks,
     ) -> InterviewQuestionSet:
         """Write the questions this candidate should ask this employer.
 
@@ -600,22 +637,28 @@ def build_interview_router() -> APIRouter:
         sourced review is written again once; what is written is stored, so this
         can take a few minutes. Whatever still cannot be found is reported in
         ``missing_context`` rather than invented. The set is saved for this
-        vacancy and language, replacing the one saved before.
+        vacancy and language, replacing the one saved before. With notes, the
+        facts about the applicant in them become memories afterwards.
         """
+        client = get_llm_client(build_effective_config(user))
         result = generate_interview_questions(
             user,
             body.job_id,
-            get_llm_client(build_effective_config(user)),
+            client,
             language=body.language,
             cv_slug=body.cv_slug,
             notes=body.notes,
         )
         _keep_generated(user, result, response)
+        _capture_notes(tasks, response, user, body, client)
         return result
 
     @router.post("/answers")
     def answers(
-        body: InterviewRequest, user: InterviewUser, response: Response
+        body: InterviewRequest,
+        user: InterviewUser,
+        response: Response,
+        tasks: BackgroundTasks,
     ) -> InterviewAnswerSet:
         """Predict this interviewer's questions and draft this candidate's answers.
 
@@ -623,17 +666,20 @@ def build_interview_router() -> APIRouter:
         in the same material plus the applicant's own STAR stories: an answer
         that cites something the candidate never did is found out in the room,
         so nothing is invented and what is missing comes back in
-        ``missing_context``. The set is saved like the questions are.
+        ``missing_context``. The set is saved like the questions are, and the
+        notes become memories the same way.
         """
+        client = get_llm_client(build_effective_config(user))
         result = generate_interview_answers(
             user,
             body.job_id,
-            get_llm_client(build_effective_config(user)),
+            client,
             language=body.language,
             cv_slug=body.cv_slug,
             notes=body.notes,
         )
         _keep_generated(user, result, response)
+        _capture_notes(tasks, response, user, body, client)
         return result
 
     _add_saved_routes(router)
@@ -842,6 +888,7 @@ def create_app() -> FastAPI:
     app.include_router(build_cv_import_router(), prefix="/api/cv")
     app.include_router(build_letters_api_router(), prefix="/api/letters")
     app.include_router(build_interview_router(), prefix="/api/interview")
+    app.include_router(build_memories_router(), prefix="/api/memories")
     app.include_router(build_vacancies_router())
 
     @app.get("/vacancies.js", include_in_schema=False)
@@ -863,6 +910,13 @@ def create_app() -> FastAPI:
         """Serve the interview question script."""
         return FileResponse(
             Path(__file__).parent / "static" / "interview.js", headers=no_cache_headers
+        )
+
+    @app.get("/memories.js", include_in_schema=False)
+    def serve_memories_js() -> FileResponse:
+        """Serve the Memories tab script."""
+        return FileResponse(
+            Path(__file__).parent / "static" / "memories.js", headers=no_cache_headers
         )
 
     app.dependency_overrides[get_cv_store] = cv_store

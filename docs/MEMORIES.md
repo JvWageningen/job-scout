@@ -23,45 +23,60 @@ looks at your memories and uses the ones that fit that vacancy.
 
 ## How memories are made
 
-**By hand.** Write the statement yourself and choose where it may be used:
+Everything below works in the dashboard's **Memories** tab (see
+[The Memories tab](#the-memories-tab)) and on the command line.
+
+**By hand.** Write the statement yourself and choose where it may be used. In the tab,
+fill in *Add a memory* and press **Save memory**; on the command line:
 
 ```bash
 uv run job-scout memory add "Ik wil maximaal 32 uur per week werken." \
   --kind preference --use letter --use interview --user alex
 ```
 
+Nothing is sent to a model when you add a memory by hand. If one of your memories
+already says much the same, the new one is saved anyway and you are told which.
+
 **From a text.** Give any text about yourself (a paragraph you paste, a file with a list
 of projects, an old self-assessment) and the model turns it into proposed memories. You
-see every proposal before anything is saved:
+see every proposal before anything is saved. In the tab, paste the text under *Turn a
+text into memories*, or read a TXT, Markdown, PDF, DOCX or ODT file into the box, and
+press **Propose memories**; on the command line:
 
 ```bash
 uv run job-scout memory import projecten.docx --user alex
 uv run job-scout memory import --text "Ik heb in 2022 veertig winkels ..." --user alex
 ```
 
-One run proposes at most 20 memories. When a text may hold more, the command says so;
-run it again after saving and the model, which then sees the saved ones, proposes the
-rest.
+One run reads at most 20,000 characters and proposes at most 20 memories. When a text
+may hold more, the tab and the command say so; run it again after saving and the model,
+which then sees the saved ones, proposes the rest.
 
-**Automatically, from your notes.** The notes you type for a letter or an interview are
-read once more after the letter or interview set is written. Facts about you that could
+**Automatically, from your notes.** The notes you type for a letter or an interview in
+the dashboard are read once more after the letter or interview set is written. Facts about you that could
 matter again become memories; instructions for that one document ("make it shorter",
 "mention my salary wish") and facts about only that vacancy or employer do not. Each
 memory is generalised so it stands on its own without the vacancy it came from, but
-never embellished.
+never embellished. In the dashboard this happens in the background once the letter or
+interview set is on your screen, so it never makes you wait; the status line then says
+that your notes are being read, and any new memories appear in the Memories tab once that
+is done. Notes that hold only instructions, or only facts you already have, add none.
+Each new memory says which vacancy's notes it came from.
 
 The same notes are read only once: generating again with the same notes costs no second
-model call. Notes of one or two words are not read at all. Switch automatic capture off
-per user with `job-scout memory auto-capture off` (or the `memory_auto_capture` setting
-in [CONFIGURATION.md](CONFIGURATION.md)).
+model call, and neither does generating the other half of an interview with them. Notes
+of one or two words are not read at all. Switch automatic capture off per user with the
+switch at the bottom of the Memories tab, with `job-scout memory auto-capture off`, or
+with the `memory_auto_capture` setting in [CONFIGURATION.md](CONFIGURATION.md).
 
 **Deleting holds.** A memory you delete is not captured again, also not when you type the
 notes again with a change and generate once more. job-scout keeps the wording of every
 deleted memory in your own database for that, tells the model not to propose those facts
 again (private ones excepted, which never reach a model) and drops any proposal that
-repeats one. `job-scout memory forgotten` shows the list and `--clear` erases it; after
-that, new notes may bring those facts back. Adding a fact again by hand, or through a
-text import you review, always works.
+repeats one. *Deleted memories* at the bottom of the Memories tab, or `job-scout memory
+forgotten`, shows the list; **Erase this list**, or `--clear`, erases it, and after that
+new notes may bring those facts back. Adding a fact again by hand, or through a text
+import you review, always works.
 
 In both automatic and text import, the model sees the memories you already have and
 leaves out what they say, in any wording. Code adds a floor that only catches the plainly
@@ -105,15 +120,60 @@ a CV a memory may reword or add a bullet or description under the role, study or
 it belongs to, or add to the profile text; it never adds a role, an employer, a date, a
 school or a skill item.
 
+## The Memories tab
+
+The tab sits in the dashboard's *Prepare applications* group, right after CV Builder.
+Choose a single user first; everything in it belongs to that user.
+
+- **Add a memory.** The statement, its kind, where it may be used (CV, letters,
+  interviews; all three are ticked to start with), tags separated by commas, an optional
+  hint on when to use it, and *Private*. Choosing the kind Wish or Condition unticks CV,
+  since a wish is not experience.
+- **Turn a text into memories.** Paste a text or read a file into the box, then press
+  **Propose memories**. This takes a model call, so it can take a few minutes. The
+  proposals appear above your list, each ticked and with the same fields as a memory you
+  add by hand, so you can correct the wording, the tags, the hint, where it is used and
+  the private flag before you keep it. **Save ticked memories** stores the ticked ones
+  together; **Discard proposals** drops them all. Facts you already have are not proposed.
+  Proposals from a file are marked with the file's name as long as the box holds that
+  file's text or a part of it; once you type or paste something else, they are marked as
+  pasted text.
+- **Your memories.** Newest first, each with its text, hint and tags, its label (such as
+  *memory 12*, the name a draft interview answer uses when it cites the memory), its kind,
+  where it may be used and where it came from and when: added by hand, taken from a text
+  or file, or taken from the notes for a letter or interview, with the vacancy named. A
+  private memory carries an amber mark. The search box filters on words in the text,
+  tags, hint and kind, ignoring case and accents. **Edit** opens the same fields in place;
+  **Delete** asks first. **Refresh** picks up memories that a capture added while the tab
+  was open; opening the tab again does the same.
+- **From your notes.** The automatic capture switch, and *Deleted memories*: the wording
+  of every memory you deleted, with **Erase this list**.
+
+The Cover Letter Writer and Interview Questions tabs say, next to the notes box, that
+facts in your notes are kept as memories, and say so again after a generation that
+started a capture.
+
 ## Privacy
 
 Memories live in your own database (`data/users/<name>/jobs.db`, tables `memories`,
 `captured_notes` and `forgotten_memories`), like everything else about you. They reach
-the configured model provider only as part of the applicant facts for a letter,
-interview set or CV, the way your CV does. Private memories never do: not in those
-prompts, not as existing memories shown to the model when it proposes new ones, and not
-as deleted ones it is told to leave out. The wording of a deleted memory stays in
-`forgotten_memories` until you run `job-scout memory forgotten --clear`.
+the configured model provider in two ways:
+
+- As part of the applicant facts for a letter, interview set or CV, the way your CV does.
+- Whenever new memories are proposed. **Propose memories** (and `memory import`) sends
+  the text you gave, and automatic capture sends the notes you typed a second time,
+  after the letter or interview set was written from them. Both send along up to 40 of
+  your memories, the ones closest to that text, so that the model leaves out what you
+  already have. Automatic capture also sends the wording of up to 40 deleted memories,
+  so that it does not propose those facts again.
+
+Private memories never reach a model: not in the applicant facts, not as existing
+memories and not as deleted ones. The wording of a deleted memory stays in
+`forgotten_memories`, and goes along with every automatic capture, until you erase the
+list in the tab or run `job-scout memory forgotten --clear`.
+
+The dashboard's memory routes sit under `/api/memories`, behind the same token as every
+other route, and each reads and writes only the user named in the request.
 
 ## Commands
 
@@ -157,3 +217,33 @@ source="text_import", source_detail=...)` returns a `MemoryExtraction`: `drafts`
 for ticking and editing, saved with `add_memories(user, chosen)`, and `truncated`, which
 means the page should say there may be more in the text and a second run gets the rest.
 Leave `forgotten` empty there, so the applicant can take a deleted fact back on purpose.
+
+### HTTP API
+
+`src/job_scout/web/memories_api.py` holds the dashboard's router, mounted under
+`/api/memories`. Every route takes `?user=`; an unknown or unsafe user is a 400, a memory
+number below 1 or beyond what SQLite can hold a 422, a model failure a 502 with a vague
+message (the real cause goes to the log), unreadable data a 503. Responses are not
+cached.
+
+| Route | What it does |
+|---|---|
+| `GET /api/memories` | Every memory (with `origin` in words and `cited_as`, such as `memory 3`), `auto_capture` and the number of deleted memories |
+| `POST /api/memories` | Add a memory by hand (`text`, `kind`, `tags`, `hint`, `use_in`, `sensitive`); returns it with `similar_id` when one already says much the same |
+| `PUT /api/memories/{id}` | Replace a memory's text, kind, tags, hint, uses and private flag; origin and dates stay. 404 when it is gone |
+| `DELETE /api/memories/{id}` | Delete a memory and record its wording as forgotten. 404 when it is gone |
+| `POST /api/memories/extract` | `{text, source_detail}` to proposed drafts and `truncated`, with one model call; stores nothing |
+| `POST /api/memories/batch` | Store the drafts the applicant kept, as edited, in one transaction (1 to 20) |
+| `POST /api/memories/read-file` | The text of an uploaded TXT, MD, PDF, DOCX or ODT file, to check before proposing; stores nothing |
+| `GET` / `PUT /api/memories/auto-capture` | Read or set `{enabled}` for automatic capture |
+| `GET` / `DELETE /api/memories/forgotten` | List the deleted memories, or erase that list |
+
+`start_capture(tasks, response, user, notes, source=..., job_id=..., client=...)` is what
+`POST /api/letters/generate`, `POST /api/interview/questions` and
+`POST /api/interview/answers` call once their result is ready. It asks `capture_pending`
+first and, only when a capture will run, adds `capture_from_notes` to the request's
+background tasks, with the model the generation used and an origin naming the vacancy
+("notes for the Data analyst letter to Findwhere"), and sets the response header
+`X-Memory-Capture: started`, which the page reads to say that new memories may appear.
+Anything that goes wrong in that check is logged and never costs the applicant the
+letter or interview set.

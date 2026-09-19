@@ -24,6 +24,11 @@
         return response;
     }
     const json = (method, body) => ({method, headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+    // The server says when the notes are being turned into memories; only then
+    // does the page say so, so a switched-off capture is never claimed.
+    const captureNote = response => response.headers.get('X-Memory-Capture') === 'started'
+        ? ' Your notes are now being read for facts about you to keep as memories. Any new ones appear in the Memories tab once that is done, where you can change or delete them.'
+        : '';
     async function run(label, action) {
         const user = validUser();
         if (!user) { status('Select a single user to write a letter.'); return; }
@@ -171,9 +176,10 @@
                 if (!el('job').value) throw new Error('Choose a vacancy first.');
                 const body = {job_id: Number(el('job').value), language: el('language').value,
                     cv_slug: el('cv').value || null, recipient: el('recipient').value, notes: el('notes').value};
-                const letter = await (await api('/generate', ctx, json('POST', body))).json();
+                const response = await api('/generate', ctx, json('POST', body));
+                const letter = await response.json();
                 fresh(ctx); show(letter); dirty = true; count();
-                status('Your full cover letter is ready. Review the wording and facts, then save or download.');
+                status('Your full cover letter is ready. Review the wording and facts, then save or download.' + captureNote(response));
             });
         };
         el('load').onclick = () => {
