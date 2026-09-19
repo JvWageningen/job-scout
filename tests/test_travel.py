@@ -494,6 +494,10 @@ def test_geocode_no_results_does_not_retry(monkeypatch: pytest.MonkeyPatch) -> N
     assert call_count == 1
 
 
+# One tick of the coarsest monotonic clock the suite runs on (Windows).
+_CLOCK_STEP_S = 0.016
+
+
 def test_throttle_enforces_minimum_interval(monkeypatch: pytest.MonkeyPatch) -> None:
     """Back-to-back Nominatim calls are spaced at least the minimum interval apart."""
     import time
@@ -508,7 +512,9 @@ def test_throttle_enforces_minimum_interval(monkeypatch: pytest.MonkeyPatch) -> 
     _throttle_nominatim()
     elapsed = time.monotonic() - start
 
-    assert elapsed >= 0.2
+    # Windows advances time.monotonic() in steps of about 15.6 ms, so a sleep
+    # that honoured the interval can measure up to one step short.
+    assert elapsed >= 0.2 - _CLOCK_STEP_S
 
 
 # ---------------------------------------------------------------------------
