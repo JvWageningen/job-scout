@@ -71,6 +71,7 @@ from job_scout.letters.cli import letter as letter_group
 from job_scout.letters.models import LetterLanguage
 from job_scout.llm.base import LLMClient, LLMError
 from job_scout.llm.factory import get_llm_client
+from job_scout.memory_cli import memory as memory_group
 from job_scout.models import (
     CareerTrack,
     CompanyResearch,
@@ -1352,6 +1353,7 @@ def cli(verbose: bool) -> None:
 # here is what makes it reachable as 'job-scout cv ...'.
 cli.add_command(cv_group)
 cli.add_command(letter_group)
+cli.add_command(memory_group)
 
 
 @cli.command()

@@ -309,6 +309,7 @@ Stored in `data/users/<name>/config.yaml`. Set them with `job-scout config set
 | `career_tracks` | `[]` | Optional multi-track search. Empty means single-profile mode, using the two fields above unchanged |
 | `cv_path` | `null` | Path to the CV PDF parsed into a structured profile. Must be container-visible when running under Docker |
 | `cv_notes` | `""` | Free-text corrections and additions layered on top of the parsed CV |
+| `memory_auto_capture` | `true` | After a letter or interview set is written, turn the notes you typed for it into [memories](MEMORIES.md). One model call per new notes text; `job-scout memory auto-capture off` does the same as setting it to `false` |
 | `language_preferences` | `["nl", "en"]` | Languages the user will accept listings in |
 | `linkedin_profile_url` | `null` | Used to detect a stale open-ended "current" role in the CV |
 | `linkedin_import_allow_url_fetch` | `false` | Permit the LinkedIn importer to fetch a profile URL rather than only reading a supplied export. `job-scout profile import-linkedin --url` also requires `--allow-fetch` |

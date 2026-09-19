@@ -386,6 +386,9 @@ class Config(BaseModel):
     verify_matches_open: bool = True
     find_official_sources: bool = True
     company_review_enabled: bool = True
+    # Turn the notes typed for a letter or interview into memories after the
+    # generation, one model call per new notes text. See job_scout.memories.
+    memory_auto_capture: bool = True
     linkedin_import_allow_url_fetch: bool = False
     linkedin_profile_url: str | None = None
     schedule_hour: int = 8

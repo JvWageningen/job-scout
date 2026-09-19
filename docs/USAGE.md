@@ -75,6 +75,12 @@ logs directory regardless of this setting; `-v` only affects what reaches your t
 | [`interview questions`](#interview-questions) | Write the questions to ask the employer |
 | [`interview answers`](#interview-answers) | Predict their questions and draft your answers |
 | [`interview export`](#interview-export) | Write a saved interview set to a Word or text file |
+| [`memory list`](#memory-list) | Show the facts job-scout remembers about you |
+| [`memory add`](#memory-add) | Remember a statement about yourself |
+| [`memory edit`](#memory-edit) | Change a memory, or clear its private flag |
+| [`memory delete`](#memory-delete) | Delete memories |
+| [`memory import`](#memory-import) | Turn a text about yourself into memories |
+| [`memory auto-capture`](#memory-auto-capture) | Show or switch capture from letter and interview notes |
 | [`cv list`](#cv-list) | List the stored CV profiles |
 | [`cv serve`](#cv-serve) | Run the CV editor on its own |
 | [`cv render`](#cv-render) | Render a stored CV profile to PDF |
@@ -836,6 +842,109 @@ may hold your own edits, so the command asks before replacing it; without a term
 answer on it leaves the file as it is and exits 1. Exits 1 when nothing is saved for
 that vacancy yet; when the language you chose is not saved but the other one is, the
 message names it. See [Saving and downloading](INTERVIEW_QUESTIONS.md#saving-and-downloading).
+
+---
+
+## Memories
+
+Facts about you that are not on your CV, or not for every vacancy, kept as short
+statements that letters, interview preparation and CV tailoring use where they fit the
+vacancy. What a memory holds, how the notes of a letter or interview become memories
+automatically, and what reaches the model are explained in [MEMORIES.md](MEMORIES.md).
+Every command takes `--user TEXT`, which may be left out when there is one user.
+
+### `memory list`
+
+```bash
+uv run job-scout memory list --user alex
+uv run job-scout memory list --search "retail kassa" --user alex
+```
+
+Prints every memory, newest first, with its id, kind, where it came from and when, its
+tags and hint, where it may be used, and whether it is private.
+
+| Option | Default | Description |
+|---|---|---|
+| `--search TEXT` | none | Only memories in which every word occurs, in the text, tags, hint or kind; case and accents are ignored |
+
+### `memory add`
+
+```bash
+uv run job-scout memory add "Ik heb in 2022 bij Voorbeeld Retail 40 winkels naar een nieuw kassasysteem gemigreerd." \
+  --kind project --tags "retail, kassasysteem" --hint "Gebruik voor retail IT rollen." --user alex
+uv run job-scout memory add "Ik wil maximaal 32 uur per week werken." \
+  --kind preference --use letter --use interview --user alex
+```
+
+Stores a statement as it is written; nothing is sent to a model. When a memory already
+says much the same, the new one is still saved and the command names the old one.
+
+| Argument / option | Default | Description |
+|---|---|---|
+| `TEXT` | required | The statement, at most 600 characters |
+| `--kind` | `other` | `project`, `achievement`, `skill`, `experience`, `education`, `preference`, `constraint`, `personal` or `other` |
+| `--tags TEXT` | none | Keywords separated by commas; lower-cased, at most 8 |
+| `--hint TEXT` | none | When it applies, in one sentence of at most 200 characters |
+| `--use [cv\|letter\|interview]` | all three | Where it may be used; repeat for more than one |
+| `--private` | off | Store it but never send it to a model |
+
+### `memory edit`
+
+```bash
+uv run job-scout memory edit 12 --not-private --user alex
+uv run job-scout memory edit 12 --tags "cro, a/b testing" --use letter --user alex
+```
+
+Changes only what you pass; where the memory came from and when stay as they were.
+
+| Argument / option | Default | Description |
+|---|---|---|
+| `MEMORY_ID` | required | The id `memory list` shows |
+| `--text`, `--kind`, `--tags`, `--hint` | unchanged | New values, as for `memory add` |
+| `--use [cv\|letter\|interview]` | unchanged | Replaces the uses; repeat for more than one |
+| `--private` / `--not-private` | unchanged | Set or clear the private flag |
+
+### `memory delete`
+
+```bash
+uv run job-scout memory delete 12 15 --user alex
+uv run job-scout memory delete --all --user alex
+```
+
+Deletes the memories with these ids and exits 1 when one of them does not exist.
+`--all` deletes every memory after asking; `--yes` skips the question. Notes that were
+already turned into memories stay recorded, so a deleted memory does not come back when
+you generate a letter again with the same notes.
+
+### `memory import`
+
+```bash
+uv run job-scout memory import over-mij.docx --user alex
+uv run job-scout memory import --text "Bij Voorbeeld Retail heb ik ..." --dry-run --user alex
+```
+
+Sends the text to the model once (purpose `cv_parsing`, up to five minutes), prints the
+proposed memories and saves them after asking. Proposals that repeat a memory you
+already have are left out. Reads TXT, MD, PDF, DOCX and ODT files of at most 20,000
+characters of text. Exits 1 when the model's answer cannot be read.
+
+| Argument / option | Default | Description |
+|---|---|---|
+| `FILE` | none | The file to read; give this or `--text` |
+| `--text TEXT` | none | The text itself |
+| `--yes` | off | Save every proposal without asking |
+| `--dry-run` | off | Show the proposals and save nothing |
+
+### `memory auto-capture`
+
+```bash
+uv run job-scout memory auto-capture --user alex
+uv run job-scout memory auto-capture off --user alex
+```
+
+Shows or switches whether the notes you type for a letter or an interview become
+memories after the generation. The same as `config set memory_auto_capture false
+--user alex`.
 
 ---
 

@@ -41,7 +41,7 @@ Everything under `src/job_scout/`. Roughly in pipeline order.
 
 | Module | Role |
 | --- | --- |
-| `cli.py` | Defines the root Click group and the pipeline commands. Also holds the pipeline itself — `_run_pipeline` and the stage helpers — because both front ends call into it. The `cv` and `letter` groups are built in their respective subpackages and attached with `cli.add_command()`. |
+| `cli.py` | Defines the root Click group and the pipeline commands. Also holds the pipeline itself — `_run_pipeline` and the stage helpers — because both front ends call into it. The `cv` and `letter` groups are built in their respective subpackages, and the `memory` group in `memory_cli.py`, and attached with `cli.add_command()`. |
 | `config.py` | Data-directory layout, global/user/secret file loading, the `GLOBAL_FIELDS`/`USER_FIELDS`/`SECRET_FIELDS` split, and type coercion for `config set`. |
 | `models.py` | All Pydantic models. `JobListing` is the value carried through every stage; `Config` is the merged settings object; `CareerTrack`, `TravelTime`, `TrackScore`, `RunStats`, `JobStatus` and the evaluation results hang off them. |
 | `database.py` | Every SQL statement in the project. Schema creation, additive migrations, dedup keys, caches and lifecycle transitions. |
@@ -93,6 +93,9 @@ Everything under `src/job_scout/`. Roughly in pipeline order.
 | `interview_answers.py` | The mirror of `interview_questions.py`: what the *interviewer* asks the candidate, each prediction carrying a draft answer. Same grounding plus the saved STAR stories, the same `company_context` lookups, the same single `behavioral_questions` generation call, and an `InterviewAnswerSet` of `LikelyQuestion` objects with a `kind`, a `why_asked`, the draft, the sources it drew on and an `AnswerFooting` of `strong`, `partial` or `gap`. The hard rule lives in the prompt: an answer may use only the CV facts, the STAR stories and the applicant's notes, and a gap is stated rather than filled. |
 | `interview_store.py` | Keeps every generated interview set under `data/users/<name>/interview/`, one JSON file per vacancy, half (`ask` or `answer`) and language, written atomically like a letter draft. Generating again replaces that file; edited answers are saved over it. Timestamps are kept in UTC. Paths are built from a checked user, a positive vacancy id and two enums, and must sit directly in the user's folder. It also lists the vacancies with saved sets, so the tab still offers one that left the shortlist. |
 | `interview_export.py` | Turns a set, as it is on screen, into an editable Word file (python-docx) or plain text. Both formats are rendered from one list of blocks, so they hold the same content in the same order; fixed labels are Dutch or English to match the set and follow the house style in `writing_style.py`. |
+| `memories.py` | The applicant's memories: facts kept for later letters, interview sets and CV tailoring, often ones left off the CV. The `Memory` models and enums, the per-user store over `Database`, duplicate detection (`same_fact`: equal after normalising, or the same numbers and at least 80% shared word stems), and selection: `select_memories` keeps the memories allowed for one purpose (cv, letter, interview), never a sensitive one, ranks them by tags and words shared with the vacancy and trims them to 25. `memories_payload` turns them into labelled prompt material (`memory 3`) without their origin; `MEMORY_GUIDE` and `MEMORY_CV_RULE` are the prompt sentences that go with it. See [Memories](docs/MEMORIES.md). |
+| `memory_extract.py` | Turns free text into memory drafts with one `cv_parsing` call (300 s timeout): the model judges what is worth keeping and generalises it, code cleans the wording into the house style, enforces the limits, keeps wishes and conditions off the CV, marks a plainly private matter sensitive, drops known facts and caps the drafts at 20. Sensitive memories are never shown to the model. `capture_from_notes` runs it once per notes text of a letter or interview request, stores the result and never raises; the per-user `memory_auto_capture` setting switches it off. |
+| `memory_cli.py` | The `memory` CLI group: `list`, `add`, `edit`, `delete`, `import` and `auto-capture`. |
 | `letters/` | Per-user examples, style guides, CV-grounded letter generation, structured draft storage, PDF rendering, and the `/api/letters` router and `letter` CLI group. See [Cover Letter Writer](docs/LETTER_WRITER.md). |
 | `cv/` | The CV builder — a self-contained subpackage with its own document model, storage, renderer, FastAPI router, Click group and front end. See [the CV subpackage](#the-cv-subpackage) below. |
 
@@ -233,7 +236,7 @@ dedup, upserts instead of inserting, and re-notifies existing matches.
 ## Persistence model
 
 One SQLite file per user, opened per operation through a context manager that commits on
-success and rolls back on exception. `database.py` creates 14 tables and applies additive
+success and rolls back on exception. `database.py` creates 16 tables and applies additive
 `ALTER TABLE` migrations on every open, so an older database upgrades in place.
 
 | Table | Holds |
@@ -246,6 +249,8 @@ success and rolls back on exception. `database.py` creates 14 tables and applies
 | `company_research`, `company_reviews`, `person_search_cache` | Enrichment results, cached with a max age. Research rows are keyed by job id and also carry `company_key`, the lower-cased, whitespace-collapsed company name the review cache uses, so any vacancy at the same employer finds them. Under a placeholder name ("Unknown", blank) only the vacancy's own row is read. Older databases gain the column on open and have it filled from the vacancy's company. |
 | `company_lookups` | One row per company key, kind (`research`, `review`) and outcome (`found`, `nothing_found`, `failed`) with the time it last happened. Read by `company_lookups.py` to decide whether a lookup may run again. |
 | `star_stories` | The reusable STAR story bank, read by `interview_prep.py` to match stories to questions and by `interview_answers.py` as the only anecdotes a draft answer may contain. |
+| `memories` | The applicant's memories: text, kind, tags and uses (as JSON), hint, the private flag, origin and the vacancy it came from. A database whose table lacks a column added later gains it with its default on open. Read and written only through `memories.py`. |
+| `captured_notes` | One row per notes text turned into memories, keyed by a hash of the normalised text, with `memories_added` NULL while the capture runs. The claim is one upsert, so two captures of the same notes cannot both run; an unfinished claim older than 30 minutes may be taken over. Kept when memories are deleted. |
 | `meta` | Small key/value rows; currently the evaluation fingerprint. |
 
 **Dedup keys.** `jobs.url` carries a `UNIQUE` constraint and is the primary identity. The

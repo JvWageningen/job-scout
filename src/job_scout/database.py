@@ -6,7 +6,7 @@ import contextlib
 import json
 import re
 import sqlite3
-from collections.abc import Generator
+from collections.abc import Generator, Mapping, Sequence
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -165,6 +165,119 @@ def _parse_track_scores(raw: object) -> list[TrackScore]:
         if isinstance(item, dict) and item.get("track_id"):
             scores.append(TrackScore(**item))
     return scores
+
+
+# Every column of the memories table besides id, text and the two timestamps,
+# with the default a row written before the column existed gets. Adding a
+# column here is enough: a database without it gains it when it is opened.
+_MEMORY_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("kind", "TEXT NOT NULL DEFAULT 'other'"),
+    ("tags_json", "TEXT NOT NULL DEFAULT '[]'"),
+    ("hint", "TEXT NOT NULL DEFAULT ''"),
+    ("use_in_json", """TEXT NOT NULL DEFAULT '["cv","letter","interview"]'"""),
+    ("sensitive", "INTEGER NOT NULL DEFAULT 0"),
+    ("source", "TEXT NOT NULL DEFAULT 'manual'"),
+    ("source_detail", "TEXT NOT NULL DEFAULT ''"),
+    ("job_id", "INTEGER"),
+)
+_MEMORY_SELECT = (
+    "SELECT id, text, kind, tags_json, hint, use_in_json, sensitive, source, "
+    "source_detail, job_id, created_at, updated_at FROM memories"
+)
+
+
+def _add_missing_columns(
+    conn: sqlite3.Connection, table: str, columns: tuple[tuple[str, str], ...]
+) -> None:
+    """Add every listed column a table does not have yet.
+
+    Args:
+        conn: Open connection to use.
+        table: A table name from this module, never from input.
+        columns: Column names with their type and default.
+    """
+    present = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+    for name, typedef in columns:
+        if name not in present:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {typedef}")
+
+
+def _json_strings(raw: object) -> list[str]:
+    """Read a stored JSON list of strings, tolerating anything else.
+
+    Args:
+        raw: The stored value.
+
+    Returns:
+        The strings in the list; empty when the value is not a JSON list.
+    """
+    try:
+        items = json.loads(raw) if isinstance(raw, str) else []
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(items, list):
+        return []
+    return [item for item in items if isinstance(item, str)]
+
+
+def _memory_row(row: sqlite3.Row) -> dict[str, Any]:
+    """Turn a stored memory into plain values.
+
+    Args:
+        row: A row selected with ``_MEMORY_SELECT``.
+
+    Returns:
+        The memory's fields, with the lists decoded and the flag a bool.
+    """
+    return {
+        "id": row["id"],
+        "text": row["text"],
+        "kind": row["kind"],
+        "tags": _json_strings(row["tags_json"]),
+        "hint": row["hint"],
+        "use_in": _json_strings(row["use_in_json"]),
+        "sensitive": bool(row["sensitive"]),
+        "source": row["source"],
+        "source_detail": row["source_detail"],
+        "job_id": row["job_id"],
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+    }
+
+
+def _json_list(value: object) -> str:
+    """Write a list of strings the way the memories table keeps it.
+
+    Args:
+        value: A list or tuple; anything else is stored as an empty list.
+
+    Returns:
+        The list as JSON.
+    """
+    items = value if isinstance(value, list | tuple) else []
+    return json.dumps([str(item) for item in items], ensure_ascii=False)
+
+
+def _memory_content_values(memory: Mapping[str, Any]) -> tuple[object, ...]:
+    """Order the editable fields of a memory for its columns.
+
+    Args:
+        memory: At least text, kind, tags, hint, use_in and sensitive.
+
+    Returns:
+        The values for text, kind, tags_json, hint, use_in_json and sensitive.
+
+    Raises:
+        KeyError: If one of those fields is missing.
+    """
+    return (
+        memory["text"],
+        memory["kind"],
+        _json_list(memory["tags"]),
+        memory["hint"],
+        _json_list(memory["use_in"]),
+        int(bool(memory["sensitive"])),
+    )
 
 
 class Database:
@@ -410,6 +523,7 @@ class Database:
                     updated_at TEXT NOT NULL
                 )
             """)
+            self._create_memories(conn)
 
     def _migrate_company_research(self, conn: sqlite3.Connection) -> None:
         """Give every research row the company key it can be found by.
@@ -457,6 +571,41 @@ class Database:
                 outcome TEXT NOT NULL,
                 looked_up_at TEXT NOT NULL,
                 PRIMARY KEY (company_key, kind, outcome)
+            )
+        """)
+
+    @staticmethod
+    def _create_memories(conn: sqlite3.Connection) -> None:
+        """Create the applicant's memories and the record of captured notes.
+
+        A database from before memories existed gets both tables, and one
+        whose memories table lacks a column added since gets that column with
+        its default, so nothing stored is lost. See :mod:`job_scout.memories`.
+
+        Args:
+            conn: Open connection to use.
+        """
+        columns = ",\n".join(f"{name} {typedef}" for name, typedef in _MEMORY_COLUMNS)
+        conn.execute(f"""
+            CREATE TABLE IF NOT EXISTS memories (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                text TEXT NOT NULL,
+                {columns},
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+        """)
+        _add_missing_columns(conn, "memories", _MEMORY_COLUMNS)
+        # One row per notes text that was turned into memories, keyed by its
+        # hash. memories_added stays NULL while the extraction runs, which is
+        # what keeps two captures of the same notes from both running.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS captured_notes (
+                notes_hash TEXT PRIMARY KEY,
+                source TEXT NOT NULL,
+                job_id INTEGER,
+                claimed_at TEXT NOT NULL,
+                memories_added INTEGER
             )
         """)
 
@@ -1983,3 +2132,203 @@ class Database:
                 (story_id,),
             )
             return cursor.rowcount > 0
+
+    # -- Memories ----------------------------------------------------------------
+
+    def add_memories(self, memories: Sequence[Mapping[str, Any]]) -> list[int]:
+        """Store new memories in one transaction.
+
+        Args:
+            memories: Each with text, kind, tags, hint, use_in, sensitive,
+                source, source_detail and job_id, already validated by
+                :mod:`job_scout.memories`.
+
+        Returns:
+            The new ids, in the order the memories were given.
+        """
+        now = datetime.now(UTC).isoformat()
+        ids: list[int] = []
+        with self._conn() as conn:
+            for memory in memories:
+                origin = (memory["source"], memory["source_detail"], memory["job_id"])
+                cursor = conn.execute(
+                    "INSERT INTO memories (text, kind, tags_json, hint, use_in_json, "
+                    "sensitive, source, source_detail, job_id, created_at, "
+                    "updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (*_memory_content_values(memory), *origin, now, now),
+                )
+                ids.append(cursor.lastrowid or 0)
+        return ids
+
+    def get_memories(self) -> list[dict[str, Any]]:
+        """Return every stored memory, newest first.
+
+        Returns:
+            One dict per memory with the fields of :func:`_memory_row`.
+        """
+        with self._conn() as conn:
+            rows = conn.execute(
+                f"{_MEMORY_SELECT} ORDER BY created_at DESC, id DESC"
+            ).fetchall()
+        return [_memory_row(row) for row in rows]
+
+    def get_memory(self, memory_id: int) -> dict[str, Any] | None:
+        """Return one stored memory.
+
+        Args:
+            memory_id: The memory's id.
+
+        Returns:
+            The memory's fields, or None when there is no such memory.
+        """
+        with self._conn() as conn:
+            row = conn.execute(
+                f"{_MEMORY_SELECT} WHERE id = ?", (memory_id,)
+            ).fetchone()
+        return _memory_row(row) if row else None
+
+    def update_memory(self, memory_id: int, content: Mapping[str, Any]) -> bool:
+        """Replace the editable fields of a stored memory.
+
+        Where the memory came from and when it was made are not changed.
+
+        Args:
+            memory_id: The memory's id.
+            content: The new text, kind, tags, hint, use_in and sensitive, as
+                validated by :mod:`job_scout.memories`. Other keys are ignored.
+
+        Returns:
+            True when the memory exists, False otherwise.
+
+        Raises:
+            KeyError: If one of the editable fields is missing.
+        """
+        values = _memory_content_values(content)
+        now = datetime.now(UTC).isoformat()
+        with self._conn() as conn:
+            cursor = conn.execute(
+                "UPDATE memories SET text = ?, kind = ?, tags_json = ?, hint = ?, "
+                "use_in_json = ?, sensitive = ?, updated_at = ? WHERE id = ?",
+                (*values, now, memory_id),
+            )
+            return cursor.rowcount > 0
+
+    def delete_memory(self, memory_id: int) -> bool:
+        """Delete one memory.
+
+        Args:
+            memory_id: The memory's id.
+
+        Returns:
+            True when a memory was deleted, False when there was none.
+        """
+        with self._conn() as conn:
+            cursor = conn.execute("DELETE FROM memories WHERE id = ?", (memory_id,))
+            return cursor.rowcount > 0
+
+    def delete_all_memories(self) -> int:
+        """Delete every memory.
+
+        The record of captured notes is kept, so notes that were already
+        turned into memories do not bring deleted memories back.
+
+        Returns:
+            How many memories were deleted.
+        """
+        with self._conn() as conn:
+            return conn.execute("DELETE FROM memories").rowcount
+
+    def claim_notes_capture(
+        self,
+        notes_hash: str,
+        *,
+        source: str,
+        job_id: int | None,
+        stale_before: datetime,
+    ) -> bool:
+        """Claim a notes text for capture, unless it is captured or being captured.
+
+        Claiming and checking are one statement, so two captures of the same
+        notes that start together cannot both run. A claim that never finished
+        and was made before ``stale_before`` is taken over: the process that
+        made it was stopped halfway.
+
+        Args:
+            notes_hash: Hash of the normalised notes text.
+            source: Where the notes were typed, e.g. "letter_notes".
+            job_id: The vacancy the notes were typed for, if any.
+            stale_before: Unfinished claims older than this may be taken over.
+
+        Returns:
+            True when this caller may capture the notes now.
+        """
+        now = datetime.now(UTC).isoformat()
+        with self._conn() as conn:
+            cursor = conn.execute(
+                """INSERT INTO captured_notes (notes_hash, source, job_id, claimed_at)
+                   VALUES (?, ?, ?, ?)
+                   ON CONFLICT(notes_hash) DO UPDATE SET
+                       source = excluded.source,
+                       job_id = excluded.job_id,
+                       claimed_at = excluded.claimed_at
+                   WHERE captured_notes.memories_added IS NULL
+                     AND captured_notes.claimed_at < ?""",
+                (
+                    notes_hash,
+                    source,
+                    job_id,
+                    now,
+                    stale_before.astimezone(UTC).isoformat(),
+                ),
+            )
+            return cursor.rowcount > 0
+
+    def complete_notes_capture(self, notes_hash: str, added: int) -> None:
+        """Record that a claimed notes text was captured.
+
+        Args:
+            notes_hash: Hash of the normalised notes text.
+            added: How many memories the notes produced.
+        """
+        with self._conn() as conn:
+            conn.execute(
+                "UPDATE captured_notes SET memories_added = ? WHERE notes_hash = ?",
+                (added, notes_hash),
+            )
+
+    def release_notes_capture(self, notes_hash: str) -> None:
+        """Give up an unfinished claim, so the notes can be captured later.
+
+        Args:
+            notes_hash: Hash of the normalised notes text.
+        """
+        with self._conn() as conn:
+            conn.execute(
+                "DELETE FROM captured_notes "
+                "WHERE notes_hash = ? AND memories_added IS NULL",
+                (notes_hash,),
+            )
+
+    def get_notes_capture(self, notes_hash: str) -> dict[str, Any] | None:
+        """Return what is recorded about capturing a notes text.
+
+        Args:
+            notes_hash: Hash of the normalised notes text.
+
+        Returns:
+            ``claimed_at`` (an aware datetime, or None when unreadable) and
+            ``memories_added`` (None while the capture runs), or None when the
+            notes were never claimed.
+        """
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT claimed_at, memories_added FROM captured_notes "
+                "WHERE notes_hash = ?",
+                (notes_hash,),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "claimed_at": _parse_time(row["claimed_at"]),
+            "memories_added": row["memories_added"],
+        }
