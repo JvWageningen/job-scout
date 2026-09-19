@@ -222,6 +222,23 @@ def test_changing_or_deleting_a_memory_that_is_gone_is_a_404(api: TestClient) ->
     assert api.delete(f"/api/memories/99?user={USER}").status_code == 404
 
 
+@pytest.mark.parametrize("number", ["0", str(2**63), "99999999999999999999"])
+def test_a_memory_number_sqlite_cannot_hold_is_refused(
+    api: TestClient, number: str
+) -> None:
+    """A number beyond SQLite's integers is a bad request, not a server error."""
+    stored = add_memory(USER, MemoryDraft(text=GERMAN))
+    content = {"text": "Overschreven."}
+
+    changed = api.put(f"/api/memories/{number}?user={USER}", json=content)
+    deleted = api.delete(f"/api/memories/{number}?user={USER}")
+
+    assert changed.status_code == 422
+    assert deleted.status_code == 422
+    assert [m.id for m in list_memories(USER)] == [stored.id]
+    assert list_forgotten(USER) == []
+
+
 def test_a_deleted_memory_is_remembered_by_its_wording_until_erased(
     api: TestClient,
 ) -> None:
@@ -320,6 +337,27 @@ def test_proposals_leave_out_what_is_already_remembered(api: TestClient) -> None
     response = api.post(f"/api/memories/extract?user={USER}", json={"text": PASTED})
 
     assert [d["text"] for d in response.json()["drafts"]] == [MIGRATION]
+
+
+def test_proposing_shows_the_model_your_memories_but_never_a_private_one(
+    api: TestClient, model: FakeLLMClient
+) -> None:
+    """What the tab says is sent when proposing is what the prompt holds."""
+    add_memory(USER, MemoryDraft(text=GERMAN))
+    private = "Ik ben in 2024 hersteld van een burn-out."
+    add_memory(USER, MemoryDraft(text=private, sensitive=True))
+
+    api.post(f"/api/memories/extract?user={USER}", json={"text": PASTED})
+
+    prompt = model.calls[0][0]
+    assert GERMAN in prompt
+    assert private not in prompt
+    page = (STATIC / "index.html").read_text(encoding="utf-8")
+    start = page.index('<section id="memories-section"')
+    section = page[start : page.index("</section>", start)]
+    assert "only as part of" not in section
+    assert "whenever new memories are proposed" in section
+    assert "every automatic capture sends it" in section
 
 
 @pytest.mark.parametrize(

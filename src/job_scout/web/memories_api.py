@@ -20,7 +20,7 @@ from collections.abc import Iterator
 from typing import Annotated
 
 import yaml
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Path, UploadFile
 from loguru import logger
 from pydantic import BaseModel, Field, StrictBool
 from starlette.responses import Response
@@ -257,6 +257,9 @@ def checked_memory_user(user: str, response: Response) -> Iterator[str]:
 
 
 MemoryUser = Annotated[str, Depends(checked_memory_user)]
+# A memory number SQLite can hold. A larger one cannot be bound to a query at
+# all (OverflowError), so it is refused as a bad request before the handler.
+MemoryId = Annotated[int, Path(ge=1, le=2**63 - 1)]
 
 
 def build_memories_router() -> APIRouter:
@@ -383,7 +386,9 @@ def _add_memory_routes(router: APIRouter) -> None:
     """
 
     @router.put("/{memory_id}")
-    def update(memory_id: int, body: MemoryContent, user: MemoryUser) -> MemoryItem:
+    def update(
+        memory_id: MemoryId, body: MemoryContent, user: MemoryUser
+    ) -> MemoryItem:
         """Replace a memory's text, kind, tags, hint, uses and private flag."""
         changed = update_memory(user, memory_id, body)
         if changed is None:
@@ -391,7 +396,7 @@ def _add_memory_routes(router: APIRouter) -> None:
         return MemoryItem.of(changed)
 
     @router.delete("/{memory_id}", status_code=204)
-    def delete(memory_id: int, user: MemoryUser) -> Response:
+    def delete(memory_id: MemoryId, user: MemoryUser) -> Response:
         """Delete one memory; automatic capture will not bring it back."""
         if not delete_memory(user, memory_id):
             raise HTTPException(404, _NOT_FOUND)

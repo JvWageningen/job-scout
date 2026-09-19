@@ -59,8 +59,9 @@ matter again become memories; instructions for that one document ("make it short
 memory is generalised so it stands on its own without the vacancy it came from, but
 never embellished. In the dashboard this happens in the background once the letter or
 interview set is on your screen, so it never makes you wait; the status line then says
-that facts from your notes are being kept, and they appear in the Memories tab within a
-few minutes. Each one says which vacancy's notes it came from.
+that your notes are being read, and any new memories appear in the Memories tab once that
+is done. Notes that hold only instructions, or only facts you already have, add none.
+Each new memory says which vacancy's notes it came from.
 
 The same notes are read only once: generating again with the same notes costs no second
 model call, and neither does generating the other half of an interview with them. Notes
@@ -134,6 +135,9 @@ Choose a single user first; everything in it belongs to that user.
   add by hand, so you can correct the wording, the tags, the hint, where it is used and
   the private flag before you keep it. **Save ticked memories** stores the ticked ones
   together; **Discard proposals** drops them all. Facts you already have are not proposed.
+  Proposals from a file are marked with the file's name as long as the box holds that
+  file's text or a part of it; once you type or paste something else, they are marked as
+  pasted text.
 - **Your memories.** Newest first, each with its text, hint and tags, its label (such as
   *memory 12*, the name a draft interview answer uses when it cites the memory), its kind,
   where it may be used and where it came from and when: added by hand, taken from a text
@@ -153,14 +157,20 @@ started a capture.
 
 Memories live in your own database (`data/users/<name>/jobs.db`, tables `memories`,
 `captured_notes` and `forgotten_memories`), like everything else about you. They reach
-the configured model provider only as part of the applicant facts for a letter,
-interview set or CV, the way your CV does. Private memories never do: not in those
-prompts, not as existing memories shown to the model when it proposes new ones, and not
-as deleted ones it is told to leave out. Two things do send text to the model on
-purpose: **Propose memories** sends the text you pasted, and automatic capture sends the
-notes you typed a second time, after the letter or interview set was written from them.
-The wording of a deleted memory stays in `forgotten_memories` until you erase the list
-in the tab or run `job-scout memory forgotten --clear`.
+the configured model provider in two ways:
+
+- As part of the applicant facts for a letter, interview set or CV, the way your CV does.
+- Whenever new memories are proposed. **Propose memories** (and `memory import`) sends
+  the text you gave, and automatic capture sends the notes you typed a second time,
+  after the letter or interview set was written from them. Both send along up to 40 of
+  your memories, the ones closest to that text, so that the model leaves out what you
+  already have. Automatic capture also sends the wording of up to 40 deleted memories,
+  so that it does not propose those facts again.
+
+Private memories never reach a model: not in the applicant facts, not as existing
+memories and not as deleted ones. The wording of a deleted memory stays in
+`forgotten_memories`, and goes along with every automatic capture, until you erase the
+list in the tab or run `job-scout memory forgotten --clear`.
 
 The dashboard's memory routes sit under `/api/memories`, behind the same token as every
 other route, and each reads and writes only the user named in the request.
@@ -211,9 +221,10 @@ Leave `forgotten` empty there, so the applicant can take a deleted fact back on 
 ### HTTP API
 
 `src/job_scout/web/memories_api.py` holds the dashboard's router, mounted under
-`/api/memories`. Every route takes `?user=`; an unknown or unsafe user is a 400, a model
-failure a 502 with a vague message (the real cause goes to the log), unreadable data a
-503. Responses are not cached.
+`/api/memories`. Every route takes `?user=`; an unknown or unsafe user is a 400, a memory
+number below 1 or beyond what SQLite can hold a 422, a model failure a 502 with a vague
+message (the real cause goes to the log), unreadable data a 503. Responses are not
+cached.
 
 | Route | What it does |
 |---|---|

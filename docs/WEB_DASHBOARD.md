@@ -195,6 +195,8 @@ tags fit the vacancy, and leave private ones out entirely.
   PDF, DOCX or ODT file into the box, and press **Propose memories**. Your configured
   model proposes memories (at most 20 per run, from at most 20,000 characters); you tick
   the ones to keep, correct them, and save them together. Nothing is saved before that.
+  The model also sees your memories, private ones excepted, so it leaves out what you
+  already have.
 - **Your memories**: newest first, with the label a draft answer cites them by, where
   each may be used, whether it is private, and where it came from and when. Search
   filters on text, tags, hint and kind; each memory can be edited in place or deleted
@@ -204,8 +206,11 @@ tags fit the vacancy, and leave private ones out entirely.
 
 With automatic capture on, the notes you type in the Cover Letter Writer and Interview
 Questions tabs are read once more after the letter or interview set is on screen, in the
-background, and the facts about you in them are saved here with the vacancy they came
-from. Both tabs say so when it happens. The same notes are read only once. See
+background, and any new facts about you in them are saved here with the vacancy they came
+from. Both tabs say so when it happens. The same notes are read only once. That reading
+sends your notes to the model a second time, along with your memories and the wording of
+the ones you deleted, private ones excepted, so that it does not propose those again.
+Erasing the list of deleted memories stops sending their wording. See
 [Memories](MEMORIES.md) for what a memory holds, how memories are chosen for a vacancy
 and what stays private.
 

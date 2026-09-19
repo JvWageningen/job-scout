@@ -32,7 +32,13 @@ from job_scout.interview_questions import (
     QuestionTheme,
 )
 from job_scout.letters.models import Letter, LetterLanguage, LetterRequest
-from job_scout.memories import MemorySource, list_memories
+from job_scout.memories import (
+    MemoryDraft,
+    MemorySource,
+    add_memory,
+    delete_memory,
+    list_memories,
+)
 from job_scout.memory_extract import CLAIM_STALE_AFTER, notes_hash, set_auto_capture
 from job_scout.models import JobListing, JobStatus
 from job_scout.web.app import create_app
@@ -361,6 +367,31 @@ def test_the_capture_stores_the_facts_from_the_notes_once(
     assert CAPTURE_HEADER not in again.headers
     assert len(model.calls) == 1
     assert len(list_memories(USER)) == 1
+
+
+def test_a_capture_sends_deleted_wording_but_never_a_private_memory(
+    job_id: int, written: list[object], model: FakeLLMClient
+) -> None:
+    """What the Memories tab says a capture sends is what the prompt holds."""
+    kept = add_memory(USER, MemoryDraft(text="Ik spreek vloeiend Duits."))
+    private = add_memory(USER, MemoryDraft(text="Ik ben mantelzorger.", sensitive=True))
+    deleted = add_memory(USER, MemoryDraft(text="Ik rijd graag naar Groningen."))
+    deleted_private = add_memory(
+        USER,
+        MemoryDraft(
+            text="Ik zorg twee dagen per week voor mijn moeder.", sensitive=True
+        ),
+    )
+    assert delete_memory(USER, deleted.id)
+    assert delete_memory(USER, deleted_private.id)
+
+    _letter(job_id, NOTES)
+
+    prompt = model.calls[0][0]
+    assert kept.text in prompt
+    assert deleted.text in prompt
+    assert private.text not in prompt
+    assert deleted_private.text not in prompt
 
 
 def test_a_vacancy_without_a_title_or_company_is_still_named(

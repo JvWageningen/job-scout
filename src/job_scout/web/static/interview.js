@@ -531,7 +531,7 @@
     // The server says when the notes are being turned into memories; only then
     // does the page say so, so a switched-off capture is never claimed.
     const captureNote = response => response.headers.get('X-Memory-Capture') === 'started'
-        ? ' Facts about you from your notes are being kept as memories. They appear in the Memories tab within a few minutes, where you can change or delete them.'
+        ? ' Your notes are now being read for facts about you to keep as memories. Any new ones appear in the Memories tab once that is done, where you can change or delete them.'
         : '';
     // Whether the server kept what it just generated; if not, say so plainly.
     function ready(response, what, advice) {

@@ -127,7 +127,9 @@ selected examples to your configured LLM. Learning style sends example text. Bot
 use the existing `cover_letter` routing purpose; see [LLM providers](LLM_PROVIDERS.md).
 In the dashboard, with automatic memory capture on, notes of three words or more are
 sent once more afterwards, in the background, to turn the facts about you in them into
-memories; the same notes are sent only once.
+memories, together with your non-private memories and the wording of non-private deleted
+ones so that those are not proposed again (see [Memories](MEMORIES.md#privacy)); the
+same notes are sent only once.
 A local provider keeps these requests on your own infrastructure; a hosted provider
 receives them. No new service or API key is required.
 

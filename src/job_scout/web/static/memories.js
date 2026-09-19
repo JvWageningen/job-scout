@@ -32,9 +32,10 @@
     // being edited with its fields, kept across a redraw so that searching
     // does not throw typing away.
     let memories = [], proposals = [], editing = null, addForm = null, formCount = 0;
-    // The file the text box was filled from, named as the proposals' origin,
-    // and whether the last text may hold more than was proposed.
-    let fileName = '', moreInText = false;
+    // The file the text box was filled from and the text it gave, so that the
+    // proposals name the file only while the box still holds that text or part
+    // of it, and whether the last text may hold more than was proposed.
+    let fileName = '', fileText = '', moreInText = false;
     const validUser = () => currentUser && currentUser !== 'all' ? currentUser : null;
     const status = (text, error = false) => {
         el('status').textContent = text;
@@ -321,7 +322,8 @@
         });
     }
     function remove(memory) {
-        if (!confirm('Delete this memory? It is no longer used, and notes you type again will not bring it back.')) return;
+        if (!confirm('Delete this memory? It is no longer used, and notes you type again will not bring it back: '
+            + 'its wording is kept under Deleted memories until you erase that list.')) return;
         run('Deleting the memory...', async ctx => {
             await api('/' + memory.id, ctx, {method: 'DELETE'});
             fresh(ctx);
@@ -364,7 +366,7 @@
     function reset() {
         epoch++;
         busy = 0; loadedUser = null; memories = []; proposals = []; editing = null;
-        fileName = ''; moreInText = false;
+        fileName = ''; fileText = ''; moreInText = false;
         el('workspace').disabled = true;
         newAddForm();
         ['list', 'proposal-list', 'forgotten'].forEach(id => el(id).replaceChildren());
@@ -417,6 +419,7 @@
                 fresh(ctx);
                 el('text').value = data.text;
                 fileName = data.name;
+                fileText = data.text;
                 status(data.text.length > data.max_chars
                     ? `${data.name} holds ${data.text.length.toLocaleString('en')} characters, and at most ${data.max_chars.toLocaleString('en')} are read at a time. Shorten the text, or propose memories from one part and then the next.`
                     : `Read ${data.name}. Check the text, then press Propose memories.`);
@@ -424,6 +427,14 @@
                 el('file').value = '';
             }
         });
+    }
+    // Where a text came from: the file it was read from while every line in
+    // the box is still part of that file's text (kept, shortened, or one part
+    // of it at a time); otherwise pasted, which the server names itself.
+    function textOrigin(text) {
+        if (!fileName) return '';
+        const lines = text.split('\n').map(line => line.trim()).filter(Boolean);
+        return lines.every(line => fileText.includes(line)) ? `file ${fileName}` : '';
     }
     function propose() {
         const text = el('text').value.trim();
@@ -434,7 +445,7 @@
         }
         if (proposals.length && !confirm('Replace the proposals you have not saved yet?')) return;
         run('Reading your text... This can take a few minutes.', async ctx => {
-            const body = {text, source_detail: fileName ? `file ${fileName}` : ''};
+            const body = {text, source_detail: textOrigin(text)};
             const data = await (await api('/extract', ctx, json('POST', body))).json();
             fresh(ctx);
             showProposals(data.drafts, data.truncated);
@@ -512,7 +523,6 @@
         });
         el('add').onclick = addMemory;
         el('file').addEventListener('change', readFile);
-        el('text').addEventListener('input', () => { if (!el('text').value.trim()) fileName = ''; });
         el('propose').onclick = propose;
         el('save-proposals').onclick = saveProposals;
         el('discard').onclick = () => {
