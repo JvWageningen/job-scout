@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Collection
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
@@ -74,6 +75,12 @@ from job_scout.letters.language import detect_language
 from job_scout.letters.models import LetterLanguage
 from job_scout.letters.writer import LetterError, require_user
 from job_scout.llm.base import LLMClient, LLMError
+from job_scout.memories import (
+    MEMORIES_SOURCE_KEY,
+    MemoryUse,
+    memory_label,
+    memory_labels,
+)
 from job_scout.models import CompanyResearch, CompanyReview, JobListing
 from job_scout.prose import clean_items
 from job_scout.writing_style import HOUSE_STYLE
@@ -270,7 +277,8 @@ _TASK = (
     "why is one sentence on what the answer would tell THIS candidate, given "
     "their CV, that they could not find out without asking. "
     "grounded_in names the exact source the question came from, for example "
-    '"company review: cons", "vacancy", "your CV" or "culture".\n'
+    '"company review: cons", "vacancy", "your CV" or "culture", or a memory by '
+    'its label, such as "memory 4".\n'
 )
 
 _RULES = (
@@ -364,26 +372,37 @@ def _load_job(user: str, job_id: int) -> tuple[Database, JobListing]:
     return db, job
 
 
-def _facts(user: str, language: LetterLanguage, cv_slug: str | None) -> ApplicantFacts:
+def _facts(
+    user: str, language: LetterLanguage, cv_slug: str | None, job: JobListing
+) -> ApplicantFacts:
     """Collect the applicant's facts from every source they have provided.
 
-    Their own CV file, CV Builder, the parsed profile with any LinkedIn import
-    and their profile description all count; none of them is required, and CV
-    Builder's example CV is never used.
+    Their own CV file, CV Builder, the parsed profile with any LinkedIn import,
+    their profile description and the memories allowed in interviews all
+    count; none of them is required, and CV Builder's example CV is never used.
 
     Args:
         user: Name of an existing user.
         language: Language the questions will be written in.
         cv_slug: A CV Builder profile to prefer, or None.
+        job: The vacancy, which decides which memories fit best.
 
     Returns:
-        The labelled facts. Contact and personal details are never among them.
+        The labelled facts. Contact and personal details are never among them,
+        and neither is a private memory.
 
     Raises:
         InterviewQuestionError: If no source describes the applicant's career.
     """
     try:
-        facts = gather_applicant_facts(user, language, cv_slug=cv_slug, stories=False)
+        facts = gather_applicant_facts(
+            user,
+            language,
+            cv_slug=cv_slug,
+            stories=False,
+            memories=MemoryUse.INTERVIEW,
+            job=job,
+        )
     except ApplicantError as exc:
         raise InterviewQuestionError(
             f"No CV information for these questions: {exc}"
@@ -1072,8 +1091,63 @@ _SOURCE_WORDS = {
 }
 
 
+# A memory named in a citation: "memory 3", "Memory #3" or, in a Dutch set,
+# "herinnering 3". The labels in the prompt are always "memory <id>".
+_MEMORY_WORD = r"(?:memor(?:y|ies)|herinnering(?:en)?)"
+_MEMORY_MENTION = re.compile(rf"\b{_MEMORY_WORD}\b", re.IGNORECASE)
+_MEMORY_NUMBER = re.compile(
+    rf"\b{_MEMORY_WORD}\s*(?:#|nr\.?|no\.?)?\s*(\d+)\b", re.IGNORECASE
+)
+
+
+def unknown_memory_citation(cited: str, labels: Collection[str]) -> bool:
+    """Tell whether a citation names a memory the model was never given.
+
+    Memories are cited by label, like STAR stories, and a label the prompt
+    did not hold names a fact the applicant never gave. Speaking of "your
+    memories" without a number is only true when there were some.
+
+    Args:
+        cited: One citation as the model wrote it, e.g. "memory 3".
+        labels: The labels of the memories in the prompt, case-folded, as
+            :func:`job_scout.memories.memory_labels` returns them.
+
+    Returns:
+        True when the citation names a memory by a label not in ``labels``,
+        or mentions memories while there were none. False for a citation that
+        does not mention a memory at all.
+    """
+    if not _MEMORY_MENTION.search(cited):
+        return False
+    numbers = _MEMORY_NUMBER.findall(cited)
+    if not numbers:
+        return not labels
+    return any(memory_label(int(number)) not in labels for number in numbers)
+
+
+def _unsupported(
+    question: InterviewQuestion, banned: set[str], memories: Collection[str]
+) -> bool:
+    """Tell whether a question's citation names a source it did not have.
+
+    Args:
+        question: A parsed question.
+        banned: Words that name an absent company source.
+        memories: The labels of the memories in the prompt.
+
+    Returns:
+        True when the citation cannot be true.
+    """
+    cited = question.grounded_in.casefold()
+    if any(word in cited for word in banned):
+        return True
+    return unknown_memory_citation(question.grounded_in, memories)
+
+
 def _drop_unsupported(
-    questions: list[InterviewQuestion], missing: list[str]
+    questions: list[InterviewQuestion],
+    missing: list[str],
+    memories: Collection[str] = frozenset(),
 ) -> list[InterviewQuestion]:
     """Discard questions that cite a source which was never in the prompt.
 
@@ -1082,25 +1156,21 @@ def _drop_unsupported(
     from "company review: cons" for a vacancy that has no review, and the
     dashboard prints that claim directly beneath its own banner saying the review
     was missing. Two contradictory statements on one screen destroy the value of
-    both, so the citation is checked rather than believed.
+    both, so the citation is checked rather than believed. A memory is checked
+    by its label the same way.
 
     Args:
         questions: Parsed questions, in order.
         missing: Sources named as absent by :func:`_grounding`.
+        memories: The labels of the memories in the prompt, case-folded.
 
     Returns:
         Only the questions whose citation could be true.
     """
-    if not missing:
-        return questions
     banned = {word for gap in missing for word in _SOURCE_WORDS.get(gap_kind(gap), ())}
-    if not banned:
-        return questions
     kept = []
     for question in questions:
-        cited = question.grounded_in.casefold()
-        claimed = next((word for word in banned if word in cited), None)
-        if claimed is None:
+        if not _unsupported(question, banned, memories):
             kept.append(question)
             continue
         logger.warning(
@@ -1147,7 +1217,7 @@ def generate_interview_questions(
     """
     db, job = _load_job(user, job_id)
     chosen = language or detect_language((job.description or "").strip() or job.title)
-    facts = _facts(user, chosen, cv_slug)
+    facts = _facts(user, chosen, cv_slug, job)
     company = company_context(db, job, job_id, client)
     block, missing = _grounding(job, company, facts, notes)
     logger.debug(
@@ -1160,11 +1230,11 @@ def generate_interview_questions(
         timeout=_QUESTION_TIMEOUT,
     )
     questions = _parse_questions(raw)
-    questions = _drop_unsupported(questions, missing)
+    labels = memory_labels(facts.sources.get(MEMORIES_SOURCE_KEY, []))
+    questions = _drop_unsupported(questions, missing, labels)
     if not questions:
         raise InterviewQuestionError(
-            "Every question cited company information that was not available. "
-            "Try again."
+            "Every question cited information that was not available. Try again."
         )
     logger.info(f"Wrote {len(questions)} interview questions for job {job_id}")
     return InterviewQuestionSet(

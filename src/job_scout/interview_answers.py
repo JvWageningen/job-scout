@@ -9,8 +9,10 @@ The prediction half is the easy half. The answers are what make this worth
 having or worth deleting: an answer that invents an employer, a tool or a number
 is a trap, because the candidate only finds out it was invented while sitting
 opposite the person who asked. So an answer may use nothing beyond the CV, the
-applicant's own STAR stories and their notes, and where the evidence is not
-there the draft says so plainly instead of bluffing.
+applicant's own STAR stories, the memories they allowed in interviews and their
+notes, and where the evidence is not there the draft says so plainly instead of
+bluffing. A story or a memory is cited by its label, and a citation of one the
+model was not given is dropped.
 
 The vacancy, the saved CV and the story bank are used exactly as they are. The
 company half comes from :func:`job_scout.interview_questions.company_context`,
@@ -28,6 +30,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Collection
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
@@ -43,11 +46,16 @@ from job_scout.applicant import (
 )
 from job_scout.config import user_db_path
 from job_scout.database import Database
-from job_scout.interview_questions import CompanyContext, company_context
+from job_scout.interview_questions import (
+    CompanyContext,
+    company_context,
+    unknown_memory_citation,
+)
 from job_scout.letters.language import detect_language
 from job_scout.letters.models import LetterLanguage
 from job_scout.letters.writer import LetterError, require_user
 from job_scout.llm.base import LLMClient
+from job_scout.memories import MEMORIES_SOURCE_KEY, MemoryUse, memory_labels
 from job_scout.models import JobListing
 from job_scout.prose import clean_items
 from job_scout.writing_style import HOUSE_STYLE
@@ -98,8 +106,8 @@ class LikelyQuestion(BaseModel):
     based_on: list[str] = Field(
         default_factory=list,
         max_length=8,
-        description="The CV entries or STAR stories the answer draws on. Empty is "
-        "the correct value when the honest answer draws on nothing.",
+        description="The CV entries, STAR stories or memories the answer draws "
+        "on. Empty is the correct value when the honest answer draws on nothing.",
     )
     footing: AnswerFooting
 
@@ -184,10 +192,10 @@ _TASK = (
     '"footing": "strong"}]}\n'
     f"kind is one of: {_KINDS}. footing is one of: {_FOOTINGS}. "
     "why_asked is one sentence naming what in this vacancy, this company or this "
-    "CV prompts the question. based_on lists the CV entries or STAR stories the "
-    'answer draws on, named as the grounding names them, for example "CV: '
-    'Ervaring" or "STAR story 3"; leave it empty when the honest answer draws on '
-    "nothing.\n"
+    "CV prompts the question. based_on lists the CV entries, STAR stories or "
+    "memories the answer draws on, named as the grounding names them, for "
+    'example "CV: Ervaring", "STAR story 3" or "memory 4"; leave it empty when '
+    "the honest answer draws on nothing.\n"
 )
 
 _QUESTION_RULES = (
@@ -214,8 +222,9 @@ _ANSWER_RULES = (
     "number, qualification or achievement. If the evidence is not there, the "
     "honest answer IS the answer. A borrowed achievement gets found out in the "
     "room, by the person who just asked about it.\n"
-    "5. footing follows the evidence and nothing else: 'strong' when the CV or a "
-    "STAR story clearly supports the answer, 'partial' when only adjacent "
+    "5. footing follows the evidence and nothing else: 'strong' when the CV, a "
+    "STAR story or a memory clearly supports the answer, 'partial' when only "
+    "adjacent "
     "experience does and it has to be framed, 'gap' when the candidate simply "
     "does not have this.\n"
     "6. For a gap, say so plainly in the first sentence, then say what is "
@@ -225,7 +234,8 @@ _ANSWER_RULES = (
     "it reads as confidence, not as weakness.\n"
     "7. Where a STAR story fits the question, build the answer out of it: the "
     "situation, what they actually did, how it ended. Name that story in "
-    "based_on. That is what the story bank is for.\n"
+    "based_on. That is what the story bank is for. A memory an answer uses is "
+    "named in based_on by its label in the same way.\n"
     "8. These answers are spoken, not written. First person, plain sentences, "
     "roughly 60 to 150 words, no corporate filler, no lists of adjectives, "
     "nothing the candidate would be embarrassed to say out loud. Each draft is a "
@@ -294,27 +304,38 @@ def _load_job(user: str, job_id: int) -> tuple[Database, JobListing]:
     return db, job
 
 
-def _facts(user: str, language: LetterLanguage, cv_slug: str | None) -> ApplicantFacts:
+def _facts(
+    user: str, language: LetterLanguage, cv_slug: str | None, job: JobListing
+) -> ApplicantFacts:
     """Collect the applicant's facts from every source they have provided.
 
     The STAR stories are left out here: :func:`_stories` labels them so an
     answer's citations can be checked, and sending them twice would invite
-    citations of the unlabelled copy.
+    citations of the unlabelled copy. The memories allowed in interviews are
+    included, each with the label an answer cites it by.
 
     Args:
         user: Name of an existing user.
         language: Language the answers will be written in.
         cv_slug: A CV Builder profile to prefer, or None.
+        job: The vacancy, which decides which memories fit best.
 
     Returns:
         The labelled facts. Contact and personal details are never among them:
-        no interview answer needs them.
+        no interview answer needs them. Neither is a private memory.
 
     Raises:
         InterviewAnswerError: If no source describes the applicant's career.
     """
     try:
-        facts = gather_applicant_facts(user, language, cv_slug=cv_slug, stories=False)
+        facts = gather_applicant_facts(
+            user,
+            language,
+            cv_slug=cv_slug,
+            stories=False,
+            memories=MemoryUse.INTERVIEW,
+            job=job,
+        )
     except ApplicantError as exc:
         raise InterviewAnswerError(
             f"No CV information for these answers: {exc}"
@@ -420,6 +441,8 @@ def _budget(block: dict[str, Any]) -> tuple[int, int, str]:
         sources.append("a company review")
     if "star_stories" in block:
         sources.append("the applicant's own STAR stories")
+    if MEMORIES_SOURCE_KEY in block.get("applicant_sources", {}):
+        sources.append("the facts the applicant asked to remember")
     reason = "you have " + ", ".join(sources[:-1]) + f" and {sources[-1]}"
     if has_research and has_review:
         return 8, 12, reason
@@ -585,17 +608,38 @@ def _parse_questions(raw: str) -> list[LikelyQuestion]:
     return _dedupe(response.questions)
 
 
+def _cited_truly(source: str, stories: set[str], memories: Collection[str]) -> bool:
+    """Tell whether one citation could name something the model was given.
+
+    Args:
+        source: One ``based_on`` entry as the model wrote it.
+        stories: The labels of the STAR stories in the prompt, case-folded.
+        memories: The labels of the memories in the prompt, case-folded.
+
+    Returns:
+        False for a STAR story or a memory that was not in the prompt; True
+        for those that were, and for any other kind of source.
+    """
+    folded = source.casefold()
+    if "star" in folded and folded not in stories:
+        return False
+    return not unknown_memory_citation(source, memories)
+
+
 def _check_citations(
-    questions: list[LikelyQuestion], stories: list[dict[str, Any]]
+    questions: list[LikelyQuestion],
+    stories: list[dict[str, Any]],
+    memories: Collection[str] = frozenset(),
 ) -> None:
-    """Strip story citations that name a story the model was never given.
+    """Strip citations that name a story or memory the model was never given.
 
     An invented anecdote is the failure this module exists to prevent, and a
     citation is the one part of an answer that can be checked from outside the
-    model. The labels handed to it are built in :func:`_stories`, so the set of
-    legitimate ones is already known; anything else is discarded rather than
-    printed, because the dashboard and the CLI both show ``based_on`` to the user
-    as though it were verified.
+    model. The labels handed to it are built in :func:`_stories` and
+    :func:`job_scout.memories.memories_payload`, so the set of legitimate ones
+    is already known; anything else is discarded rather than printed, because
+    the dashboard and the CLI both show ``based_on`` to the user as though it
+    were verified.
 
     An answer left citing nothing cannot also claim the strongest footing: with no
     source named there is nothing behind the claim, and over-grading fails in the
@@ -604,13 +648,13 @@ def _check_citations(
     Args:
         questions: The parsed questions, modified in place.
         stories: The STAR stories that were actually in the prompt.
+        memories: The labels of the memories that were in the prompt,
+            case-folded (see :func:`job_scout.memories.memory_labels`).
     """
     valid = {story["label"].casefold() for story in stories}
     for item in questions:
         kept = [
-            source
-            for source in item.based_on
-            if "star" not in source.casefold() or source.casefold() in valid
+            source for source in item.based_on if _cited_truly(source, valid, memories)
         ]
         if kept != item.based_on:
             dropped = [source for source in item.based_on if source not in kept]
@@ -666,7 +710,7 @@ def generate_interview_answers(
     """
     db, job = _load_job(user, job_id)
     chosen = language or detect_language((job.description or "").strip() or job.title)
-    facts = _facts(user, chosen, cv_slug)
+    facts = _facts(user, chosen, cv_slug, job)
     stories = _stories(db)
     company = company_context(db, job, job_id, client)
     block, missing = _grounding(job, company, facts, stories, notes)
@@ -680,7 +724,8 @@ def generate_interview_answers(
         timeout=_ANSWER_TIMEOUT,
     )
     questions = _parse_questions(raw)
-    _check_citations(questions, stories)
+    labels = memory_labels(facts.sources.get(MEMORIES_SOURCE_KEY, []))
+    _check_citations(questions, stories, labels)
     logger.info(f"Drafted {len(questions)} likely interview questions for job {job_id}")
     return InterviewAnswerSet(
         job_id=job_id,

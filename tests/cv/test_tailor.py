@@ -32,6 +32,7 @@ from job_scout.cv.tailor import (
     tailor_cv_document,
     tailored_slug,
 )
+from job_scout.memories import MEMORY_CV_RULE
 from job_scout.models import JobListing
 from tests.helpers import FakeLLMClient
 from tests.style_checks import GENERATED, PLAIN, assert_styled_prompt
@@ -636,6 +637,182 @@ def test_patching_an_unknown_entry_is_refused() -> None:
 
     with pytest.raises(TailorError, match="which is not in"):
         tailor_cv_document(make_doc(), make_job(), client_for(response))
+
+
+# --------------------------------------------------------------------------
+# Memories: extra evidence that may reword or add a bullet, never a fact
+# --------------------------------------------------------------------------
+
+MEMORIES = [
+    {
+        "label": "memory 3",
+        "kind": "project",
+        "text": "I moved the Beta NV reporting to dbt in 2023, halving its run time.",
+        "noted_on": "2026-09-01",
+        "hint": "Use for data engineering roles.",
+        "tags": ["dbt", "pipelines"],
+    },
+    {
+        "label": "memory 7",
+        "kind": "preference",
+        "text": "I want to work four days a week.",
+        "noted_on": "2026-09-02",
+    },
+    {
+        "label": "memory 9",
+        "kind": "experience",
+        "text": "I worked at Globex Industries as Head of Data in 2025.",
+        "noted_on": "2026-09-03",
+    },
+]
+MEMORY_BULLET = "Moved the reporting to dbt in 2023, halving its run time"
+
+
+def bullets_plan(cited: object, bullets: list[str] | None = None) -> str:
+    """A plan that gives entry e2 a new bullet, citing ``cited`` for it."""
+    patch: dict[str, Any] = {
+        "bullets": bullets or ["Shipped an ETL stack", MEMORY_BULLET],
+        "memories": cited,
+    }
+    return plan(sections={"xp": {"entries": {"e2": patch}}})
+
+
+def test_memories_reach_the_prompt_with_their_rules() -> None:
+    client = client_for(HAPPY_PLAN)
+
+    tailor_cv_document(make_doc(), make_job(), client, memories=MEMORIES)
+
+    prompt = client.calls[1][0]
+    assert MEMORIES[0]["text"] in prompt
+    assert "memory 3" in prompt
+    assert MEMORY_CV_RULE in prompt
+    assert "only where its hint or tags fit" in prompt
+    assert "one exception to rule 5" in prompt
+    assert_styled_prompt(prompt)
+
+
+def test_without_memories_the_prompt_says_nothing_about_them() -> None:
+    client = client_for(HAPPY_PLAN)
+
+    tailor_cv_document(make_doc(), make_job(), client)
+
+    assert "MEMORIES" not in client.calls[1][0]
+
+
+def test_a_cited_memory_can_add_a_bullet_under_an_existing_role() -> None:
+    response = bullets_plan(["Memory  3"])
+
+    result = tailor_cv_document(
+        make_doc(), make_job(), client_for(response), memories=MEMORIES
+    )
+
+    entry = experience_of(result).entries[1]
+    assert entry.organisation == "Beta NV"
+    assert entry.bullets == ["Shipped an ETL stack", MEMORY_BULLET]
+
+
+def test_a_single_label_is_accepted_as_well_as_a_list() -> None:
+    result = tailor_cv_document(
+        make_doc(), make_job(), client_for(bullets_plan("memory 3")), memories=MEMORIES
+    )
+
+    assert MEMORY_BULLET in experience_of(result).entries[1].bullets
+
+
+@pytest.mark.parametrize(
+    "cited",
+    [
+        [],  # no memory named
+        ["memory 42"],  # a memory the prompt did not hold
+        ["memory 7"],  # a wish, which never becomes a bullet
+    ],
+)
+def test_a_new_bullet_without_a_memory_behind_it_is_refused(cited: list[str]) -> None:
+    with pytest.raises(TailorError, match="never invented"):
+        tailor_cv_document(
+            make_doc(), make_job(), client_for(bullets_plan(cited)), memories=MEMORIES
+        )
+
+
+def test_a_memory_cited_without_memories_in_the_prompt_adds_nothing() -> None:
+    with pytest.raises(TailorError, match="never invented"):
+        tailor_cv_document(
+            make_doc(), make_job(), client_for(bullets_plan(["memory 3"]))
+        )
+
+
+def test_one_memory_backs_one_new_bullet_only() -> None:
+    three = ["Shipped an ETL stack", MEMORY_BULLET, "Also halved the cloud bill"]
+    response = bullets_plan(["memory 3", "memory 3"], three)
+
+    with pytest.raises(TailorError, match="never invented"):
+        tailor_cv_document(
+            make_doc(), make_job(), client_for(response), memories=MEMORIES
+        )
+
+
+def test_one_memory_cannot_add_a_bullet_under_two_roles() -> None:
+    response = plan(
+        sections={
+            "xp": {
+                "entries": {
+                    "e1": {
+                        "bullets": ["Trained customers", "Repaired optics", "dbt"],
+                        "memories": ["memory 3"],
+                    },
+                    "e2": {
+                        "bullets": ["Shipped an ETL stack", MEMORY_BULLET],
+                        "memories": ["memory 3"],
+                    },
+                }
+            }
+        }
+    )
+
+    with pytest.raises(TailorError, match="never invented"):
+        tailor_cv_document(
+            make_doc(), make_job(), client_for(response), memories=MEMORIES
+        )
+
+
+def test_a_memory_claiming_another_employer_cannot_rewrite_an_entry() -> None:
+    patch = {"organisation": "Globex Industries", "memories": ["memory 9"]}
+    response = plan(sections={"xp": {"entries": {"e2": patch}}})
+
+    with pytest.raises(TailorError, match="not editable"):
+        tailor_cv_document(
+            make_doc(), make_job(), client_for(response), memories=MEMORIES
+        )
+
+
+def test_a_memory_claiming_a_skill_cannot_add_a_skill_item() -> None:
+    response = plan(sections={"sk": {"order": ["s1", "s2", "s3", "s4"]}})
+
+    with pytest.raises(TailorError, match="not a reordering"):
+        tailor_cv_document(
+            make_doc(), make_job(), client_for(response), memories=MEMORIES
+        )
+
+
+def test_the_integrity_check_still_runs_with_memories(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def add_the_remembered_employer(doc: CVDocument, applied: TailorPlan) -> None:
+        experience_of(doc).entries.append(
+            ExperienceEntry(
+                id="e9",
+                title="Head of Data",
+                organisation="Globex Industries",
+                period="2025 - now",
+            )
+        )
+
+    monkeypatch.setattr(tailor, "_apply_plan", add_the_remembered_employer)
+
+    with pytest.raises(TailorError, match="invented organisations"):
+        tailor_cv_document(
+            make_doc(), make_job(), client_for(HAPPY_PLAN), memories=MEMORIES
+        )
 
 
 # --------------------------------------------------------------------------

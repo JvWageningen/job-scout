@@ -71,7 +71,9 @@ from job_scout.letters.cli import letter as letter_group
 from job_scout.letters.models import LetterLanguage
 from job_scout.llm.base import LLMClient, LLMError
 from job_scout.llm.factory import get_llm_client
+from job_scout.memories import MemorySource
 from job_scout.memory_cli import memory as memory_group
+from job_scout.memory_cli import report_notes_capture
 from job_scout.models import (
     CareerTrack,
     CompanyResearch,
@@ -2782,11 +2784,13 @@ def profile_tailor_resume(
     """
     from pathlib import Path
 
+    from job_scout.applicant import memories_for_vacancy
     from job_scout.config import build_effective_config, user_db_path
     from job_scout.cv_parser import parse_cv
     from job_scout.cv_profile import get_or_parse_cv_profile
     from job_scout.database import Database
     from job_scout.llm.factory import get_llm_client
+    from job_scout.memories import MemoryUse
     from job_scout.models import JobStatus
     from job_scout.resume_tailor import (
         generate_resume_pdf,
@@ -2856,6 +2860,9 @@ def profile_tailor_resume(
         )
         sys.exit(1)
 
+    # Memories allowed on a CV may add a line under a role the CV already has.
+    memories = memories_for_vacancy(target, MemoryUse.CV, job)
+
     # Check if already tailored
     existing = db.get_tailored_resume(job_id)
     if existing:
@@ -2864,7 +2871,11 @@ def profile_tailor_resume(
         )
         if click.confirm("Regenerate?"):
             tailored = tailor_resume_text(
-                raw_cv_text, cv_profile, job.description, client=client
+                raw_cv_text,
+                cv_profile,
+                job.description,
+                client=client,
+                memories=memories,
             )
         else:
             tailored = existing
@@ -2872,7 +2883,7 @@ def profile_tailor_resume(
         # Tailor the resume
         click.echo(f"Tailoring resume for: {job.title} @ {job.company}...")
         tailored = tailor_resume_text(
-            raw_cv_text, cv_profile, job.description, client=client
+            raw_cv_text, cv_profile, job.description, client=client, memories=memories
         )
 
     # Save to database
@@ -3820,24 +3831,47 @@ def interview_questions(
     again. Whatever is still missing is reported rather than invented.
 
     The set is saved, so the dashboard shows it and 'interview export' writes
-    it to a Word or text file.
+    it to a Word or text file. Facts in --notes that matter beyond this
+    interview are kept as memories afterwards, unless automatic capture is
+    switched off (see 'memory auto-capture').
     """
     target = _require_single_user(user_name)
     _require_llm()
     chosen = None if language == "auto" else LetterLanguage(language)
     try:
+        client = get_llm_client(build_effective_config(target))
         result = generate_interview_questions(
-            target,
-            job_id,
-            get_llm_client(build_effective_config(target)),
-            language=chosen,
-            cv_slug=cv_slug,
-            notes=notes,
+            target, job_id, client, language=chosen, cv_slug=cv_slug, notes=notes
         )
     except (InterviewQuestionError, LLMError, StorageError, ValueError, OSError) as exc:
         raise click.ClickException(str(exc)) from exc
     _print_interview_questions(result)
     _keep_for_dashboard(target, result)
+    _capture_interview_notes(target, notes, result, client)
+
+
+def _capture_interview_notes(
+    user: str, notes: str, result: InterviewSet, client: LLMClient
+) -> None:
+    """Keep the facts in an interview command's notes as memories.
+
+    Args:
+        user: The user the set was generated for.
+        notes: The notes as typed.
+        result: The generated set, for where the notes were typed.
+        client: The model the set was generated with.
+    """
+    what = "questions" if mode_of(result) is InterviewMode.ASK else "answers"
+    company = result.company.strip()
+    detail = f"notes for the {company} interview {what}" if company else ""
+    report_notes_capture(
+        user,
+        notes,
+        source=MemorySource.INTERVIEW_NOTES,
+        source_detail=detail or f"notes for interview {what}",
+        job_id=result.job_id,
+        client=client,
+    )
 
 
 def _keep_for_dashboard(user: str, result: InterviewSet) -> None:
@@ -3865,7 +3899,7 @@ def _keep_for_dashboard(user: str, result: InterviewSet) -> None:
 # What each footing actually means for the candidate, spelled out beside the
 # label so the word is not left to interpretation.
 _FOOTING_NOTE = {
-    AnswerFooting.STRONG: "your CV or a STAR story carries this",
+    AnswerFooting.STRONG: "your CV, a STAR story or a memory carries this",
     AnswerFooting.PARTIAL: "only adjacent experience, so it has to be framed",
     AnswerFooting.GAP: "you do not have this; rehearse saying so plainly",
 }
@@ -3979,31 +4013,31 @@ def interview_answers(
     """Predict what the interviewer will ask YOU, and draft your answers.
 
     The mirror of 'interview questions', which writes what you ask them. An
-    answer uses only your CV, your saved STAR stories and your notes; where the
-    evidence is not there it says so and the question is marked GAP, so you
-    rehearse that one rather than meet it for the first time in the room.
+    answer uses only your CV, your saved STAR stories, the memories you allow
+    in interviews and your notes; where the evidence is not there it says so
+    and the question is marked GAP, so you rehearse that one rather than meet
+    it for the first time in the room.
 
     When answers are already saved for this vacancy and language, they may be
     ones you rewrote in the dashboard, so you are asked before they are
-    replaced. --yes replaces them without asking.
+    replaced. --yes replaces them without asking. Facts in --notes that matter
+    beyond this interview are kept as memories afterwards, unless automatic
+    capture is switched off (see 'memory auto-capture').
     """
     target = _require_single_user(user_name)
     _require_llm()
     chosen = None if language == "auto" else LetterLanguage(language)
     try:
+        client = get_llm_client(build_effective_config(target))
         result = generate_interview_answers(
-            target,
-            job_id,
-            get_llm_client(build_effective_config(target)),
-            language=chosen,
-            cv_slug=cv_slug,
-            notes=notes,
+            target, job_id, client, language=chosen, cv_slug=cv_slug, notes=notes
         )
     except (InterviewAnswerError, LLMError, StorageError, ValueError, OSError) as exc:
         raise click.ClickException(str(exc)) from exc
     _print_interview_answers(result)
     if replace or _may_replace_answers(target, result):
         _keep_for_dashboard(target, result)
+    _capture_interview_notes(target, notes, result, client)
 
 
 def _may_replace_answers(user: str, result: InterviewAnswerSet) -> bool:

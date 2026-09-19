@@ -6,8 +6,9 @@ from pathlib import Path
 
 import click
 
-from job_scout.config import build_effective_config
+from job_scout.config import build_effective_config, user_db_path
 from job_scout.cv.storage import StorageError
+from job_scout.database import Database
 from job_scout.letters.examples import add_example, list_examples
 from job_scout.letters.models import LetterLanguage, LetterRequest
 from job_scout.letters.style import derive_style_guide, save_style_guide
@@ -19,6 +20,8 @@ from job_scout.letters.writer import (
 )
 from job_scout.llm.base import LLMError
 from job_scout.llm.factory import get_llm_client
+from job_scout.memories import MemorySource
+from job_scout.memory_cli import report_notes_capture
 
 
 def _user(name: str | None) -> str:
@@ -99,7 +102,12 @@ def generate(
     persist: bool,
     pdf_path: Path | None,
 ) -> None:
-    """Draft a letter; review the text before sending it yourself."""
+    """Draft a letter; review the text before sending it yourself.
+
+    Facts in --notes that matter beyond this letter are kept as memories
+    afterwards, unless automatic capture is switched off (see 'memory
+    auto-capture').
+    """
     user = _user(name)
     try:
         request = LetterRequest.model_validate(
@@ -111,9 +119,8 @@ def generate(
                 notes=notes,
             )
         )
-        draft = write_letter(
-            user, request, get_llm_client(build_effective_config(user))
-        )
+        client = get_llm_client(build_effective_config(user))
+        draft = write_letter(user, request, client)
         if pdf_path:
             pdf_path.write_bytes(letter_pdf_bytes(user, draft))
         if persist:
@@ -124,6 +131,29 @@ def generate(
     click.echo(f"Written from: {', '.join(draft.sources_used)}", err=True)
     for warning in draft.warnings:
         click.echo(f"Review: {warning.message}", err=True)
+    report_notes_capture(
+        user,
+        request.notes,
+        source=MemorySource.LETTER_NOTES,
+        source_detail=_notes_origin(user, job_id),
+        job_id=job_id,
+        client=client,
+    )
+
+
+def _notes_origin(user: str, job_id: int) -> str:
+    """Say which letter the notes were typed for, as a memory's origin.
+
+    Args:
+        user: The user the letter is for.
+        job_id: The vacancy the letter is for.
+
+    Returns:
+        Such as "notes for the Findwhere letter".
+    """
+    job = Database(user_db_path(user)).get_job(job_id)
+    company = job.company.strip() if job is not None else ""
+    return f"notes for the {company} letter" if company else "notes for a letter"
 
 
 @letter.command("render")

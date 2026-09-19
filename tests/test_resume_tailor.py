@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from job_scout.memories import MEMORY_CV_RULE
 from job_scout.models import CvProfile, CvRole
 from job_scout.resume_tailor import (
     _format_cv_profile_summary,
@@ -16,6 +17,8 @@ from job_scout.resume_tailor import (
     generate_resume_pdf,
     tailor_resume_text,
 )
+from tests.helpers import FakeLLMClient
+from tests.style_checks import assert_styled_prompt
 
 
 class TestExtractResumeKeywords:
@@ -112,6 +115,47 @@ class TestTailorResumeText:
         assert "Tailored content" in tailored
         # Once for keywords, once for tailoring
         assert mock_client.complete.call_count == 2
+
+    def test_memories_reach_the_prompt_with_the_cv_rule(self) -> None:
+        """A memory allowed on a CV is offered, with the limits of its use."""
+        client = FakeLLMClient(["Tailored content"])
+        memory = {
+            "label": "memory 2",
+            "kind": "project",
+            "text": "I moved the reporting to dbt in 2023.",
+            "noted_on": "2026-09-01",
+            "hint": "Use for data engineering roles.",
+        }
+
+        tailor_resume_text(
+            "Original CV",
+            CvProfile(skills=["SQL"]),
+            "Data engineer with dbt",
+            keywords=["dbt"],
+            client=client,
+            memories=[memory],
+        )
+
+        prompt = client.calls[0][0]
+        assert "I moved the reporting to dbt in 2023." in prompt
+        assert MEMORY_CV_RULE in prompt
+        assert "only where its hint or tags fit" in prompt
+        assert "never becomes a line on the CV" in prompt
+        assert_styled_prompt(prompt)
+
+    def test_without_memories_the_prompt_has_no_memory_section(self) -> None:
+        """Nothing to offer, nothing said about memories."""
+        client = FakeLLMClient(["Tailored content"])
+
+        tailor_resume_text(
+            "Original CV",
+            CvProfile(skills=["SQL"]),
+            "Data engineer",
+            keywords=["SQL"],
+            client=client,
+        )
+
+        assert "MEMORIES" not in client.calls[0][0]
 
 
 class TestFormatCvProfileSummary:

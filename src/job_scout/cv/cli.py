@@ -10,11 +10,14 @@ from __future__ import annotations
 import logging
 import socket
 import sys
+from collections.abc import Mapping, Sequence
 from pathlib import Path
+from typing import Any
 
 import click
 from loguru import logger
 
+from job_scout.applicant import memories_for_vacancy
 from job_scout.config import build_effective_config, user_cv_dir, user_db_path
 from job_scout.cv.models import CVDocument
 from job_scout.cv.render import render_pdf
@@ -23,6 +26,7 @@ from job_scout.cv.tailor import TailorError, tailor_cv_document, tailored_slug
 from job_scout.database import Database
 from job_scout.llm.base import LLMClient, LLMError
 from job_scout.llm.factory import get_llm_client
+from job_scout.memories import MemoryUse
 from job_scout.models import JobListing
 
 DEFAULT_PORT = 38271
@@ -271,19 +275,25 @@ def list_profiles(user_name: str | None) -> None:
         click.echo(slug)
 
 
-def _tailor_or_exit(doc: CVDocument, job: JobListing, client: LLMClient) -> CVDocument:
+def _tailor_or_exit(
+    doc: CVDocument,
+    job: JobListing,
+    client: LLMClient,
+    memories: Sequence[Mapping[str, Any]] = (),
+) -> CVDocument:
     """Tailor a document, turning a model failure into a one-line message.
 
     Args:
         doc: The source document.
         job: The vacancy to tailor towards.
         client: LLM client to tailor with.
+        memories: The applicant's memories allowed on a CV, possibly none.
 
     Returns:
         The tailored copy.
     """
     try:
-        return tailor_cv_document(doc, job, client)
+        return tailor_cv_document(doc, job, client, memories=memories)
     except (LLMError, TailorError) as exc:
         click.echo(f"Tailoring failed: {exc}", err=True)
         sys.exit(1)
@@ -355,8 +365,12 @@ def tailor(job_id: int, user_name: str | None, slug: str, output: Path | None) -
     # The client is built before the announcement, so a misconfigured provider
     # does not first claim that tailoring has started.
     client = _client_for_user(target)
+    memories = memories_for_vacancy(target, MemoryUse.CV, job)
     click.echo(f"Tailoring {slug!r} to {job.title} at {job.company}...")
-    tailored = _tailor_or_exit(doc, job, client)
+    if memories:
+        noun = "memory" if len(memories) == 1 else "memories"
+        click.echo(f"Offering {len(memories)} {noun} to use where they fit.")
+    tailored = _tailor_or_exit(doc, job, client, memories)
 
     new_slug = tailored_slug(slug, job)
     document = _save_tailored(store, slug, new_slug, tailored)

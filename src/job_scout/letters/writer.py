@@ -44,6 +44,8 @@ from job_scout.letters.models import (
 from job_scout.letters.render import render_letter_pdf
 from job_scout.letters.style import load_style_guide
 from job_scout.llm.base import LLMClient
+from job_scout.memories import MemoryUse
+from job_scout.models import JobListing
 from job_scout.prose import clean_prose
 from job_scout.writing_style import HOUSE_STYLE, ai_tells
 
@@ -268,7 +270,12 @@ def _prompt(
 
 
 def _applicant(
-    user: str, language: LetterLanguage, cv_slug: str | None, *, stories: bool
+    user: str,
+    language: LetterLanguage,
+    cv_slug: str | None,
+    *,
+    stories: bool,
+    job: JobListing | None = None,
 ) -> ApplicantFacts:
     """Gather the applicant's facts, reporting a missing CV as a letter problem.
 
@@ -277,6 +284,8 @@ def _applicant(
         language: The letter's language.
         cv_slug: A CV Builder profile to prefer, or None.
         stories: Whether the STAR stories are needed.
+        job: The vacancy the letter is for, to add the memories allowed in
+            letters that fit it best; None leaves memories out.
 
     Returns:
         The applicant's facts from every source they have provided.
@@ -284,8 +293,11 @@ def _applicant(
     Raises:
         LetterError: If no source describes the applicant's career.
     """
+    purpose = MemoryUse.LETTER if job is not None else None
     try:
-        return gather_applicant_facts(user, language, cv_slug=cv_slug, stories=stories)
+        return gather_applicant_facts(
+            user, language, cv_slug=cv_slug, stories=stories, memories=purpose, job=job
+        )
     except ApplicantError as exc:
         raise LetterError(str(exc)) from exc
 
@@ -303,7 +315,7 @@ def write_letter(
         if request.language == "auto"
         else LetterLanguage(request.language)
     )
-    facts = _applicant(user, language, request.cv_slug, stories=True)
+    facts = _applicant(user, language, request.cv_slug, stories=True, job=job)
     guide = load_style_guide(user)
     examples = [e for e in list_examples(user) if e.language is language][:3]
     vacancy = {

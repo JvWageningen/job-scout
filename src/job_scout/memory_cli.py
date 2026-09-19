@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 
 import click
+import yaml
+from loguru import logger
 from pydantic import ValidationError
 
 from job_scout.company_lookups import day
 from job_scout.config import build_effective_config
 from job_scout.letters.examples import extract_text
-from job_scout.llm.base import LLMError
+from job_scout.llm.base import LLMClient, LLMError
 from job_scout.llm.factory import get_llm_client
 from job_scout.memories import (
     ALL_USES,
@@ -35,6 +38,8 @@ from job_scout.memories import (
 )
 from job_scout.memory_extract import (
     auto_capture_enabled,
+    capture_from_notes,
+    capture_pending,
     extract_memories,
     set_auto_capture,
 )
@@ -333,3 +338,101 @@ def auto_capture_cmd(state: str | None, name: str | None) -> None:
         set_auto_capture(user, state == "on")
     now = "on" if auto_capture_enabled(user) else "off"
     click.echo(f"Automatic capture from notes is {now} for {user}.")
+
+
+# -- Capture after a letter or interview command ------------------------------------
+
+_CHECK_ERRORS = (ValueError, sqlite3.Error, OSError, yaml.YAMLError)
+
+
+def _capture_due(user: str, notes: str) -> bool:
+    """Tell whether the notes of a generation should be read for memories now.
+
+    Args:
+        user: The user the generation was for.
+        notes: The notes as typed.
+
+    Returns:
+        False for notes too short to state a fact, with automatic capture
+        switched off, for notes captured before, or when that cannot be told.
+    """
+    try:
+        return capture_pending(user, notes)
+    except _CHECK_ERRORS as exc:
+        logger.warning(f"Could not tell whether to read notes for memories: {exc}")
+        return False
+
+
+def _say_captured(user: str, notes: str, saved: list[Memory]) -> None:
+    """Tell the applicant what their notes added to their memories.
+
+    Args:
+        user: The user the memories are for.
+        notes: The notes that were read.
+        saved: The memories stored from them.
+    """
+    if not saved:
+        failed = _capture_due(user, notes)
+        click.echo(
+            "Your notes could not be read for memories this time; the next "
+            "letter or interview with them tries again."
+            if failed
+            else "Nothing new to remember in your notes.",
+            err=True,
+        )
+        return
+    noun = "memory" if len(saved) == 1 else "memories"
+    click.echo(f"Saved {len(saved)} new {noun} from your notes:", err=True)
+    for item in saved:
+        private = " (private, never sent to a model)" if item.sensitive else ""
+        click.echo(f"  #{item.id}{private} {item.text}", err=True)
+    click.echo(
+        f"See them with 'job-scout memory list --user {user}', remove one with "
+        f"'job-scout memory delete ID --user {user}', or stop this with "
+        f"'job-scout memory auto-capture off --user {user}'.",
+        err=True,
+    )
+
+
+def report_notes_capture(
+    user: str,
+    notes: str,
+    *,
+    source: MemorySource,
+    source_detail: str,
+    job_id: int | None = None,
+    client: LLMClient | None = None,
+) -> list[Memory]:
+    """Keep the facts in the notes of a letter or interview command as memories.
+
+    The dashboard does this in the background; a command runs it after its
+    own output and says what was kept. Nothing is said, and no model is
+    asked, when the notes are too short to state a fact, automatic capture
+    is switched off, or the same notes were captured before. It never
+    raises: the letter or interview set is already done.
+
+    Args:
+        user: The user the generation was for.
+        notes: The notes as typed.
+        source: Where the notes were typed, letter or interview notes.
+        source_detail: Where they came from in words, such as "notes for the
+            Findwhere letter".
+        job_id: The vacancy the notes were typed for.
+        client: The model to ask; the user's configured one when None.
+
+    Returns:
+        The memories stored.
+    """
+    if not _capture_due(user, notes):
+        return []
+    click.echo("\nLooking in your notes for facts to remember for later...", err=True)
+    saved = capture_from_notes(
+        user,
+        notes,
+        source=source,
+        source_detail=source_detail,
+        job_id=job_id,
+        client=client,
+    )
+    _say_captured(user, notes, saved)
+    return saved
