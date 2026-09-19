@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Sequence
 from pathlib import Path
 
 import click
@@ -17,6 +18,7 @@ from job_scout.llm.base import LLMClient, LLMError
 from job_scout.llm.factory import get_llm_client
 from job_scout.memories import (
     ALL_USES,
+    OFF_CV_KINDS,
     Memory,
     MemoryContent,
     MemoryDraft,
@@ -30,6 +32,7 @@ from job_scout.memories import (
     delete_memory,
     describe_origin,
     find_duplicate,
+    forget_completely,
     get_memory,
     list_forgotten,
     list_memories,
@@ -46,6 +49,12 @@ from job_scout.memory_extract import (
 
 _KINDS = click.Choice([kind.value for kind in MemoryKind])
 _USES = click.Choice([use.value for use in MemoryUse])
+# What a delete keeps, said where the applicant decides.
+_KEPT_AFTER_DELETE = (
+    "Its wording is kept so that notes do not bring it back, and goes to your "
+    "model with notes on the same subject unless it is private; 'job-scout "
+    "memory forgotten --remove N' erases it."
+)
 
 
 def _user(name: str | None) -> str:
@@ -53,6 +62,39 @@ def _user(name: str | None) -> str:
     from job_scout.cli import _require_single_user  # noqa: PLC0415
 
     return _require_single_user(name)
+
+
+def _count(n: int, one: str, many: str) -> str:
+    """Say a count with the right noun, as in '1 memory' or '3 memories'.
+
+    Args:
+        n: The count.
+        one: The noun for exactly one.
+        many: The noun for any other count.
+
+    Returns:
+        The count followed by its noun.
+    """
+    return f"{n} {one if n == 1 else many}"
+
+
+def _say_off_cv(asked: Sequence[str], content: MemoryContent) -> None:
+    """Say when a wish or a condition lost the CV use it was given.
+
+    Args:
+        asked: The uses given on the command line.
+        content: The memory as it is stored.
+    """
+    if MemoryUse.CV.value not in asked or content.kind not in OFF_CV_KINDS:
+        return
+    if content.use_in:
+        click.echo("A wish or a condition never goes on a CV, so it is kept off yours.")
+        return
+    click.echo(
+        "A wish or a condition never goes on a CV, so this memory is not used "
+        "anywhere. Give it --use letter or --use interview to use it.",
+        err=True,
+    )
 
 
 def _problem(exc: ValidationError) -> str:
@@ -112,7 +154,7 @@ def list_cmd(name: str | None, search: str) -> None:
         return
     for item in memories:
         _show(item, f"#{item.id}")
-    click.echo(f"{len(memories)} memories.")
+    click.echo(f"{_count(len(memories), 'memory', 'memories')}.")
 
 
 @memory.command("add")
@@ -154,6 +196,7 @@ def add_cmd(
     similar = find_duplicate(draft.text, list_memories(user))
     stored = add_memory(user, draft)
     click.echo(f"Memory #{stored.id} saved.")
+    _say_off_cv(uses, stored)
     if similar is not None:
         click.echo(f"Memory #{similar.id} already says much the same.", err=True)
 
@@ -196,6 +239,8 @@ def edit_cmd(
         raise click.ClickException(_problem(exc)) from exc
     update_memory(user, memory_id, content)
     click.echo(f"Memory #{memory_id} updated.")
+    had_cv = MemoryUse.CV in current.use_in and not uses
+    _say_off_cv([MemoryUse.CV.value] if had_cv else uses, content)
 
 
 @memory.command("delete")
@@ -208,14 +253,22 @@ def delete_cmd(
 ) -> None:
     """Delete the memories with these ids, or all of them with --all.
 
-    Automatic capture will not bring a deleted memory back; see
-    'memory forgotten'.
+    Automatic capture will not bring a deleted memory back in the same or
+    similar words; a private one is compared in code only, so a fact written
+    quite differently can come back, marked private. See 'memory forgotten'.
     """
     user = _user(name)
     if everything:
         if not yes:
-            click.confirm("Delete all your memories?", abort=True)
-        click.echo(f"Deleted {delete_all_memories(user)} memories.")
+            click.confirm(
+                "Delete all your memories? Their wording is kept so that notes "
+                "do not bring them back, and goes to your model with notes on "
+                "the same subject unless they are private.",
+                abort=True,
+            )
+        click.echo(
+            f"Deleted {_count(delete_all_memories(user), 'memory', 'memories')}."
+        )
         return
     if not memory_ids:
         raise click.UsageError("Name the memories to delete, or pass --all.")
@@ -223,6 +276,8 @@ def delete_cmd(
     for memory_id in memory_ids:
         if memory_id not in missing:
             click.echo(f"Memory #{memory_id} deleted.")
+    if len(missing) < len(memory_ids):
+        click.echo(_KEPT_AFTER_DELETE)
     if missing:
         names = ", ".join(f"#{i}" for i in missing)
         raise click.ClickException(f"Not found: {names}.")
@@ -245,9 +300,10 @@ def _import_text(path: Path | None, text: str | None) -> tuple[str, str]:
             raise click.UsageError("Give a file to read, or the text with --text.")
         return text, "text given on the command line"
     try:
-        return extract_text(path.name, path.read_bytes(), kind="document"), path.name
+        text = extract_text(path.name, path.read_bytes(), kind="document", min_chars=1)
     except (ValueError, OSError) as exc:
         raise click.ClickException(str(exc)) from exc
+    return text, path.name
 
 
 @memory.command("import")
@@ -297,26 +353,73 @@ def _save_proposals(
         return
     for number, draft in enumerate(drafts, start=1):
         _show(draft, f"{number}.")
-    if dry_run or not (yes or click.confirm(f"Save these {len(drafts)} memories?")):
+    question = (
+        "Save this memory?"
+        if len(drafts) == 1
+        else f"Save these {len(drafts)} memories?"
+    )
+    if dry_run or not (yes or click.confirm(question)):
         click.echo("Nothing saved.")
         return
-    click.echo(f"Saved {len(add_memories(user, drafts))} memories.")
+    click.echo(
+        f"Saved {_count(len(add_memories(user, drafts)), 'memory', 'memories')}."
+    )
+
+
+def _erase_forgotten(user: str, ids: Sequence[int]) -> None:
+    """Erase single deleted memories from the list by their numbers.
+
+    Args:
+        user: The user the list belongs to.
+        ids: The numbers 'memory forgotten' shows.
+
+    Raises:
+        click.ClickException: If a number is not on the list.
+    """
+    missing = [i for i in ids if not forget_completely(user, i)]
+    erased = len(ids) - len(missing)
+    if erased:
+        click.echo(
+            f"Erased {_count(erased, 'deleted memory', 'deleted memories')}. New "
+            "notes may bring those facts back."
+        )
+    if missing:
+        names = ", ".join(str(i) for i in missing)
+        raise click.ClickException(f"Not on the list: {names}.")
 
 
 @memory.command("forgotten")
 @click.option("--user", "name")
 @click.option("--clear", is_flag=True, help="Erase the list after asking.")
+@click.option(
+    "--remove",
+    "remove_ids",
+    type=int,
+    multiple=True,
+    help="Erase the deleted memory with this number only; repeat for more.",
+)
 @click.option("--yes", is_flag=True, help="Do not ask before erasing.")
-def forgotten_cmd(name: str | None, clear: bool, yes: bool) -> None:
-    """Show the memories you deleted, which notes will not bring back."""
+def forgotten_cmd(
+    name: str | None, clear: bool, remove_ids: tuple[int, ...], yes: bool
+) -> None:
+    """Show the memories you deleted, which notes will not bring back.
+
+    Notes do not bring these back in the same or similar words. A private one
+    is compared in code only, so a fact written quite differently can come
+    back, marked private.
+    """
     user = _user(name)
+    if remove_ids:
+        _erase_forgotten(user, remove_ids)
+        return
     if clear:
         if not yes:
             click.confirm(
                 "Erase the list? Automatic capture may then find these again.",
                 abort=True,
             )
-        click.echo(f"Erased {clear_forgotten(user)} deleted memories.")
+        erased = clear_forgotten(user)
+        click.echo(f"Erased {_count(erased, 'deleted memory', 'deleted memories')}.")
         return
     forgotten = list_forgotten(user)
     if not forgotten:
@@ -324,8 +427,8 @@ def forgotten_cmd(name: str | None, clear: bool, yes: bool) -> None:
         return
     for item in forgotten:
         private = " (private)" if item.sensitive else ""
-        click.echo(f"{day(item.forgotten_at)}{private}: {item.text}")
-    click.echo(f"{len(forgotten)} deleted memories.")
+        click.echo(f"{item.id}. {day(item.forgotten_at)}{private}: {item.text}")
+    click.echo(f"{_count(len(forgotten), 'deleted memory', 'deleted memories')}.")
 
 
 @memory.command("auto-capture")
@@ -381,8 +484,8 @@ def _say_captured(user: str, notes: str, saved: list[Memory]) -> None:
             err=True,
         )
         return
-    noun = "memory" if len(saved) == 1 else "memories"
-    click.echo(f"Saved {len(saved)} new {noun} from your notes:", err=True)
+    saved_count = _count(len(saved), "new memory", "new memories")
+    click.echo(f"Saved {saved_count} from your notes:", err=True)
     for item in saved:
         private = " (private, never sent to a model)" if item.sensitive else ""
         click.echo(f"  #{item.id}{private} {item.text}", err=True)

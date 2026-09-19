@@ -14,12 +14,15 @@ from pydantic import ValidationError
 
 import job_scout.config as config
 from job_scout.database import Database
-from job_scout.memories import (
+from job_scout.memories import (  # noqa: PLC2701
+    _TAG_WEIGHT,
     ALL_USES,
     MAX_TAGS,
     MAX_TEXT_CHARS,
     MEMORY_CV_RULE,
     MEMORY_GUIDE,
+    MEMORY_USE_GUIDE,
+    ForgottenMemory,
     Memory,
     MemoryContent,
     MemoryDraft,
@@ -27,6 +30,7 @@ from job_scout.memories import (
     MemorySource,
     MemoryStoreError,
     MemoryUse,
+    _stem,
     add_memories,
     add_memory,
     clear_forgotten,
@@ -35,6 +39,7 @@ from job_scout.memories import (
     describe_origin,
     eligible_memories,
     find_duplicate,
+    forget_completely,
     get_memory,
     list_forgotten,
     list_memories,
@@ -45,6 +50,7 @@ from job_scout.memories import (
     normalise_tags,
     rank_memories,
     relevance,
+    repeats_forgotten,
     same_fact,
     select_memories,
     select_memories_payload,
@@ -140,6 +146,20 @@ class TestMemoryContent:
     def test_no_use_at_all_keeps_the_memory_unused(self) -> None:
         """Unticking every use is allowed: the memory is kept, not sent."""
         assert MemoryContent(text="Fact.", use_in=[]).use_in == []
+
+    @pytest.mark.parametrize("kind", ["preference", "constraint"])
+    def test_a_wish_or_a_condition_never_keeps_the_cv_use(self, kind: str) -> None:
+        """However it is made (API, CLI, a stored row), a wish is not on a CV."""
+        wish = MemoryContent(text="Ik wil maximaal 32 uur werken.", kind=kind)
+        assert wish.use_in == [MemoryUse.LETTER, MemoryUse.INTERVIEW]
+        only_cv = MemoryDraft(text="Ik reis niet.", kind=kind, use_in=["cv"])
+        assert only_cv.use_in == []
+        stored = _memory(1, "Ik wil thuiswerken.", kind=kind, use_in=["cv", "letter"])
+        assert stored.use_in == [MemoryUse.LETTER]
+
+    def test_other_kinds_keep_the_cv_use(self) -> None:
+        """Only wishes and conditions lose it."""
+        assert MemoryUse.CV in MemoryContent(text="A.", kind="project").use_in
 
     def test_an_unknown_use_or_kind_is_refused(self) -> None:
         """What a person types must be one of the known values."""
@@ -288,6 +308,34 @@ class TestStore:
         assert clear_forgotten(USER) == 1
         assert list_forgotten(USER) == []
         assert clear_forgotten(USER) == 0
+
+    @pytest.mark.parametrize("delete_all", [False, True])
+    def test_an_erased_wording_is_gone_from_the_database_file(
+        self, delete_all: bool
+    ) -> None:
+        """Free pages must not keep a private text in a synced data folder."""
+        marker = "ZZMARKER99"
+        stored = add_memory(
+            USER, MemoryDraft(text=f"Ik heb {marker} schulden.", sensitive=True)
+        )
+        add_memory(USER, MemoryDraft(text="Ik spreek Duits."))
+        if delete_all:
+            delete_all_memories(USER)
+        else:
+            delete_memory(USER, stored.id)
+        clear_forgotten(USER)
+        raw = config.user_db_path(USER).read_bytes()
+        assert marker.encode() not in raw
+
+    def test_one_deleted_memory_can_be_erased_alone(self) -> None:
+        """Withdrawing one wording keeps the protection for the others."""
+        for text in ("Een.", "Twee."):
+            delete_memory(USER, add_memory(USER, MemoryDraft(text=text)).id)
+        first, second = list_forgotten(USER)
+        assert first.id != second.id
+        assert forget_completely(USER, first.id) is True
+        assert [item.text for item in list_forgotten(USER)] == [second.text]
+        assert forget_completely(USER, first.id) is False
 
     @pytest.mark.parametrize("name", ["", "..", "all", "a/b", "nobody"])
     def test_an_unknown_or_unsafe_user_is_refused(self, name: str) -> None:
@@ -541,6 +589,14 @@ class TestSameFact:
                 "2022.",
                 "At Voorbeeld Retail I migrated 40 stores in 2022.",
             ),
+            (
+                "I migrated the warehouse from Oracle to Snowflake.",
+                "I migrated the warehouse to Snowflake from Oracle.",
+            ),
+            (
+                "I would rather work in Utrecht than in Amsterdam.",
+                "I would rather work in Utrecht.",
+            ),
         ],
     )
     def test_the_same_fact_in_other_words_or_case_is_a_duplicate(
@@ -595,6 +651,26 @@ class TestSameFact:
                 "I led a project that cut hosting costs by half.",
             ),
             ("I will finish my PMP in 2027.", "I finished my PMP in 2027."),
+            (
+                "I would rather work in Utrecht than in Amsterdam.",
+                "I would rather work in Amsterdam than in Utrecht.",
+            ),
+            (
+                "I want to move from marketing to data engineering.",
+                "I want to move from data engineering to marketing.",
+            ),
+            (
+                "Ik werk liever op kantoor dan thuis.",
+                "Ik werk liever thuis dan op kantoor.",
+            ),
+            (
+                "I prefer a hybrid role over a fully remote role.",
+                "I prefer a fully remote role over a hybrid role.",
+            ),
+            (
+                "I prefer a large company to a startup.",
+                "I prefer a startup to a large company.",
+            ),
         ],
     )
     def test_a_different_number_name_negation_or_fact_is_new(
@@ -617,6 +693,95 @@ class TestSameFact:
         assert found is not None
         assert found.id == 2
         assert find_duplicate("I play the cello.", known) is None
+
+    def test_a_field_and_its_role_are_the_same_words(self) -> None:
+        """Stemming meets a role in its field; the shared stem is recorded."""
+        assert same_fact(
+            "I managed the migration project.", "Migration project management."
+        )
+
+
+def _forgotten(text: str, *, sensitive: bool = False) -> ForgottenMemory:
+    """A deleted memory, as list_forgotten returns it."""
+    return ForgottenMemory(text=text, sensitive=sensitive, forgotten_at=NOW)
+
+
+class TestRepeatsForgotten:
+    """A deleted memory is not brought back in the same or similar words."""
+
+    BURN_OUT = "Ik heb in 2022 een burn-out gehad."
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "Ik heb in 2022 een burn-out doorgemaakt.",
+            "Ik heb een burn-out gehad.",
+            "Ik heb in 2022 een burn-out gehad en ben hersteld.",
+        ],
+    )
+    def test_a_private_one_is_not_brought_back_in_other_words(self, text: str) -> None:
+        """The model never sees it, so code compares loosely."""
+        assert repeats_forgotten(_forgotten(self.BURN_OUT, sensitive=True), text)
+
+    def test_another_private_matter_is_not_taken_for_it(self) -> None:
+        """A different year and a different subject are a different fact."""
+        deleted = _forgotten(self.BURN_OUT, sensitive=True)
+        assert not repeats_forgotten(deleted, "Ik ben in 2021 gescheiden.")
+
+    def test_leaving_the_year_out_brings_nothing_back(self) -> None:
+        """A shorter wording adds nothing to the deleted memory."""
+        deleted = _forgotten(
+            "Ik leidde in 2023 bij Tuinhuis Noord de overstap naar dbt en BigQuery."
+        )
+        assert repeats_forgotten(
+            deleted, "Ik leidde bij Tuinhuis Noord de overstap naar dbt en BigQuery."
+        )
+
+    def test_a_changed_role_is_a_new_fact(self) -> None:
+        """Only private ones are compared loosely; this one the model is told of."""
+        deleted = _forgotten("Ik werkte bij Tuinhuis Noord als analist.")
+        assert not repeats_forgotten(
+            deleted, "Ik werkte bij Tuinhuis Noord als teamleider."
+        )
+
+    def test_a_turned_negation_is_never_the_deleted_fact(self) -> None:
+        """Deleting "I travel" does not stop "I do not travel"."""
+        deleted = _forgotten("Ik reis graag voor werk.", sensitive=True)
+        assert not repeats_forgotten(deleted, "Ik reis niet graag voor werk.")
+
+
+@pytest.mark.parametrize(
+    "words",
+    [
+        ("engineering", "engineer", "engineers"),
+        ("management", "manager", "managed"),
+        ("development", "developer"),
+        ("recruitment", "recruiter"),
+        ("marketing", "marketeer"),
+        ("ontwikkelaar", "ontwikkeling", "ontwikkelen"),
+    ],
+)
+def test_a_field_and_its_role_share_one_stem(words: tuple[str, ...]) -> None:
+    """A tag naming a field fits a vacancy naming the role, and back."""
+    assert len({_stem(word) for word in words}) == 1
+
+
+@pytest.mark.parametrize(
+    ("tag", "vacancy"),
+    [
+        ("data engineering", "Senior Data Engineer\nWe look for a data engineer."),
+        ("project manager", "Project management role."),
+        ("software development", "We seek a Software Developer"),
+    ],
+)
+def test_a_field_tag_fits_a_vacancy_for_its_role(tag: str, vacancy: str) -> None:
+    """The ranking that decides which 25 memories go must see the fit."""
+    assert relevance(MemoryContent(text="x", tags=[tag]), vacancy) >= _TAG_WEIGHT
+
+
+def test_a_short_word_keeps_its_ending() -> None:
+    """Four letters stay: "jaar" is not stripped to "j"."""
+    assert _stem("jaar") == "jaar"
 
 
 # -- Selection ----------------------------------------------------------------------
@@ -641,6 +806,21 @@ class TestSelection:
         for use in ALL_USES:
             assert eligible_memories([private], use) == []
             assert rank_memories([private], use, VACANCY) == []
+
+    def test_a_wish_built_without_validation_is_never_eligible_for_a_cv(self) -> None:
+        """The floor under the model's validator, for objects built around it."""
+        wish = Memory.model_construct(
+            id=1,
+            text="Ik wil maximaal 32 uur werken.",
+            kind=MemoryKind.PREFERENCE,
+            tags=[],
+            hint="",
+            use_in=list(ALL_USES),
+            sensitive=False,
+            updated_at=NOW,
+        )
+        assert eligible_memories([wish], "cv") == []
+        assert eligible_memories([wish], "letter") == [wish]
 
     def test_an_unknown_purpose_is_refused(self) -> None:
         """A typo in a caller must not silently select nothing."""
@@ -729,16 +909,33 @@ class TestPayload:
             source_detail="notes for the Findwhere letter",
             job_id=9,
         )
-        assert memories_payload([memory]) == [
+        assert memories_payload([memory], today=NOW.date()) == [
             {
                 "label": "memory 4",
                 "kind": "achievement",
                 "text": "I ran 120 A/B tests.",
-                "noted_on": "2026-09-19",
+                "noted_on": "19 September 2026 (today)",
                 "hint": "Use for CRO roles",
                 "tags": ["cro"],
             }
         ]
+
+    @pytest.mark.parametrize(
+        ("noted", "age"),
+        [
+            (NOW - timedelta(days=1), "18 September 2026 (1 day ago)"),
+            (NOW - timedelta(days=12), "7 September 2026 (12 days ago)"),
+            (datetime(2026, 3, 19, 12, tzinfo=UTC), "19 March 2026 (6 months ago)"),
+            (datetime(2025, 9, 1, 12, tzinfo=UTC), "1 September 2025 (1 year ago)"),
+        ],
+    )
+    def test_noted_on_says_how_long_ago_a_memory_was_noted(
+        self, noted: datetime, age: str
+    ) -> None:
+        """Without today's date a model cannot tell a stale availability."""
+        entry = memories_payload([_memory(1, "A.", updated_at=noted)], today=NOW.date())
+        assert entry[0]["noted_on"] == age
+        assert_plain(age)
 
     def test_an_empty_hint_and_no_tags_are_left_out(self) -> None:
         """Nothing empty is sent."""
@@ -772,12 +969,34 @@ class TestPayload:
     def test_the_guide_and_the_cv_rule_follow_the_house_style(self) -> None:
         """Prompt text must not carry the dashes it forbids."""
         assert_plain(MEMORY_GUIDE)
+        assert_plain(MEMORY_USE_GUIDE)
         assert_plain(MEMORY_CV_RULE)
 
     def test_the_guide_says_how_to_weigh_two_memories_that_disagree(self) -> None:
         """noted_on is sent for a reason; the model must know it."""
         assert "noted_on" in MEMORY_GUIDE
         assert "more recent one holds" in MEMORY_GUIDE
+
+    def test_the_guide_lets_the_text_of_a_hand_added_memory_decide(self) -> None:
+        """A memory added by hand often has no hint or tags; it must still count."""
+        assert "only where its text, hint or tags fit" in MEMORY_GUIDE
+        assert "one added by hand may have neither" in MEMORY_GUIDE
+        assert "only where its hint or tags fit" not in MEMORY_GUIDE
+
+    def test_the_guide_says_to_read_relative_time_against_noted_on(self) -> None:
+        """'I can start in two months' noted in March is stale in September."""
+        assert "relative time in a memory against its noted_on" in MEMORY_USE_GUIDE
+        assert "Never state as current an availability" in MEMORY_USE_GUIDE
+
+    def test_the_guide_without_its_description_is_part_of_the_guide(self) -> None:
+        """Prompts that describe the memories themselves need only the use part."""
+        assert MEMORY_GUIDE.startswith("memories holds")
+        assert MEMORY_GUIDE.endswith(MEMORY_USE_GUIDE)
+        assert "memories holds" not in MEMORY_USE_GUIDE
+
+    def test_the_cv_rule_keeps_wishes_off_the_profile_text_too(self) -> None:
+        """A wish in the profile is still a wish on the CV."""
+        assert "also not in the profile text" in MEMORY_CV_RULE
 
 
 # -- Showing memories --------------------------------------------------------------

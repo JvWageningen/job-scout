@@ -139,7 +139,7 @@ class TestTailorResumeText:
         prompt = client.calls[0][0]
         assert "I moved the reporting to dbt in 2023." in prompt
         assert MEMORY_CV_RULE in prompt
-        assert "only where its hint or tags fit" in prompt
+        assert "only where its text, hint or tags fit" in prompt
         assert "never becomes a line on the CV" in prompt
         assert "keeping its names and numbers and adding none" in prompt
         assert "never under a role at another employer" in prompt

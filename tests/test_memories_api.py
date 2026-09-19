@@ -7,8 +7,10 @@ carry a real name, address or company.
 
 from __future__ import annotations
 
+import io
 import json
 import re
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -56,6 +58,14 @@ REPLY = json.dumps(
     }
 )
 STATIC = Path(__file__).parent.parent / "src/job_scout/web/static"
+
+
+def _zip_without_document() -> bytes:
+    """A zip file that holds no word/document.xml, named as a DOCX."""
+    stream = io.BytesIO()
+    with zipfile.ZipFile(stream, "w") as archive:
+        archive.writestr("other.xml", "<x/>")
+    return stream.getvalue()
 
 
 @pytest.fixture
@@ -258,6 +268,45 @@ def test_a_deleted_memory_is_remembered_by_its_wording_until_erased(
     assert list_forgotten(USER) == []
 
 
+def test_one_deleted_memory_can_be_erased_by_its_number(api: TestClient) -> None:
+    """Withdrawing one wording keeps the others; a gone one is a 404."""
+    for text in (GERMAN, MIGRATION):
+        api.delete(
+            f"/api/memories/{add_memory(USER, MemoryDraft(text=text)).id}?user={USER}"
+        )
+    listed = api.get(f"/api/memories/forgotten?user={USER}").json()["forgotten"]
+    german = next(item for item in listed if item["text"] == GERMAN)
+
+    route = f"/api/memories/forgotten/{german['id']}?user={USER}"
+    assert api.delete(route).status_code == 204
+    assert [item.text for item in list_forgotten(USER)] == [MIGRATION]
+    assert api.delete(route).status_code == 404
+    assert (
+        api.delete(f"/api/memories/forgotten/{german['id']}?user={OTHER}").status_code
+        == 404
+    )
+
+
+@pytest.mark.parametrize("kind", ["preference", "constraint"])
+def test_a_wish_added_or_changed_through_the_api_is_kept_off_the_cv(
+    api: TestClient, kind: str
+) -> None:
+    """The response and the list say where it is used, and CV is not one."""
+    added = _add(api, text="Ik wil maximaal 32 uur per week werken.", kind=kind)
+    memory = added["memory"]
+    assert isinstance(memory, dict)
+    assert memory["use_in"] == ["letter", "interview"]
+
+    plain = _add(api, text="Ik reis niet voor werk.")["memory"]
+    assert isinstance(plain, dict)
+    changed = api.put(
+        f"/api/memories/{plain['id']}?user={USER}",
+        json={"text": "Ik reis niet voor werk.", "kind": kind, "use_in": ["cv"]},
+    )
+    assert changed.status_code == 200, changed.text
+    assert changed.json()["use_in"] == []
+
+
 # -- Users ---------------------------------------------------------------------
 
 
@@ -357,7 +406,7 @@ def test_proposing_shows_the_model_your_memories_but_never_a_private_one(
     section = page[start : page.index("</section>", start)]
     assert "only as part of" not in section
     assert "whenever new memories are proposed" in section
-    assert "every automatic capture sends it" in section
+    assert "automatic capture of notes on the same subject sends it" in section
 
 
 @pytest.mark.parametrize(
@@ -463,6 +512,75 @@ def test_a_file_that_cannot_be_read_is_refused(api: TestClient) -> None:
     assert response.status_code == 400
 
 
+def _read(api: TestClient, name: str, data: bytes) -> dict[str, object]:
+    """Post a file to read-file and return the status and body."""
+    response = api.post(
+        f"/api/memories/read-file?user={USER}",
+        files={"file": (name, data, "text/plain")},
+    )
+    return {"status": response.status_code, **response.json()}
+
+
+@pytest.mark.parametrize("encoding", ["cp1252", "utf-16", "utf-8"])
+def test_a_text_file_in_a_windows_encoding_is_read(
+    api: TestClient, encoding: str
+) -> None:
+    """Notepad's ANSI and Word's Plain Text are Windows-1252 on a Dutch Windows."""
+    text = "Ik werkte bij Café Noord en coördineerde de inkoop."
+    result = _read(api, "notities.txt", text.encode(encoding))
+    assert result["status"] == 200, result
+    assert result["text"] == text
+
+
+def test_a_short_file_is_read_like_a_short_paste(api: TestClient) -> None:
+    """One line about yourself is a valid source of memories."""
+    result = _read(api, "kort.txt", b"Ik spreek Duits vloeiend.")
+    assert result["status"] == 200, result
+    assert result["text"] == "Ik spreek Duits vloeiend."
+
+
+@pytest.mark.parametrize(
+    ("name", "data"),
+    [
+        ("kapot.docx", b"not a zip file at all"),
+        ("leeg.docx", _zip_without_document()),
+        ("kapot.pdf", b"%PDF-1.4 broken"),
+    ],
+)
+def test_a_broken_file_gets_one_plain_message(
+    api: TestClient, name: str, data: bytes
+) -> None:
+    """Codec, zip or PDF errors mean nothing to the applicant."""
+    result = _read(api, name, data)
+    assert result["status"] == 400
+    detail = str(result["detail"])
+    assert "could not be read" in detail
+    for jargon in ("codec", "zip", "EOF", "archive", "document.xml"):
+        assert jargon not in detail
+    assert_plain(detail)
+
+
+def test_the_page_limit_of_a_pdf_is_said_without_a_prefix(api: TestClient) -> None:
+    """The tool's own messages pass through unchanged."""
+    from PyPDF2 import PdfWriter  # noqa: PLC0415
+
+    writer = PdfWriter()
+    for _ in range(21):
+        writer.add_blank_page(width=200, height=200)
+    stream = io.BytesIO()
+    writer.write(stream)
+    result = _read(api, "lang.pdf", stream.getvalue())
+    assert result["status"] == 400
+    assert result["detail"] == "Use an unlocked PDF of at most 20 pages."
+
+
+def test_a_file_over_the_limit_says_how_long_it_is(api: TestClient) -> None:
+    """The page says 80,000 characters, and the refusal says so too."""
+    result = _read(api, "lang.txt", b"abcde " * 17000)
+    assert result["status"] == 400
+    assert "at most 80,000 can be read" in str(result["detail"])
+
+
 # -- The switch ----------------------------------------------------------------
 
 
@@ -538,3 +656,28 @@ def test_what_the_tab_says_follows_the_house_style() -> None:
     assert "\u2013" not in script
     for text in _strings(script):
         assert_plain(text)
+
+
+def test_a_pasted_text_is_never_cut_by_the_browser() -> None:
+    """A maxlength would drop the end of a long paste without a word.
+
+    The script's own length check explains what to do instead, and the hint
+    next to the box names the limit before the applicant presses Propose.
+    """
+    page = (STATIC / "index.html").read_text(encoding="utf-8")
+    box = re.search(r'<textarea id="memory-text"[^>]*>', page)
+    assert box is not None
+    assert "maxlength" not in box.group(0)
+    hint = page[: box.start()].rsplit('<p class="letter-hint">', 1)[1]
+    assert "At most 20,000 characters are read at a time." in hint
+
+
+def test_the_delete_confirmation_says_what_is_kept_and_sent() -> None:
+    """The applicant decides knowing the wording stays and when it is sent."""
+    script = (STATIC / "memories.js").read_text(encoding="utf-8")
+    start = script.index("function remove(memory)")
+    remove = script[start : script.index("run(", start)]
+    assert "Its wording stays in your database" in remove
+    assert "sends that wording to your configured model" in remove
+    assert "same or similar words" in remove
+    assert "It is no longer used" not in remove

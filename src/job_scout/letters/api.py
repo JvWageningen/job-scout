@@ -43,7 +43,7 @@ from job_scout.letters.writer import (
 )
 from job_scout.llm.base import LLMError
 from job_scout.llm.factory import get_llm_client
-from job_scout.memories import MemorySource
+from job_scout.memories import MemorySource, MemoryUse
 from job_scout.web.memories_api import start_capture
 from job_scout.web.vacancies import open_vacancy_choices
 
@@ -99,7 +99,7 @@ def build_api_router() -> APIRouter:
         return {
             "jobs": open_vacancy_choices(user),
             "profiles": profile_choices(user),
-            "sources": describe_sources(user),
+            "sources": describe_sources(user, MemoryUse.LETTER),
         }
 
     @router.get("/examples")

@@ -229,6 +229,17 @@ There is no tailor button in the editor UI. Use the CLI command, or
 `POST /api/cv/profiles/{slug}/tailor?user=<name>&job_id=<id>`; either way the tailored
 profile then appears in the editor's picker like any other.
 
+Your [memories](MEMORIES.md) allowed on a CV are offered as extra evidence. A memory may
+add a bullet under the role it belongs to, or add to the profile text. Each new bullet is
+checked against the memory behind it; when the words alone cannot show that a bullet
+states its memory, as for a Dutch memory on an English CV, the model is asked once more
+as a judge. A bullet that is refused is left out and that role keeps its own bullets,
+reworded ones included. The command then prints one line per role, such as "Memory 3
+was not used under Data analyst at Tuinhuis Noord, so that entry kept its own bullets,
+reworded ones included.", and the endpoint returns the same under `memories_not_used`,
+next to `slug`, with the `memories` named, the role's `title` and `organisation`, and
+that `message`.
+
 ### The integrity constraint
 
 A CV is a factual document about a real person, so the model gets a deliberately narrow
@@ -240,7 +251,7 @@ mandate: **reorder what is there, and reword prose.** That is all.
 | Reorder entries within a section | Add, remove or duplicate anything |
 | Reword a `text` section's body | Touch `details` or `contact` sections — they hold personal data and are sent to the model as a heading only, marked frozen |
 | Reword an experience entry's description | Change a job title, employer, school, degree or date range |
-| Reword existing bullets, and add one bullet per [memory](MEMORIES.md) it cites that you allowed on your CV | Return more bullets than the entry had plus the memories it cites |
+| Reword existing bullets, and add one bullet per [memory](MEMORIES.md) it states that you allowed on your CV | Return more bullets than the entry had plus the memories its new bullets state; put a memory about other work, or a number or name no fitting memory holds, into reworded prose |
 | — | Change the identity block, the portrait or the theme |
 
 Only `text` and `experience` sections have prose the model may rewrite at all. `education`,

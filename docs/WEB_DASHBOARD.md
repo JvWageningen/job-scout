@@ -202,15 +202,18 @@ tags fit the vacancy, and leave private ones out entirely.
   filters on text, tags, hint and kind; each memory can be edited in place or deleted
   after a confirmation. **Refresh** picks up memories added in the background.
 - **From your notes**: the switch for automatic capture, and the list of deleted
-  memories, which notes you type again will not bring back, with **Erase this list**.
+  memories, which notes you type again will not bring back in the same or similar words,
+  with **Erase** for one of them and **Erase this list** for all. A private one is
+  compared in code only, so a fact written quite differently can come back, marked
+  private.
 
 With automatic capture on, the notes you type in the Cover Letter Writer and Interview
 Questions tabs are read once more after the letter or interview set is on screen, in the
 background, and any new facts about you in them are saved here with the vacancy they came
 from. Both tabs say so when it happens. The same notes are read only once. That reading
 sends your notes to the model a second time, along with your memories and the wording of
-the ones you deleted, private ones excepted, so that it does not propose those again.
-Erasing the list of deleted memories stops sending their wording. See
+the deleted ones that touch your notes, private ones excepted, so that it does not propose
+those again. Erasing a deleted memory, or the whole list, stops sending its wording. See
 [Memories](MEMORIES.md) for what a memory holds, how memories are chosen for a vacancy
 and what stays private.
 

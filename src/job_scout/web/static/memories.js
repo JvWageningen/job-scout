@@ -35,7 +35,9 @@
     // The file the text box was filled from and the text it gave, so that the
     // proposals name the file only while the box still holds that text or part
     // of it, and whether the last text may hold more than was proposed.
-    let fileName = '', fileText = '', moreInText = false;
+    // proposedText is the text the model last read in full: a text in the box
+    // that differs from it and from the file is work not yet saved.
+    let fileName = '', fileText = '', moreInText = false, proposedText = '';
     const validUser = () => currentUser && currentUser !== 'all' ? currentUser : null;
     const status = (text, error = false) => {
         el('status').textContent = text;
@@ -270,35 +272,55 @@
             : words.length ? `${shown.length} of ${all} match your search.` : `${all}, newest first.`;
     }
     function summary() {
-        return memories.length
-            ? `${plural(memories.length, 'memory', 'memories')}. Letters, interview sets and tailored CVs use the ones whose hint or tags fit the vacancy.`
-            : 'No memories yet. Add one by hand, turn a text into memories, or write notes for a letter or an interview.';
+        if (memories.length) return `${plural(memories.length, 'memory', 'memories')}. Letters, interview sets and tailored CVs use the ones whose text, hint or tags fit the vacancy.`;
+        // apply() has just set the switch from the server, so it says whether
+        // notes become memories at all.
+        return el('auto').checked
+            ? 'No memories yet. Add one by hand, turn a text into memories, or write notes for a letter or an interview.'
+            : 'No memories yet. Add one by hand or turn a text into memories. Notes for a letter or an interview become memories only when you switch that on under From your notes.';
     }
     function apply(data) {
         memories = data.memories;
         if (editing && !memories.some(memory => memory.id === editing.id)) editing = null;
         el('auto').checked = Boolean(data.auto_capture);
+        el('auto').disabled = false;
         el('forgotten-count').textContent = String(data.forgotten);
         el('forgotten-clear').disabled = !data.forgotten;
         render();
     }
+    // Every successful read marks the user as loaded, whichever run made it:
+    // after a failed first load, Refresh or saving a memory is enough.
     async function refresh(ctx) {
         const data = await (await api('', ctx)).json();
         fresh(ctx);
         apply(data);
+        loadedUser = ctx.user;
+    }
+    function forgottenItem(item) {
+        const li = document.createElement('li');
+        const when = spokenDate(item.forgotten_at);
+        const text = document.createElement('span');
+        text.textContent = `${when ? when + ': ' : ''}${item.text}${item.sensitive ? ' (private)' : ''}`;
+        li.append(text, ' ', button('Erase', 'Erase this deleted memory', () => eraseOne(item)));
+        return li;
     }
     async function forgottenList(ctx) {
         const data = await (await api('/forgotten', ctx)).json();
         fresh(ctx);
-        el('forgotten').replaceChildren(...data.forgotten.map(item => {
-            const li = document.createElement('li');
-            const when = spokenDate(item.forgotten_at);
-            li.textContent = `${when ? when + ': ' : ''}${item.text}${item.sensitive ? ' (private)' : ''}`;
-            return li;
-        }));
+        el('forgotten').replaceChildren(...data.forgotten.map(forgottenItem));
         el('forgotten-count').textContent = String(data.forgotten.length);
         el('forgotten-clear').disabled = !data.forgotten.length;
         return data.forgotten.length;
+    }
+    function eraseOne(item) {
+        if (!confirm('Erase this deleted memory? Its wording is then gone from your database and no longer sent '
+            + 'with automatic capture, and notes you type again may bring the fact back.')) return;
+        run('Erasing the deleted memory...', async ctx => {
+            await api('/forgotten/' + item.id, ctx, {method: 'DELETE'});
+            fresh(ctx);
+            const count = await forgottenList(ctx);
+            status(`Erased. ${count ? plural(count, 'deleted memory is', 'deleted memories are') + ' still kept.' : 'No deleted memories are kept.'}`);
+        });
     }
     // --- Changing one memory. ---
     function startEdit(memory) {
@@ -322,8 +344,12 @@
         });
     }
     function remove(memory) {
-        if (!confirm('Delete this memory? It is no longer used, and notes you type again will not bring it back: '
-            + 'its wording is kept under Deleted memories until you erase that list.')) return;
+        const sent = memory.sensitive
+            ? 'It is private, so its wording is never sent to a model, and a fact written quite differently can come back, marked private.'
+            : 'An automatic capture of notes on the same subject sends that wording to your configured model to say what to leave out.';
+        if (!confirm('Delete this memory? Letters, interviews and CVs stop using it. Its wording stays in your database '
+            + 'under Deleted memories, so that notes you type again do not bring it back in the same or similar words. '
+            + sent + ' Erase it under Deleted memories to remove its wording.')) return;
         run('Deleting the memory...', async ctx => {
             await api('/' + memory.id, ctx, {method: 'DELETE'});
             fresh(ctx);
@@ -362,27 +388,35 @@
         return drafts;
     }
     // --- Switching users and leaving the page. ---
-    const unsaved = () => Boolean(proposals.length || editing || (addForm && addForm.read().text));
+    // A text typed or pasted in the box counts until the model has read it in
+    // full; text loaded unchanged from a file is still on disk.
+    function unsavedText() {
+        const text = el('text').value.trim();
+        return Boolean(text && text !== proposedText && text !== fileText.trim());
+    }
+    const unsaved = () => Boolean(proposals.length || editing || (addForm && addForm.read().text) || unsavedText());
     function reset() {
         epoch++;
         busy = 0; loadedUser = null; memories = []; proposals = []; editing = null;
-        fileName = ''; fileText = ''; moreInText = false;
+        fileName = ''; fileText = ''; moreInText = false; proposedText = '';
         el('workspace').disabled = true;
         newAddForm();
         ['list', 'proposal-list', 'forgotten'].forEach(id => el(id).replaceChildren());
         el('proposals').hidden = true; el('truncated').hidden = true;
         ['text', 'file', 'search'].forEach(id => { el(id).value = ''; });
         el('count').textContent = ''; el('empty').hidden = false;
-        el('auto').checked = false; el('forgotten-count').textContent = '0';
+        // Not a guessed "off": the switch shows the server's value once read.
+        el('auto').checked = false; el('auto').disabled = true;
+        el('forgotten-count').textContent = '0';
         el('forgotten-box').open = false;
         status(NO_USER);
     }
+    // Every user switch has already run reset(), so loading the same user
+    // again after a failed load keeps what was typed or proposed meanwhile.
     async function load() {
-        reset();
-        if (!validUser()) return;
+        if (!validUser()) { status(NO_USER); return; }
         await run('Loading your memories...', async ctx => {
             await refresh(ctx);
-            loadedUser = ctx.user;
             status(summary());
         });
     }
@@ -448,6 +482,8 @@
             const body = {text, source_detail: textOrigin(text)};
             const data = await (await api('/extract', ctx, json('POST', body))).json();
             fresh(ctx);
+            // A cut text still has a part to propose, so it stays unsaved.
+            proposedText = data.truncated ? '' : text;
             showProposals(data.drafts, data.truncated);
             status(data.drafts.length
                 ? `${plural(data.drafts.length, 'memory', 'memories')} proposed. Tick the ones to keep, change what is not right, then save them.`
@@ -484,7 +520,7 @@
         });
     }
     function eraseForgotten() {
-        if (!confirm('Erase the list of deleted memories? Their wording is then gone from your database, '
+        if (!confirm('Erase the list of deleted memories? Their wording is then erased from your database file, '
             + 'and notes you type again may bring those facts back.')) return;
         run('Erasing the list...', async ctx => {
             const data = await (await api('/forgotten', ctx, {method: 'DELETE'})).json();
@@ -497,17 +533,18 @@
     }
     document.addEventListener('DOMContentLoaded', () => {
         newAddForm();
-        // Opening the tab again picks up memories a capture added meanwhile,
-        // unless something is still running.
+        // Opening the tab again picks up memories a capture added meanwhile.
+        // A click while something runs, such as proposals for a text, does
+        // nothing, so it never throws that run's result away.
         document.querySelector('[data-tab="memories"].tab-btn').addEventListener('click', () => {
-            if (loadedUser !== validUser()) { load(); return; }
-            if (validUser() && !busy) check();
+            if (!validUser() || busy) return;
+            if (loadedUser !== validUser()) load(); else check();
         });
         // Capture runs before app.js switches the user, so a declined switch
         // can still put the previous user back and stop the reload.
         document.getElementById('user-select').addEventListener('change', event => {
             keepTab = document.getElementById('memories-section').classList.contains('active');
-            if (unsaved() && !confirm('Switch users and discard the memories you have not saved yet?')) {
+            if (unsaved() && !confirm('Switch users and discard the memories and text you have not saved yet?')) {
                 event.target.value = currentUser || '';
                 event.stopImmediatePropagation();
             }
@@ -535,10 +572,23 @@
         el('auto').addEventListener('change', switchCapture);
         el('forgotten-box').addEventListener('toggle', () => {
             if (!el('forgotten-box').open || !validUser()) return;
+            // Something is still running, such as proposals for a text: fill
+            // the list without taking over the status line, which says what
+            // that run is doing. The workspace is already disabled.
+            if (busy) {
+                const ctx = {user: validUser(), epoch};
+                forgottenList(ctx).catch(error => {
+                    if (error.message === 'stale') return;
+                    const li = document.createElement('li');
+                    li.textContent = 'The list could not be loaded. Close it and open it again.';
+                    el('forgotten').replaceChildren(li);
+                });
+                return;
+            }
             run('Loading your deleted memories...', async ctx => {
                 const count = await forgottenList(ctx);
                 status(count
-                    ? `${plural(count, 'deleted memory is', 'deleted memories are')} kept by their wording, so notes do not bring them back.`
+                    ? `${plural(count, 'deleted memory is', 'deleted memories are')} kept by their wording, so notes do not bring them back in the same or similar words.`
                     : 'No deleted memories.');
             });
         });

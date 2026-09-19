@@ -7,7 +7,9 @@ FakeLLMClient; nothing here touches the network.
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +34,7 @@ from job_scout.memories import (
     delete_memory,
     list_forgotten,
     list_memories,
+    select_memories_payload,
 )
 from job_scout.memory_extract import (
     EXTRACT_TIMEOUT,
@@ -336,6 +339,22 @@ class TestAnswer:
             "I was diagnosed with ADHD in 2019.",
             "I have autism.",
             "Ik ben moslim en vast tijdens de ramadan.",
+            # A time between, inverted word order, or the condition first.
+            "Ik heb in 2022 een burn-out gehad.",
+            "In 2022 heb ik een burn-out gehad.",
+            "In 2022 had ik een burn-out.",
+            "Na een burn-out in 2022 werk ik liever maximaal 32 uur.",
+            "Ik ben in 2022 drie maanden uitgevallen door een burn-out.",
+            "Ik was in 2022 drie maanden thuis met een burn-out.",
+            "I was off work for three months in 2022 because of a burnout.",
+            "Sinds vorig jaar ben ik zwanger.",
+            "Ik heb sinds 2020 diabetes type 1.",
+            "I have type 1 diabetes.",
+            "Wegens mantelzorg voor mijn vader kan ik op woensdag niet werken.",
+            "After a burnout in 2022 I prefer to work at most 32 hours.",
+            # A subordinate clause.
+            "Omdat ik zwanger ben, werk ik tijdelijk minder.",
+            "Omdat ik voor mijn moeder zorg, kan ik maximaal 32 uur per week werken.",
         ],
     )
     def test_the_floor_catches_the_applicants_own_private_matters(
@@ -366,6 +385,14 @@ class TestAnswer:
             "My diagnosis of the outage cut the recovery time to one hour.",
             "It is my conviction that tests belong in every sprint.",
             "I am religious about code reviews.",
+            "I have worked in cancer research for five years.",
+            "I have built a depression screening app.",
+            "Ik heb een app voor diabetes gebouwd.",
+            "Ik begeleidde als HR adviseur medewerkers met een burn-out.",
+            "As a bedrijfsarts I guided employees back to work after a burnout.",
+            "I ran a burnout prevention programme for 400 staff.",
+            "Ik heb drie jaar diabetes onderzoek gedaan.",
+            "In 2022 heb ik een depressie app gebouwd voor GGZ.",
         ],
     )
     def test_the_floor_leaves_work_about_a_private_subject_open(
@@ -578,6 +605,12 @@ class TestDedupe:
 # -- Automatic capture -------------------------------------------------------------
 
 
+def _forgotten_shown(client: FakeLLMClient) -> list[str]:
+    """Return the deleted memories the first prompt showed the model."""
+    forgotten = client.calls[0][0].split("never propose them again):\n")[1]
+    return list(json.loads(forgotten.split("\n\nTEXT:")[0]))
+
+
 def _capture(client: FakeLLMClient, notes: str = NOTES, **kwargs: Any) -> list[Memory]:
     """Capture from letter notes with a canned model."""
     return capture_from_notes(
@@ -651,13 +684,30 @@ class TestCapture:
         )
         delete_all_memories(USER)
         client = FakeLLMClient([_reply()])
+        _capture(client, notes=f"{NOTES} Ik spreek Duits en herstel van een burn-out.")
+        assert _forgotten_shown(client) == ["Ik spreek vloeiend Duits."]
+        assert "hersteld van een burn-out" not in client.calls[0][0]
+
+    def test_a_deleted_memory_is_not_sent_with_notes_about_something_else(
+        self,
+    ) -> None:
+        """Deleting must not make a wording reach the provider with every capture."""
+        partner = "Mijn partner werkt bij een concurrent van mijn werkgever."
+        delete_memory(USER, add_memory(USER, MemoryDraft(text=partner)).id)
+        client = FakeLLMClient([_reply()])
         _capture(client)
-        prompt = client.calls[0][0]
-        forgotten = prompt.split("never propose them again):\n")[1]
-        assert json.loads(forgotten.split("\n\nTEXT:")[0]) == [
-            "Ik spreek vloeiend Duits."
-        ]
-        assert "burn-out" not in prompt
+        assert _forgotten_shown(client) == []
+        assert partner not in client.calls[0][0]
+
+    def test_code_still_drops_a_deleted_memory_the_model_was_not_shown(
+        self,
+    ) -> None:
+        """The prompt carries only related ones; code compares with all of them."""
+        partner = "Mijn partner werkt bij een concurrent van mijn werkgever."
+        delete_memory(USER, add_memory(USER, MemoryDraft(text=partner)).id)
+        client = FakeLLMClient([_reply(_item(text=partner, kind="personal"))])
+        assert _capture(client, notes="Kort houden graag, en formeel.") == []
+        assert partner not in client.calls[0][0]
 
     def test_a_reviewed_import_may_bring_a_deleted_fact_back(self) -> None:
         """Taking a fact back on purpose is the applicant's call."""
@@ -798,6 +848,201 @@ class TestCapture:
 
         monkeypatch.setattr(memory_extract, "get_llm_client", broken)
         assert capture_from_notes(USER, NOTES, source="letter_notes") == []
+
+
+class TestForgottenAndPrivate:
+    """Deleted and private memories stay what the applicant made them."""
+
+    BURN_OUT = "Ik heb in 2022 een burn-out gehad."
+    BURN_OUT_NOTES = (
+        "Schrijf een formele brief. Ik heb in 2022 een burn-out gehad, dat hoeft "
+        "niet in de brief. Graag een formele toon."
+    )
+
+    @pytest.mark.parametrize(
+        "reply",
+        [
+            "Ik heb in 2022 een burn-out doorgemaakt.",
+            "Ik heb een burn-out gehad.",
+            "Ik heb in 2022 een burn-out gehad en ben hersteld.",
+        ],
+    )
+    def test_a_deleted_private_memory_does_not_come_back_reworded(
+        self, reply: str
+    ) -> None:
+        """The model never sees it, so code must catch the new wording."""
+        stored = add_memory(USER, MemoryDraft(text=self.BURN_OUT, sensitive=True))
+        assert delete_memory(USER, stored.id)
+        client = FakeLLMClient([_reply(_item(text=reply, sensitive=False))])
+        assert _capture(client, notes=self.BURN_OUT_NOTES) == []
+        assert list_memories(USER) == []
+        assert self.BURN_OUT not in client.calls[0][0].split("TEXT:")[0]
+
+    def test_another_private_matter_is_still_captured(self) -> None:
+        """Deleting one private fact does not block every private fact."""
+        stored = add_memory(USER, MemoryDraft(text=self.BURN_OUT, sensitive=True))
+        delete_memory(USER, stored.id)
+        client = FakeLLMClient([_reply(_item(text="Ik ben in 2021 gescheiden."))])
+        [saved] = _capture(client, notes="Ik ben in 2021 gescheiden, noem dat niet.")
+        assert saved.sensitive is True
+
+    def test_a_deleted_role_does_not_block_a_changed_one(self) -> None:
+        """Only private ones are compared loosely."""
+        old = "Ik werkte bij Tuinhuis Noord als analist."
+        new = "Ik werkte bij Tuinhuis Noord als teamleider."
+        delete_memory(USER, add_memory(USER, MemoryDraft(text=old)).id)
+        client = FakeLLMClient([_reply(_item(text=new))])
+        assert [m.text for m in _capture(client, notes=f"Noem dat {new}")] == [new]
+
+    def test_a_deleted_project_does_not_come_back_without_its_year(self) -> None:
+        """Dropping the year adds nothing to what was deleted."""
+        old = "Ik leidde in 2023 bij Tuinhuis Noord de overstap naar dbt en BigQuery."
+        new = "Ik leidde bij Tuinhuis Noord de overstap naar dbt en BigQuery."
+        delete_memory(USER, add_memory(USER, MemoryDraft(text=old)).id)
+        client = FakeLLMClient([_reply(_item(text=new))])
+        assert _capture(client, notes=f"Noem dat {new}") == []
+
+    def test_a_deleted_private_memory_reworded_further_comes_back_private(
+        self,
+    ) -> None:
+        """Too different to drop, close enough never to be open again."""
+        old = "Ik heb in 2021 een half jaar ziekteverlof gehad na een operatie."
+        new = "In 2021 was ik zes maanden afwezig vanwege een operatie."
+        delete_memory(USER, add_memory(USER, MemoryDraft(text=old, sensitive=True)).id)
+        client = FakeLLMClient([_reply(_item(text=new, sensitive=False))])
+        [saved] = _capture(client, notes=f"Vertel niet te veel over 2021. {new}")
+        assert saved.sensitive is True
+
+    def test_a_deleted_private_memory_in_the_same_words_is_dropped(self) -> None:
+        """Most of its words and numbers again: the same matter."""
+        old = "Ik ben in 2022 drie maanden thuis geweest omdat ik overspannen was."
+        new = "In 2022 heb ik drie maanden thuis gezeten omdat ik overspannen was."
+        delete_memory(USER, add_memory(USER, MemoryDraft(text=old, sensitive=True)).id)
+        client = FakeLLMClient([_reply(_item(text=new, sensitive=False))])
+        assert _capture(client, notes=new) == []
+
+    @pytest.mark.parametrize(
+        ("private", "reply"),
+        [
+            (
+                "Ik ben mantelzorger voor mijn moeder en werk daarom maximaal 32 "
+                "uur per week.",
+                "Omdat ik voor mijn moeder zorg, kan ik maximaal 32 uur per week "
+                "werken.",
+            ),
+            (
+                "Ik heb schulden en een bewindvoerder sinds 2020.",
+                "Sinds 2020 regelt een bewindvoerder mijn geldzaken.",
+            ),
+        ],
+    )
+    def test_a_restated_private_memory_is_stored_private(
+        self, private: str, reply: str
+    ) -> None:
+        """A fact the applicant keeps private never becomes open by rewording."""
+        add_memory(USER, MemoryDraft(text=private, sensitive=True))
+        client = FakeLLMClient([_reply(_item(text=reply, sensitive=False))])
+        [saved] = _capture(client, notes=f"Noem dat niet. {reply}")
+        assert saved.sensitive is True
+        payload = select_memories_payload(USER, "letter", "Data analist")
+        assert payload == []
+
+    def test_a_restating_proposal_is_shown_private_for_review(self) -> None:
+        """The reviewed import shows the flag ticked; the applicant may clear it."""
+        private = "Ik heb schulden en een bewindvoerder sinds 2020."
+        reply = "Sinds 2020 regelt een bewindvoerder mijn geldzaken."
+        existing = [_stored(1, private, sensitive=True)]
+        drafts, _ = _extract(
+            _reply(_item(text=reply, sensitive=False)), existing=existing
+        )
+        assert [d.sensitive for d in drafts] == [True]
+
+    def test_a_work_fact_sharing_only_an_employer_stays_open(self) -> None:
+        """A work fact marked private would be kept out of every document."""
+        add_memory(
+            USER,
+            MemoryDraft(
+                text="Ik had in 2021 een burn-out tijdens mijn werk bij Voorbeeld "
+                "Bank.",
+                sensitive=True,
+            ),
+        )
+        fact = "Ik heb bij Voorbeeld Bank het datawarehouse naar de cloud gemigreerd."
+        client = FakeLLMClient([_reply(_item(text=fact))])
+        [saved] = _capture(client, notes=f"Noem dat {fact}")
+        assert saved.sensitive is False
+
+    def test_a_restated_deleted_private_memory_is_not_captured(self) -> None:
+        """In other words, and private: code drops it."""
+        private = "Ik heb schulden en een bewindvoerder sinds 2020."
+        reply = "Sinds 2020 regelt een bewindvoerder mijn geldzaken."
+        delete_memory(
+            USER, add_memory(USER, MemoryDraft(text=private, sensitive=True)).id
+        )
+        client = FakeLLMClient([_reply(_item(text=reply, sensitive=False))])
+        assert _capture(client, notes=f"Noem dat niet. {reply}") == []
+
+
+class TestChangedWishes:
+    """A wish turned around is a new wish, not a repeat."""
+
+    def test_a_stored_wish_does_not_block_its_reversal(self) -> None:
+        """The more recent wish must reach the applicant to be saved."""
+        known = "I would rather work in Utrecht than in Amsterdam."
+        turned = "I would rather work in Amsterdam than in Utrecht."
+        drafts, _ = _extract(
+            _reply(_item(text=turned, kind="preference")),
+            existing=[_stored(1, known, kind="preference")],
+        )
+        assert [d.text for d in drafts] == [turned]
+
+    def test_a_deleted_wish_does_not_block_its_reversal(self) -> None:
+        """Deleting "office, not home" does not stop "home, not office"."""
+        old = "Ik werk liever op kantoor dan thuis."
+        new = "Ik werk liever thuis dan op kantoor."
+        delete_memory(USER, add_memory(USER, MemoryDraft(text=old)).id)
+        client = FakeLLMClient([_reply(_item(text=new, kind="preference"))])
+        assert [m.text for m in _capture(client, notes=f"Noem dat {new}")] == [new]
+
+    def test_the_prompt_says_a_changed_wish_is_new(self) -> None:
+        """So the model does not drop the reversal itself."""
+        _, client = _extract(_reply())
+        assert (
+            "has changed since an existing or forgotten memory is new"
+            in (client.calls[0][0])
+        )
+
+
+class TestRelativeTime:
+    """ "Next month" in notes becomes a month and year."""
+
+    def test_the_prompt_gives_today_and_the_rule(self) -> None:
+        """Without today's date the model cannot turn relative time into dates."""
+        client = FakeLLMClient([_reply()])
+        extract_memories(
+            "Ik kan over twee maanden beginnen. Mijn examen is volgende maand.",
+            [],
+            client,
+            source="letter_notes",
+            today=date(2026, 9, 19),
+        )
+        prompt = client.calls[0][0]
+        assert "TODAY: 19 September 2026" in prompt
+        assert "Turn time relative to TODAY into a month and year" in prompt
+        assert "except relative time" in prompt
+        assert_styled_prompt(prompt)
+
+    def test_capture_passes_today_on(self) -> None:
+        """Automatic capture reads the notes against the same day."""
+        client = FakeLLMClient([_reply()])
+        _capture(client, today=date(2027, 1, 5))
+        assert "TODAY: 5 January 2027" in client.calls[0][0]
+
+    def test_without_a_date_the_applicants_today_is_used(self) -> None:
+        """The zone is the Netherlands, never an ISO date with hyphens."""
+        _, client = _extract(_reply())
+        today = client.calls[0][0].split("TODAY: ")[1].split("\n")[0]
+        assert re.fullmatch(r"\d{1,2} [A-Z][a-z]+ \d{4}", today)
 
 
 class TestSetting:

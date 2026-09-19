@@ -372,24 +372,32 @@ def test_the_capture_stores_the_facts_from_the_notes_once(
 def test_a_capture_sends_deleted_wording_but_never_a_private_memory(
     job_id: int, written: list[object], model: FakeLLMClient
 ) -> None:
-    """What the Memories tab says a capture sends is what the prompt holds."""
+    """What the Memories tab says a capture sends is what the prompt holds.
+
+    A deleted memory goes along when it touches the notes, as the tab says,
+    and one about something else does not.
+    """
     kept = add_memory(USER, MemoryDraft(text="Ik spreek vloeiend Duits."))
     private = add_memory(USER, MemoryDraft(text="Ik ben mantelzorger.", sensitive=True))
-    deleted = add_memory(USER, MemoryDraft(text="Ik rijd graag naar Groningen."))
+    deleted = add_memory(
+        USER, MemoryDraft(text="Ik leidde de audit bij Bureau Kalibra in 2021.")
+    )
+    unrelated = add_memory(USER, MemoryDraft(text="Ik rijd graag naar Groningen."))
     deleted_private = add_memory(
         USER,
         MemoryDraft(
             text="Ik zorg twee dagen per week voor mijn moeder.", sensitive=True
         ),
     )
-    assert delete_memory(USER, deleted.id)
-    assert delete_memory(USER, deleted_private.id)
+    for memory in (deleted, unrelated, deleted_private):
+        assert delete_memory(USER, memory.id)
 
     _letter(job_id, NOTES)
 
     prompt = model.calls[0][0]
     assert kept.text in prompt
     assert deleted.text in prompt
+    assert unrelated.text not in prompt
     assert private.text not in prompt
     assert deleted_private.text not in prompt
 

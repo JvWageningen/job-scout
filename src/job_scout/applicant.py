@@ -44,6 +44,7 @@ from job_scout.letters.models import LetterLanguage
 from job_scout.memories import (
     MEMORIES_SOURCE_KEY,
     MEMORY_GUIDE,
+    MEMORY_USE_GUIDE,
     MemoryUse,
     eligible_memories,
     list_memories,
@@ -526,7 +527,9 @@ def memories_block(memories: Sequence[Mapping[str, Any]]) -> str:
     listed = json.dumps([dict(memory) for memory in memories], ensure_ascii=False)
     return (
         "MEMORIES (JSON, facts the applicant asked job-scout to remember about "
-        f"themselves):\n{listed}\n{MEMORY_GUIDE} {MEMORY_DATA_RULE}\n\n"
+        "themselves: projects, results, skills, circumstances and wishes, often "
+        f"ones they left off their CV on purpose):\n{listed}\n"
+        f"{MEMORY_USE_GUIDE} {MEMORY_DATA_RULE}\n\n"
     )
 
 
@@ -861,8 +864,9 @@ def _memory_summary(user: str, purpose: MemoryUse | str | None = None) -> str:
             interviews together.
 
     Returns:
-        Such as "4 memories, where they fit the vacancy"; empty when there
-        are none or they could not be read.
+        Such as "4 memories, where they fit the vacancy" or "1 memory, where
+        it fits the vacancy"; empty when there are none or they could not be
+        read.
 
     Raises:
         ValueError: If ``purpose`` is not one of the three.
@@ -882,5 +886,6 @@ def _memory_summary(user: str, purpose: MemoryUse | str | None = None) -> str:
     }
     if not usable:
         return ""
-    noun = "memory" if len(usable) == 1 else "memories"
-    return f"{len(usable)} {noun}, where they fit the vacancy"
+    if len(usable) == 1:
+        return "1 memory, where it fits the vacancy"
+    return f"{len(usable)} memories, where they fit the vacancy"

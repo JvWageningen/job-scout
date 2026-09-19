@@ -456,7 +456,7 @@ def test_endpoint_returns_the_new_slug(
     response = dashboard.post(tailor_url(user=USER, job_id=job_id))
 
     assert response.status_code == 200, response.text
-    assert response.json() == {"slug": TAILORED_SLUG}
+    assert response.json() == {"slug": TAILORED_SLUG, "memories_not_used": []}
 
 
 def test_endpoint_saves_into_the_users_own_cv_directory(
@@ -618,3 +618,76 @@ def test_endpoint_hands_the_cv_memories_to_the_tailor(
     prompt = client.calls[-1][0]
     assert "monthly sales report" in prompt
     assert "four-day week" not in prompt
+
+
+REFUSED_BULLET_PLAN = json.dumps(
+    {
+        "sections": {
+            "xp": {
+                "entries": {
+                    "e1": {
+                        "bullets": ["Shipped an ETL stack", "Won the Turing Award"],
+                        "memories": ["memory 1"],
+                    }
+                }
+            }
+        }
+    }
+)
+
+
+def _a_cv_memory() -> None:
+    """Store one memory allowed on a CV for the user."""
+    from job_scout.memories import MemoryDraft, MemoryUse, add_memory  # noqa: PLC0415
+
+    add_memory(
+        USER,
+        MemoryDraft(
+            text="Built the SQL data pipeline for the monthly sales report.",
+            use_in=[MemoryUse.CV],
+        ),
+    )
+
+
+def test_endpoint_says_which_memories_were_not_used(
+    dashboard: TestClient,
+    profiles: ProfileStore,
+    job_id: int,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A refused memory bullet is reported, not dropped without a word."""
+    _a_cv_memory()
+    use_web_client(monkeypatch, fake_client(REFUSED_BULLET_PLAN))
+
+    response = dashboard.post(tailor_url(user=USER, job_id=job_id))
+
+    assert response.status_code == 200, response.text
+    [unused] = response.json()["memories_not_used"]
+    assert unused["memories"] == ["memory 1"]
+    assert (unused["title"], unused["organisation"]) == ("Data Engineer", "Beta NV")
+    assert unused["message"].startswith("Memory 1 was not used under Data Engineer")
+    saved = profiles.load(TAILORED_SLUG)
+    section = saved.main[1]
+    assert isinstance(section, ExperienceSection)
+    assert section.entries[0].bullets == ["Shipped an ETL stack"]
+
+
+def test_tailor_prints_which_memories_were_not_used(
+    profiles: ProfileStore,
+    job_id: int,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The command says so in one plain line, and the CV is still saved."""
+    _a_cv_memory()
+    use_cli_client(monkeypatch, fake_client(REFUSED_BULLET_PLAN))
+
+    result = run_tailor(str(job_id), "-o", str(tmp_path / "cv.pdf"))
+
+    assert result.exit_code == 0, result.output
+    assert "Offering 1 memory to use where it fits." in result.output
+    assert (
+        "Memory 1 was not used under Data Engineer at Beta NV, so that entry kept "
+        "its own bullets, reworded ones included."
+    ) in result.output
+    assert TAILORED_SLUG in profiles.list_profiles()

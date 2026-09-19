@@ -12,6 +12,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from loguru import logger
+
 from job_scout.models import (
     ApplicationStage,
     JobListing,
@@ -301,6 +303,10 @@ class Database:
         """
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(str(self.db_path))
+        # A deleted row is overwritten on disk, not only unlinked: a deleted
+        # memory can be private, and the data folder is often synced or
+        # backed up.
+        conn.execute("PRAGMA secure_delete = ON")
         conn.row_factory = sqlite3.Row
         try:
             yield conn
@@ -2265,16 +2271,17 @@ class Database:
         """Return the texts of deleted memories, most recently deleted first.
 
         Returns:
-            One dict per text with ``text``, ``sensitive`` (a bool) and
-            ``forgotten_at`` (ISO text).
+            One dict per text with ``id`` (the record's number), ``text``,
+            ``sensitive`` (a bool) and ``forgotten_at`` (ISO text).
         """
         with self._conn() as conn:
             rows = conn.execute(
-                "SELECT text, sensitive, forgotten_at FROM forgotten_memories "
-                "ORDER BY forgotten_at DESC, rowid DESC"
+                "SELECT rowid AS id, text, sensitive, forgotten_at "
+                "FROM forgotten_memories ORDER BY forgotten_at DESC, rowid DESC"
             ).fetchall()
         return [
             {
+                "id": row["id"],
                 "text": row["text"],
                 "sensitive": bool(row["sensitive"]),
                 "forgotten_at": row["forgotten_at"],
@@ -2282,14 +2289,42 @@ class Database:
             for row in rows
         ]
 
+    def remove_forgotten_memory(self, forgotten_id: int) -> bool:
+        """Erase the text of one deleted memory.
+
+        Args:
+            forgotten_id: The record's number, as
+                :meth:`get_forgotten_memories` returns it.
+
+        Returns:
+            True when a record was erased, False when there was none.
+        """
+        with self._conn() as conn:
+            cursor = conn.execute(
+                "DELETE FROM forgotten_memories WHERE rowid = ?", (forgotten_id,)
+            )
+            return cursor.rowcount > 0
+
     def clear_forgotten_memories(self) -> int:
-        """Erase the texts of deleted memories.
+        """Erase the texts of deleted memories, and compact the file.
+
+        Deleted rows are overwritten from now on (see :meth:`_conn`), but a
+        text deleted before that may still sit in free space in the file.
+        Compacting rewrites the file without it. It needs the database to
+        itself; when another connection holds it, the erase still stands and
+        the compacting is left for the next time.
 
         Returns:
             How many were erased.
         """
         with self._conn() as conn:
-            return conn.execute("DELETE FROM forgotten_memories").rowcount
+            erased = conn.execute("DELETE FROM forgotten_memories").rowcount
+            conn.commit()
+            try:
+                conn.execute("VACUUM")
+            except sqlite3.OperationalError as exc:
+                logger.warning(f"Could not compact the database after erasing: {exc}")
+            return erased
 
     def claim_notes_capture(
         self,

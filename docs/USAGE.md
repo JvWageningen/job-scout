@@ -80,7 +80,7 @@ logs directory regardless of this setting; `-v` only affects what reaches your t
 | [`memory edit`](#memory-edit) | Change a memory, or clear its private flag |
 | [`memory delete`](#memory-delete) | Delete memories |
 | [`memory import`](#memory-import) | Turn a text about yourself into memories |
-| [`memory forgotten`](#memory-forgotten) | Show the memories you deleted, or erase that list |
+| [`memory forgotten`](#memory-forgotten) | Show the memories you deleted, or erase one or all of them |
 | [`memory auto-capture`](#memory-auto-capture) | Show or switch capture from letter and interview notes |
 | [`cv list`](#cv-list) | List the stored CV profiles |
 | [`cv serve`](#cv-serve) | Run the CV editor on its own |
@@ -878,7 +878,9 @@ uv run job-scout memory add "Ik wil maximaal 32 uur per week werken." \
 ```
 
 Stores a statement as it is written; nothing is sent to a model. When a memory already
-says much the same, the new one is still saved and the command names the old one.
+says much the same, the new one is still saved and the command names the old one. A wish
+or a condition (`--kind preference` or `constraint`) never goes on a CV: it is stored
+without the CV use, and the command says so when you asked for `--use cv`.
 
 | Argument / option | Default | Description |
 |---|---|---|
@@ -914,9 +916,13 @@ uv run job-scout memory delete --all --user alex
 
 Deletes the memories with these ids and exits 1 when one of them does not exist.
 `--all` deletes every memory after asking; `--yes` skips the question. Automatic capture
-does not bring a deleted memory back, also not when you generate again with notes you
-changed: its wording is kept in your own database until you run
-[`memory forgotten --clear`](#memory-forgotten).
+does not bring a deleted memory back in the same or similar words, also not when you
+generate again with notes you changed: its wording is kept in your own database until you
+erase it with [`memory forgotten --remove N` or `--clear`](#memory-forgotten). Until then
+that wording goes to your configured model with an automatic capture of notes on the same
+subject, so that it knows what to leave out, unless the memory was private. A private one
+never reaches a model and is compared in code only, so a fact written quite differently
+can come back; it then comes back marked private. The command says this after deleting.
 
 ### `memory import`
 
@@ -930,8 +936,9 @@ proposed memories and saves them after asking. Proposals that repeat a memory yo
 already have are left out; a memory you deleted may be proposed again, since you review
 what is saved. At most 20 proposals per run: when the text may hold more, the command
 says so, and running it again after saving gets the rest. Reads TXT, MD, PDF, DOCX and
-ODT files of at most 20,000 characters of text. Exits 1 when the model's answer cannot
-be read.
+ODT files; a TXT file may be UTF-8, UTF-16 or Windows-1252 (Notepad's ANSI). One run
+reads at most 20,000 characters of text. Exits 1 when the file cannot be read or the
+model's answer cannot be read.
 
 | Argument / option | Default | Description |
 |---|---|---|
@@ -944,16 +951,22 @@ be read.
 
 ```bash
 uv run job-scout memory forgotten --user alex
+uv run job-scout memory forgotten --remove 4 --user alex
 uv run job-scout memory forgotten --clear --user alex
 ```
 
-Lists the memories you deleted, most recently deleted first, with the day and whether
-they were private. Automatic capture leaves these facts out. `--clear` erases the list
-after asking (`--yes` skips the question); after that nothing of a deleted memory is
-left, and new notes may bring those facts back.
+Lists the memories you deleted, most recently deleted first, each with its number, the
+day and whether it was private. Automatic capture leaves these facts out when notes say
+them in the same or similar words; a private one is compared in code only, so a fact
+written quite differently can come back, marked private. The wording of a deleted memory
+that is not private goes to your model with an automatic capture of notes on the same
+subject. `--remove N` erases one deleted memory; `--clear` erases the list after asking
+(`--yes` skips the question). Erased wording is overwritten in the database file, and
+new notes may bring those facts back.
 
 | Option | Default | Description |
 |---|---|---|
+| `--remove N` | none | Erase the deleted memory with this number only; repeat for more |
 | `--clear` | off | Erase the list |
 | `--yes` | off | Do not ask before erasing |
 
@@ -1052,9 +1065,10 @@ tailored again for the next vacancy.
 
 The model may only reorder sections, entries and items and reword prose. Employers, job
 titles, schools, degrees, dates and skill names are frozen, and the finished document is
-re-checked against the original: a CV that gained an employer, grew a bullet list beyond the
-memories it cites (see [Memories](MEMORIES.md)) or changed
-its theme is refused with a message, and nothing is written. Unlike
+re-checked against the original: a CV that gained an employer or changed its theme is
+refused with a message, and nothing is written. A bullet a [memory](MEMORIES.md) adds is
+checked against that memory; when it is refused, that role keeps its own bullets and the
+command prints one line saying which memory was not used where. Unlike
 [`profile tailor-resume`](#profile-tailor-resume) there is no job-status requirement — any
 job id in the database will do.
 

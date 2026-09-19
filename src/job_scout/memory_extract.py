@@ -17,13 +17,18 @@ plainly identical) and capped in number. Wishes and conditions never go on a
 CV, and a text, hint or tag that plainly says the applicant has a private
 matter is marked sensitive even when the model did not say so. Sensitive
 memories are never shown to the model, not even here as existing memories;
-they are compared with in code only.
+they are compared with in code only, and a draft that restates one in other
+words is marked sensitive as well.
 
 Automatic capture remembers the hash of every notes text it handled, so
 generating again with the same notes costs no second model call. It also
-leaves out every memory the applicant deleted, so notes typed again with a
-change do not bring one back. It can be switched off per user with the
-``memory_auto_capture`` setting.
+leaves out the memories the applicant deleted: notes typed again never bring
+one back in the same or similar words (see
+:func:`job_scout.memories.repeats_forgotten`), and for one that is not private
+the model is also asked to leave out other wordings. A private one never
+reaches the model, so it is compared in code only: a fact written quite
+differently can come back, and then comes back marked private. It can be
+switched off per user with the ``memory_auto_capture`` setting.
 """
 
 from __future__ import annotations
@@ -34,7 +39,7 @@ import re
 import sqlite3
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 import yaml
@@ -50,6 +55,7 @@ from job_scout.memories import (
     MAX_HINT_CHARS,
     MAX_SOURCE_DETAIL_CHARS,
     MAX_TEXT_CHARS,
+    OFF_CV_KINDS,
     ForgottenMemory,
     Memory,
     MemoryContent,
@@ -64,8 +70,12 @@ from job_scout.memories import (
     most_relevant,
     normalise_tags,
     normalise_text,
+    private_overlap,
+    repeats_forgotten,
     require_memory_user,
-    same_fact,
+    significant_words,
+    spoken_date,
+    today_here,
 )
 from job_scout.prose import clean_prose
 from job_scout.writing_style import HOUSE_STYLE
@@ -79,7 +89,8 @@ MAX_DRAFTS = 20
 # ones closest to the text first. Code compares with all of them regardless.
 MAX_EXISTING_IN_PROMPT = 40
 # Deleted memories shown to the model so it does not propose them again in
-# other words, the most recently deleted first. Code compares with all of them.
+# other words: only those that share a word with the text, closest first. Code
+# compares with all of them.
 MAX_FORGOTTEN_IN_PROMPT = 40
 # Notes shorter than this are an instruction ("kort houden"), not a fact.
 MIN_NOTES_WORDS = 3
@@ -87,9 +98,6 @@ MIN_NOTES_WORDS = 3
 # restart during the model call); the notes may then be captured again.
 CLAIM_STALE_AFTER = timedelta(minutes=30)
 
-# Kinds that describe a wish or a condition: useful for a letter or an
-# interview, never a line on a CV.
-_OFF_CV_KINDS = frozenset({MemoryKind.PREFERENCE, MemoryKind.CONSTRAINT})
 # The floor under the model's own "sensitive" judgement: phrases in which the
 # applicant is the one a private matter happens to (health, pregnancy, faith,
 # politics and union membership, sexuality, a criminal record, debts and
@@ -109,6 +117,29 @@ _ILLNESSES = (
     "autisme|autism|dyslexie|dyslexia|kanker|cancer|chronische ziekte|"
     "chronic illness|handicap|disability|beperking|diabetes|epilepsie|epilepsy"
 )
+# Words of time and duration that may stand between the applicant and their
+# condition: "ik heb in 2022 een burn-out gehad", "sinds vorig jaar ben ik
+# zwanger". Only these: any other word there is often the applicant's work
+# ("I have worked in cancer research").
+_WHEN = (
+    r"(?:(?:in|sinds|since|for|voor|al|ooit|once|toen|then|vorig|vorige|last|"
+    r"dit|this|jaar|jaren|year|years|maand|maanden|month|months|week|weken|"
+    r"weeks|lang|long|twee|drie|vier|vijf|zes|two|three|four|five|six|een|a|"
+    r"\d+) ){0,6}"
+)
+# A condition the applicant has, not the subject of their work: "a
+# depression screening app" or "diabetes onderzoek" is someone's work.
+_CONDITION = (
+    "(?:"
+    + _ILLNESSES.replace("diabetes", "(?:type (?:1|2|i|ii|one|two) )?diabetes")
+    + r")(?! (?:app|onderzoek|research|care|zorg|screening|preventie|prevention|"
+    r"programma|programme|program|tool|model|patienten|patients|clienten|"
+    r"clients|beleid|policy)\b)"
+)
+_RELATIVES = (
+    "vader|moeder|ouders|partner|man|vrouw|zoon|dochter|kind|"
+    "father|mother|parents|husband|wife|son|daughter|child"
+)
 _PRIVATE_PHRASES = (
     # Health and pregnancy.
     "(?:mijn|my) (?:burn out|burnout|depressie|depression|ziekte|illness|"
@@ -126,6 +157,23 @@ _PRIVATE_PHRASES = (
     "(?:ik heb|ik had|ik kreeg|ik lijd aan|ik leed aan|ik leef met|i have|i ve|"
     "i had|i got|i suffer from|i suffered from|i live with) (?:een |a |an )?"
     f"(?:{_ILLNESSES})",
+    # The same with a time between, or in Dutch inverted order.
+    "(?:ik heb|ik had|ik kreeg|heb ik|had ik|kreeg ik|i have|i ve|i had|i got) "
+    f"{_WHEN}(?:een |a |an )?(?:{_CONDITION})",
+    f"(?:ben ik|was ik|raakte ik|werd ik) {_WHEN}(?:overspannen|ziek|"
+    "arbeidsongeschikt|zwanger|gediagnosticeerd)",
+    # Away from work because of a condition.
+    "(?:ik ben|ik was|ben ik|was ik|ik viel|viel ik|i was|i have been|i ve been|"
+    f"i went) {_WHEN}(?:uitgevallen|uit|thuis|ziek thuis|off work|off sick|"
+    f"absent|on leave|out) {_WHEN}(?:door|met|wegens|vanwege|because of|due to|"
+    f"with|after|na) (?:een |a |an |mijn |my )?(?:{_CONDITION})",
+    # A memory that opens with the condition: "Na een burn-out werk ik ...".
+    "^(?:na|door|sinds|wegens|vanwege|after|since|because of|following) "
+    rf"(?:een |a |an |mijn |my )?(?:{_CONDITION}) (?:\w+ ){{0,4}}(?:ik|i)",
+    # A subordinate clause: "omdat ik zwanger ben".
+    r"(?:dat|omdat|sinds|doordat|nu|toen|als) ik (?:\w+ ){0,4}(?:zwanger|"
+    "overspannen|arbeidsongeschikt|mantelzorger|gescheiden) (?:ben|was|werd|"
+    "raakte)",
     "(?:hersteld|herstellende|herstel|recovered|recovering|recovery) "
     "(?:van|from) (?:een|a|an|mijn|my) (?:burn out|burnout|depressie|"
     "depression|ziekte|illness|operatie|surgery|kanker|cancer|ongeluk|accident)",
@@ -163,10 +211,15 @@ _PRIVATE_PHRASES = (
     "on benefits|on welfare|bankrupt)",
     # Divorce and caring for a relative.
     "(?:mijn|my) (?:scheiding|echtscheiding|divorce|mantelzorg)",
-    "(?:ik ben|ik was|i am|i m|i was|i got) (?:gescheiden|divorced|mantelzorger)",
+    "(?:ik ben|ik was|ben ik|was ik|i am|i m|i was|i got) "
+    f"{_WHEN}(?:gescheiden|divorced|mantelzorger)",
     r"(?:ik zorg|ik zorgde|i care|i cared|i look after|i looked after) "
     r"(?:\w+ ){0,4}(?:voor |for )?(?:mijn|my) (?:zieke |sick |ill )?(?:vader|"
     "moeder|ouders|partner|man|vrouw|father|mother|parents|husband|wife)",
+    r"ik (?:\w+ ){0,3}voor mijn (?:zieke )?(?:vader|moeder|ouders|partner|man|"
+    "vrouw) zorg(?:de)?",
+    "(?:mantelzorg|zorg|care|caring) (?:voor|for) (?:mijn|my) "
+    f"(?:zieke |sick |ill )?(?:{_RELATIVES})",
 )
 _PRIVATE_MATTER = re.compile(rf"\b(?:{'|'.join(_PRIVATE_PHRASES)})\b")
 _CAPTURE_ERRORS = (LLMError, ValueError, sqlite3.Error, OSError, yaml.YAMLError)
@@ -193,17 +246,26 @@ _RULES = (
     "out facts that are only about the vacancy, the employer or a contact "
     "person. Leave out anything the EXISTING MEMORIES already say, and "
     "anything the FORGOTTEN MEMORIES say in any wording: the applicant deleted "
-    "those and does not want them back.\n"
+    "those and does not want them back. A wish or a fact that has changed since "
+    "an existing or forgotten memory is new: propose it as it now stands.\n"
     "3. Write each memory so it stands on its own, without the vacancy or the "
     "document it came from. Generalise the framing, never the facts: keep "
-    "names, numbers, dates, tools and places exactly as the TEXT gives them. "
-    "Never invent, embellish or add anything the TEXT does not state.\n"
-    "4. One fact per memory. Split a sentence that holds two unrelated facts, "
+    "names, numbers, dates, tools and places exactly as the TEXT gives them, "
+    "except relative time (see rule 4). Never invent, embellish or add "
+    "anything the TEXT does not state.\n"
+    "4. Turn time relative to TODAY into a month and year, in the language of "
+    'the memory. With TODAY in September 2026, "next month" becomes "in '
+    'October 2026", "in two months" becomes "from November 2026" and "over '
+    'twee maanden" becomes "vanaf november 2026". For something that holds now '
+    "(a job, a course in progress, a notice period running), say when it was "
+    'noted, such as "As of September 2026 I am taking a Scrum Master course". '
+    "Never invent a start date or any date the TEXT does not give or imply.\n"
+    "5. One fact per memory. Split a sentence that holds two unrelated facts, "
     "but keep a project together with its own result.\n"
-    "5. Write each memory in the first person, in the language of the TEXT "
+    "6. Write each memory in the first person, in the language of the TEXT "
     "(Dutch or English), in one to three plain sentences of at most "
     f"{MAX_TEXT_CHARS} characters.\n"
-    "6. For each memory also give:\n"
+    "7. For each memory also give:\n"
     "kind: one of project, achievement, skill, experience, education, "
     "preference, constraint, personal, other.\n"
     "tags: at most 8 short lower case keywords that a vacancy it matters for "
@@ -216,7 +278,7 @@ _RULES = (
     "a CV.\n"
     "sensitive: true for health, family circumstances, religion, politics, "
     "finances and other private matters, false otherwise.\n"
-    f"7. Return at most {MAX_DRAFTS} memories. When nothing in the TEXT is worth "
+    f"8. Return at most {MAX_DRAFTS} memories. When nothing in the TEXT is worth "
     "remembering, return an empty list: that is a normal answer.\n"
 )
 
@@ -303,19 +365,33 @@ def _context(origin: _Origin) -> str:
     return f"{_CONTEXTS[origin.source]}."
 
 
-def _forgotten_block(forgotten: Sequence[ForgottenMemory]) -> str:
-    """List the deleted memories the model may see, most recent first.
+def _forgotten_block(forgotten: Sequence[ForgottenMemory], text: str) -> str:
+    """List the deleted memories that bear on the text, closest first.
 
-    Private ones are left out: they never reach a model.
+    Only a deleted memory that shares a meaning word with the text is sent:
+    the model needs it only when the text could bring it back, and a deleted
+    memory is not sent along with every capture of unrelated notes. Code
+    compares every proposal with all of them regardless (see
+    :func:`_is_forgotten`). Private ones are left out: they never reach a
+    model.
 
     Args:
-        forgotten: The memories the applicant deleted.
+        forgotten: The memories the applicant deleted, most recent first.
+        text: The text being read.
 
     Returns:
-        A JSON list of their texts, or "[]" when there are none.
+        A JSON list of their texts, or "[]" when none bears on the text.
     """
-    shown = [item.text for item in forgotten if not item.sensitive]
-    return json.dumps(shown[:MAX_FORGOTTEN_IN_PROMPT], ensure_ascii=False)
+    terms = significant_words(text)
+    scored = [
+        (len(significant_words(item.text) & terms), item.text)
+        for item in forgotten
+        if not item.sensitive
+    ]
+    relevant = [pair for pair in scored if pair[0] > 0]
+    relevant.sort(key=lambda pair: pair[0], reverse=True)
+    shown = [item_text for _, item_text in relevant[:MAX_FORGOTTEN_IN_PROMPT]]
+    return json.dumps(shown, ensure_ascii=False)
 
 
 def _existing_block(existing: Sequence[Memory], text: str) -> str:
@@ -340,6 +416,7 @@ def _prompt(
     existing: Sequence[Memory],
     forgotten: Sequence[ForgottenMemory],
     origin: _Origin,
+    today: date,
 ) -> str:
     """Build the one extraction prompt.
 
@@ -348,6 +425,7 @@ def _prompt(
         existing: Every stored memory.
         forgotten: The memories the applicant deleted, to leave out.
         origin: Where the text came from.
+        today: The current date, to turn relative time into dates.
 
     Returns:
         The prompt.
@@ -357,12 +435,13 @@ def _prompt(
         "motivation letters and interview answers can use them. "
         f"{_context(origin)} Read the TEXT and return the facts about the "
         "applicant worth remembering.\n\n"
+        f"TODAY: {spoken_date(today)}\n\n"
         f"{_RULES}\n{HOUSE_STYLE}\n{_OUTPUT}\n"
         "EXISTING MEMORIES (already remembered, do not repeat them):\n"
         f"{_existing_block(existing, text)}\n\n"
         "FORGOTTEN MEMORIES (deleted by the applicant, never propose them "
         "again):\n"
-        f"{_forgotten_block(forgotten)}\n\n"
+        f"{_forgotten_block(forgotten, text)}\n\n"
         f"TEXT:\n<<<\n{text}\n>>>\n"
     )
 
@@ -458,7 +537,7 @@ def _uses(value: object, kind: MemoryKind) -> list[MemoryUse]:
     items = raw if isinstance(raw, list | tuple) else []
     named = {str(item).strip().lower() for item in items}
     allowed = [
-        use for use in ALL_USES if not (kind in _OFF_CV_KINDS and use is MemoryUse.CV)
+        use for use in ALL_USES if not (kind in OFF_CV_KINDS and use is MemoryUse.CV)
     ]
     return [use for use in allowed if use.value in named] or allowed
 
@@ -533,17 +612,97 @@ def _draft(item: dict[str, Any], origin: _Origin) -> MemoryDraft | None:
         return None
 
 
+# A draft that shares this many meaning words and numbers with a deleted
+# private memory speaks of the same matter often enough to be kept private,
+# and when they make up this part of the shorter text it is not captured.
+_PRIVATE_SHARED = 2
+_PRIVATE_SHARE_TO_DROP = 0.5
+
+
+def _restates(private_text: str, text: str) -> bool:
+    """Tell whether a draft likely restates a private memory in other words.
+
+    Scaled to the length of the texts, so that a work fact which only shares
+    an employer's name with a private memory is not taken for it.
+
+    Args:
+        private_text: The text of a private memory.
+        text: A proposed memory text.
+
+    Returns:
+        True when the two share at least two significant words and those
+        make up at least half of the shorter text. A private memory of one
+        significant word ("Ik ben zwanger") is restated only by a draft that
+        is at least half that word, not by "an app for pregnant women".
+    """
+    private, draft = significant_words(private_text), significant_words(text)
+    shared = len(private & draft)
+    base = len(draft) if len(private) == 1 else min(len(private), len(draft))
+    return (
+        bool(private and draft)
+        and shared >= min(2, len(private))
+        and 2 * shared >= base
+    )
+
+
 def _is_forgotten(text: str, forgotten: Sequence[ForgottenMemory]) -> bool:
-    """Tell whether a text repeats a memory the applicant deleted.
+    """Tell whether a text brings back a memory the applicant deleted.
+
+    A private deleted memory never reaches the model, so code is the only
+    check on it and compares loosely: a false match only costs a fact the
+    applicant can add by hand.
 
     Args:
         text: A proposed memory text.
         forgotten: The memories the applicant deleted.
 
     Returns:
-        True when it adds nothing to one of them (see ``same_fact``).
+        True when it repeats one of them (see
+        :func:`job_scout.memories.repeats_forgotten`), or when it restates a
+        private one or shares most of its words and numbers.
     """
-    return any(same_fact(item.text, text) for item in forgotten)
+    for item in forgotten:
+        if repeats_forgotten(item, text):
+            return True
+        if not item.sensitive:
+            continue
+        shared, part = private_overlap(item.text, text)
+        close = shared >= _PRIVATE_SHARED and part >= _PRIVATE_SHARE_TO_DROP
+        if close or _restates(item.text, text):
+            return True
+    return False
+
+
+def _keep_private(
+    draft: MemoryDraft,
+    existing: Sequence[MemoryContent],
+    forgotten: Sequence[ForgottenMemory],
+) -> MemoryDraft:
+    """Mark a draft private when it speaks of a matter the applicant keeps private.
+
+    The model never sees a private memory, so it cannot know that the notes
+    touch one. This only ever raises the flag, never clears it.
+
+    Args:
+        draft: A proposed memory that is new.
+        existing: Every stored memory, sensitive ones included.
+        forgotten: Deleted memories, for automatic capture.
+
+    Returns:
+        The draft, marked sensitive when it restates a private memory or
+        shares two or more words and numbers with a deleted private one.
+    """
+    if draft.sensitive:
+        return draft
+    stored = any(m.sensitive and _restates(m.text, draft.text) for m in existing)
+    deleted = any(
+        item.sensitive and private_overlap(item.text, draft.text)[0] >= _PRIVATE_SHARED
+        for item in forgotten
+    )
+    if not (stored or deleted):
+        return draft
+    logger.debug("Marked a proposed memory private: it restates a private one")
+    return draft.model_copy(update={"sensitive": True})
 
 
 def _new_only(
@@ -552,6 +711,9 @@ def _new_only(
     forgotten: Sequence[ForgottenMemory],
 ) -> list[MemoryDraft]:
     """Drop drafts that repeat a known, a forgotten or an earlier draft.
+
+    A draft that speaks of a private memory's matter is kept marked private
+    (see :func:`_keep_private`).
 
     Args:
         drafts: Proposed memories, in the model's order.
@@ -567,7 +729,7 @@ def _new_only(
         if known is not None or _is_forgotten(draft.text, forgotten):
             logger.debug(f"Dropped a proposed memory already known: {draft.text!r}")
             continue
-        kept.append(draft)
+        kept.append(_keep_private(draft, existing, forgotten))
     return kept
 
 
@@ -596,6 +758,7 @@ def _ask(
     forgotten: Sequence[ForgottenMemory],
     origin: _Origin,
     client: LLMClient,
+    today: date,
 ) -> list[dict[str, Any]]:
     """Make the one model call and return the proposed memories as objects.
 
@@ -605,6 +768,7 @@ def _ask(
         forgotten: The memories the applicant deleted, to leave out.
         origin: Where the text came from.
         client: The model to ask.
+        today: The current date, to turn relative time into dates.
 
     Returns:
         The objects in the model's list of memories.
@@ -613,7 +777,7 @@ def _ask(
         MemoryExtractionError: If the model's answer is unreadable.
         LLMError: If the model call fails.
     """
-    prompt = _prompt(body, existing, forgotten, origin)
+    prompt = _prompt(body, existing, forgotten, origin, today)
     raw = client.complete(prompt, purpose="cv_parsing", timeout=EXTRACT_TIMEOUT)
     return _items(raw)
 
@@ -627,6 +791,7 @@ def extract_memories(
     source_detail: str = "",
     job_id: int | None = None,
     forgotten: Sequence[ForgottenMemory] = (),
+    today: date | None = None,
 ) -> MemoryExtraction:
     """Turn free text into proposed memories with one model call.
 
@@ -646,6 +811,8 @@ def extract_memories(
             back. Automatic capture passes them; a reviewed import leaves
             them out, so the applicant can take a fact back on purpose.
             Private ones are compared with in code only.
+        today: The current date, which the model uses to turn "next month"
+            into a month and year; the applicant's today when None.
 
     Returns:
         The drafts that state something not yet remembered, in the house
@@ -668,7 +835,7 @@ def extract_memories(
             "at a time."
         )
     origin = _Origin.of(source, source_detail, job_id)
-    items = _ask(body, existing, forgotten, origin, client)
+    items = _ask(body, existing, forgotten, origin, client, today or today_here())
     proposed = [draft for draft in (_draft(i, origin) for i in items) if draft]
     fresh = _new_only(proposed, existing, forgotten)
     truncated = len(items) >= MAX_DRAFTS or len(fresh) > MAX_DRAFTS
@@ -768,20 +935,25 @@ def capture_pending(user: str, notes: str) -> bool:
 
 
 def _extract_and_save(
-    user: str, notes: str, origin: _Origin, client: LLMClient | None
+    user: str,
+    notes: str,
+    origin: _Origin,
+    client: LLMClient | None,
+    today: date | None = None,
 ) -> list[Memory]:
     """Extract memories from notes and store the new ones.
 
     Memories the applicant deleted are left out, also when the notes were
-    typed again with a change. The memories are read again just before
-    storing, so a capture of other notes that finished meanwhile, or a delete
-    made meanwhile, is respected.
+    typed again with a change (see :func:`_is_forgotten`). The memories are
+    read again just before storing, so a capture of other notes that
+    finished meanwhile, or a delete made meanwhile, is respected.
 
     Args:
         user: Name of an existing user.
         notes: The notes as typed.
         origin: Where the notes were typed.
         client: The model to ask; the user's configured one when None.
+        today: The current date; the applicant's today when None.
 
     Returns:
         The stored memories.
@@ -795,6 +967,7 @@ def _extract_and_save(
         source_detail=origin.detail,
         job_id=origin.job_id,
         forgotten=list_forgotten(user),
+        today=today,
     )
     if not found.drafts:
         return []
@@ -803,7 +976,11 @@ def _extract_and_save(
 
 
 def _capture(
-    user: str, notes: str, origin: _Origin, client: LLMClient | None
+    user: str,
+    notes: str,
+    origin: _Origin,
+    client: LLMClient | None,
+    today: date | None = None,
 ) -> list[Memory]:
     """Capture memories from notes once, releasing the claim if it fails.
 
@@ -812,6 +989,7 @@ def _capture(
         notes: The notes as typed.
         origin: Where the notes were typed.
         client: The model to ask; the user's configured one when None.
+        today: The current date; the applicant's today when None.
 
     Returns:
         The stored memories; empty when there was nothing to do.
@@ -828,7 +1006,7 @@ def _capture(
         return []
     done = False
     try:
-        saved = _extract_and_save(user, notes, origin, client)
+        saved = _extract_and_save(user, notes, origin, client, today)
         db.complete_notes_capture(key, len(saved))
         done = True
     finally:
@@ -846,6 +1024,7 @@ def capture_from_notes(
     source_detail: str = "",
     job_id: int | None = None,
     client: LLMClient | None = None,
+    today: date | None = None,
 ) -> list[Memory]:
     """Turn the notes typed for a letter or interview into stored memories.
 
@@ -855,8 +1034,8 @@ def capture_from_notes(
     notes are shorter than :data:`MIN_NOTES_WORDS` words, or when the same
     notes were captured before (by hash of the normalised text). A capture
     that fails is not recorded, so the next generation tries again. A memory
-    the applicant deleted is never stored again (see
-    :func:`job_scout.memories.list_forgotten`).
+    the applicant deleted is not stored again in the same or similar words
+    (see :func:`_is_forgotten`).
 
     Args:
         user: Name of an existing user.
@@ -866,13 +1045,14 @@ def capture_from_notes(
             the Findwhere letter".
         job_id: The vacancy the notes were typed for.
         client: The model to ask; the user's configured one when None.
+        today: The current date; the applicant's today when None.
 
     Returns:
         The memories stored; empty when nothing was stored for any reason.
     """
     try:
         origin = _Origin.of(source, source_detail, job_id)
-        return _capture(user, notes, origin, client)
+        return _capture(user, notes, origin, client, today)
     except _CAPTURE_ERRORS as exc:
         logger.warning(f"Memories were not captured from {source} for {user}: {exc}")
         return []

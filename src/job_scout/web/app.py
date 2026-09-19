@@ -58,7 +58,7 @@ from job_scout.cv.app import build_api_router as build_cv_api_router
 from job_scout.cv.app import get_store as get_cv_store
 from job_scout.cv.models import CVDocument
 from job_scout.cv.storage import ProfileStore, StorageError
-from job_scout.cv.tailor import TailorError, tailor_cv_document, tailored_slug
+from job_scout.cv.tailor import TailorError, tailor_cv, tailored_slug
 from job_scout.database import Database
 from job_scout.interview_answers import (
     InterviewAnswerError,
@@ -609,10 +609,12 @@ def build_interview_router() -> APIRouter:
 
     @router.get("/context")
     def context(user: InterviewUser) -> dict[str, object]:
-        """Offer the same vacancies, CVs and source summary the letter writer offers.
+        """Offer the same vacancies and CVs the letter writer offers, and the sources.
 
         Both tabs call ``open_vacancy_choices``, ``profile_choices`` and
-        ``describe_sources``, so the two setups cannot drift apart.
+        ``describe_sources``, so the two setups cannot drift apart. The
+        source summary here counts only the memories an interview may use,
+        as the letter tab counts only those a letter may use.
         ``saved_jobs`` adds, apart from that shortlist, the vacancies that left
         it but still have saved preparation: a posting is often taken down
         once the interviews start, and what was prepared for it is still
@@ -623,7 +625,7 @@ def build_interview_router() -> APIRouter:
             "jobs": jobs,
             "saved_jobs": saved_vacancy_choices(user, {job["id"] for job in jobs}),
             "profiles": profile_choices(user),
-            "sources": describe_sources(user),
+            "sources": describe_sources(user, MemoryUse.INTERVIEW),
         }
 
     @router.post("/questions")
@@ -932,7 +934,7 @@ def create_app() -> FastAPI:
     @app.post("/api/cv/profiles/{slug}/tailor")
     def tailor_cv_profile(
         slug: str, user: str | None = None, job_id: int | None = None
-    ) -> dict[str, str]:
+    ) -> dict[str, object]:
         """Save a vacancy-tailored copy of one CV profile.
 
         The source profile is only read: the tailored document is written under
@@ -944,7 +946,10 @@ def create_app() -> FastAPI:
             job_id: Database id of the vacancy to tailor towards.
 
         Returns:
-            Dictionary with the new profile's slug.
+            The new profile's ``slug``, and ``memories_not_used``: one entry
+            per role whose new memory bullets were left out, with the
+            ``memories`` they named, the role's ``title`` and
+            ``organisation``, and a ``message`` saying so in plain words.
 
         Raises:
             HTTPException: If the user, profile or job is unknown, the LLM is
@@ -966,7 +971,7 @@ def create_app() -> FastAPI:
         # under an existing role; the tailor's integrity check still holds.
         memories = memories_for_vacancy(name, MemoryUse.CV, job)
         try:
-            tailored = tailor_cv_document(doc, job, client, memories=memories)
+            result = tailor_cv(doc, job, client, memories=memories)
         except (LLMError, TailorError) as exc:
             # 502, not 500: the request was fine, the model upstream was not.
             raise HTTPException(
@@ -974,9 +979,18 @@ def create_app() -> FastAPI:
             ) from exc
 
         new_slug = tailored_slug(slug, job)
-        _save_tailored_profile(store, slug, new_slug, tailored)
+        _save_tailored_profile(store, slug, new_slug, result.document)
         logger.info(f"Tailored CV '{slug}' for {name} to '{new_slug}'")
-        return {"slug": new_slug}
+        unused = [
+            {
+                "memories": list(item.labels),
+                "title": item.title,
+                "organisation": item.organisation,
+                "message": item.describe(),
+            }
+            for item in result.memories_not_used
+        ]
+        return {"slug": new_slug, "memories_not_used": unused}
 
     @app.get("/cv/", include_in_schema=False)
     def serve_cv_index() -> HTMLResponse:

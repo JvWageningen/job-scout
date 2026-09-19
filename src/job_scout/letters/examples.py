@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from xml.etree import ElementTree
 
+from loguru import logger
 from PyPDF2 import PdfReader
 from PyPDF2.errors import PdfReadError
 
@@ -69,34 +70,84 @@ def _office_text(data: bytes, member: str) -> str:
     return "\n\n".join(paragraphs)
 
 
-def extract_text(filename: str, data: bytes, *, kind: str = "letter") -> str:
+def _decode_text(data: bytes) -> str:
+    """Decode a plain text file in the encodings Windows editors save.
+
+    Args:
+        data: The file's bytes.
+
+    Returns:
+        The text: UTF-16 when the file starts with its byte order mark,
+        otherwise UTF-8 (with or without a mark), and Windows-1252 (Notepad
+        "ANSI" and Word "Plain Text" on a Dutch Windows) when it is not
+        UTF-8.
+
+    Raises:
+        UnicodeError: If the bytes fit none of these.
+    """
+    if data.startswith((b"\xff\xfe", b"\xfe\xff")):
+        return data.decode("utf-16")
+    try:
+        return data.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return data.decode("cp1252")
+
+
+def _read_document(suffix: str, data: bytes) -> str:
+    """Read the text of a document by its format.
+
+    Args:
+        suffix: The file's suffix, lower case.
+        data: The file's bytes.
+
+    Returns:
+        The document's text, not yet stripped.
+
+    Raises:
+        ExampleError: For a locked or overlong PDF, or an office file that
+            is too large or uses XML entities.
+    """
+    if suffix == ".pdf":
+        reader = PdfReader(io.BytesIO(data))
+        if reader.is_encrypted or len(reader.pages) > 20:
+            raise ExampleError("Use an unlocked PDF of at most 20 pages.")
+        return "\n\n".join(page.extract_text() or "" for page in reader.pages)
+    if suffix in {".docx", ".odt"}:
+        member = "word/document.xml" if suffix == ".docx" else "content.xml"
+        return _office_text(data, member)
+    return _decode_text(data)
+
+
+def extract_text(
+    filename: str, data: bytes, *, kind: str = "letter", min_chars: int = 40
+) -> str:
     """Extract text from a supported, bounded upload; reject empty scans.
+
+    A file that cannot be read gets one plain message, and the cause goes to
+    the log: codec or archive errors mean nothing to the applicant.
 
     Args:
         filename: The uploaded file's name; its suffix decides the format.
         data: The uploaded bytes.
         kind: What the document is, for the error messages ("letter", "CV").
+        min_chars: The fewest characters a usable text has. A letter example
+            needs 40; a note about oneself may be one line.
 
     Returns:
         The document's text.
 
     Raises:
-        ExampleError: If the file is empty, too large, unreadable or a scan.
+        ExampleError: If the file is empty, too large, unreadable, a scan, or
+            its text is shorter than ``min_chars`` or longer than
+            :data:`MAX_TEXT` characters.
     """
     suffix = Path(_name(filename)).suffix.lower()
     if not data or len(data) > MAX_BYTES:
         raise ExampleError("The file must be nonempty and at most 8 MB.")
     try:
-        if suffix == ".pdf":
-            reader = PdfReader(io.BytesIO(data))
-            if reader.is_encrypted or len(reader.pages) > 20:
-                raise ExampleError("Use an unlocked PDF of at most 20 pages.")
-            text = "\n\n".join(page.extract_text() or "" for page in reader.pages)
-        elif suffix in {".docx", ".odt"}:
-            member = "word/document.xml" if suffix == ".docx" else "content.xml"
-            text = _office_text(data, member)
-        else:
-            text = data.decode("utf-8-sig")
+        text = _read_document(suffix, data).strip()
+    except ExampleError:
+        raise
     except (
         UnicodeError,
         zipfile.BadZipFile,
@@ -106,11 +157,43 @@ def extract_text(filename: str, data: bytes, *, kind: str = "letter") -> str:
         ValueError,
         OSError,
     ) as exc:
-        raise ExampleError(f"Could not read the {kind}: {exc}") from exc
-    text = text.strip()
-    if len(text) < 40 or len(text) > MAX_TEXT:
-        raise ExampleError(f"Use a text-based {kind} between 40 and 80,000 characters.")
+        logger.warning(f"Could not read {filename}: {type(exc).__name__}: {exc}")
+        raise ExampleError(
+            f"This {kind} could not be read. Save it again as a text-based PDF, "
+            "a DOCX or a TXT file, or paste its text."
+        ) from exc
+    _check_length(text, kind, min_chars)
     return text
+
+
+def _check_length(text: str, kind: str, min_chars: int) -> None:
+    """Refuse a text too short or too long to use, saying which.
+
+    Args:
+        text: The document's text, stripped.
+        kind: What the document is, for the message.
+        min_chars: The fewest characters a usable text has.
+
+    Raises:
+        ExampleError: If the text is empty, shorter than ``min_chars`` or
+            longer than :data:`MAX_TEXT` characters.
+    """
+    if not text:
+        raise ExampleError(
+            f"No text was found in this {kind}. A scanned PDF holds none; use a "
+            "text-based file or paste the text."
+        )
+    if len(text) < min_chars:
+        raise ExampleError(
+            f"This {kind} holds only {len(text)} characters. Use a text of at "
+            f"least {min_chars} characters."
+        )
+    if len(text) > MAX_TEXT:
+        raise ExampleError(
+            f"This {kind} holds {len(text):,} characters and at most "
+            f"{MAX_TEXT:,} can be read. Split it into smaller files, or paste "
+            "one part at a time."
+        )
 
 
 def list_examples(user: str) -> list[ExampleLetter]:

@@ -79,8 +79,8 @@
 
             <section id="memories-section" class="section hidden tab-content" data-tab="memories">
                 <div class="letter-heading"><div><h2>Memories</h2>
-                <p>Things about you that job-scout keeps for later: a project that only matters for some roles, a result you would rather leave off your CV, a wish about hours or travel, a course you are still taking. When it writes a letter, prepares an interview or tailors your CV, it uses the memories whose hint or tags fit that vacancy and leaves the others out.</p>
-                <p>Add a memory by hand, paste any text about yourself and pick from what it proposes, or simply write notes for a letter or an interview: the facts about you in those notes are kept here too. Everything stays in your own data. Your memories reach your configured language model in two ways: as part of your facts for a letter, interview or CV, like your CV does, and whenever new memories are proposed from a text or from your notes, so that the model leaves out what you already have. Automatic capture from notes also sends the wording of memories you deleted, so that it does not propose them again. A private memory never reaches a model.</p></div>
+                <p>Things about you that job-scout keeps for later: a project that only matters for some roles, a result you would rather leave off your CV, a wish about hours or travel, a course you are still taking. When it writes a letter, prepares an interview or tailors your CV, it uses the memories whose text, hint or tags fit that vacancy and leaves the others out.</p>
+                <p>Add a memory by hand, paste any text about yourself and pick from what it proposes, or simply write notes for a letter or an interview: the facts about you in those notes are kept here too. Everything stays in your own data. Your memories reach your configured language model in two ways: as part of your facts for a letter, interview or CV, like your CV does, and whenever new memories are proposed from a text or from your notes, so that the model leaves out what you already have. Automatic capture from notes also sends the wording of the deleted memories that touch your notes, so that it does not propose them again. A private memory never reaches a model.</p></div>
                 <span class="letter-badge">Used where it fits</span></div>
                 <p id="memory-status" role="status" aria-live="polite">Select a single user to see their memories.</p>
                 <fieldset id="memory-workspace" disabled>
@@ -91,12 +91,12 @@
                         <div id="memory-new"></div>
                         <div class="letter-actions"><button id="memory-add" class="btn btn-primary" type="button">Save memory</button></div>
                         <h3 class="memory-subhead">Turn a text into memories</h3>
-                        <p class="letter-hint">Paste anything about yourself: a list of projects, an old self-assessment, a paragraph you wrote for an application. Your configured model proposes memories from it; you choose which to keep and can change them first. Nothing is saved until you do. The model also sees the memories you have, private ones excepted, so that it does not propose them again.</p>
+                        <p class="letter-hint">Paste anything about yourself: a list of projects, an old self-assessment, a paragraph you wrote for an application. Your configured model proposes memories from it; you choose which to keep and can change them first. Nothing is saved until you do. The model also sees the memories you have, private ones excepted, so that it does not propose them again. At most 20,000 characters are read at a time.</p>
                         <label for="memory-text">Text about you</label>
-                        <textarea id="memory-text" rows="8" maxlength="20000" placeholder="In 2022 I moved forty shops to a new till system for Voorbeeld Retail, and I speak German fluently."></textarea>
+                        <textarea id="memory-text" rows="8" placeholder="In 2022 I moved forty shops to a new till system for Voorbeeld Retail, and I speak German fluently."></textarea>
                         <label for="memory-file">Or read a file <span class="letter-hint">(optional)</span></label>
                         <input type="file" id="memory-file" accept=".pdf,.docx,.odt,.txt,.md">
-                        <p class="letter-hint">Text-based PDF, DOCX, ODT, TXT or Markdown, up to 8 MB. Its text appears above, so you can check or shorten it. At most 20,000 characters are read at a time.</p>
+                        <p class="letter-hint">Text-based PDF, DOCX, ODT, TXT or Markdown, up to 8 MB and 80,000 characters. Its text appears above, so you can check or shorten it. At most 20,000 characters are read at a time, so a longer text is proposed one part after the other.</p>
                         <div class="letter-actions"><button id="memory-propose" class="btn btn-primary" type="button">Propose memories</button></div>
                     </div>
                     <div class="letter-paper">
@@ -119,10 +119,10 @@
                 </div>
                 <div class="letter-style memory-settings">
                     <h3>From your notes</h3>
-                    <label class="memory-check" for="memory-auto"><input type="checkbox" id="memory-auto"> <span>Keep facts about me from my letter and interview notes</span></label>
-                    <p class="letter-hint">After a letter or interview set is written, its notes are read once more and the facts about you that could matter again are saved here: a project, a result, a wish. Instructions for that one document and facts about only that vacancy are left out. This sends your notes to your configured model a second time, together with your memories and the wording of the ones you deleted, private ones excepted, so that it does not propose those again. The same notes are read only once.</p>
+                    <label class="memory-check" for="memory-auto"><input type="checkbox" id="memory-auto" disabled> <span>Keep facts about me from my letter and interview notes</span></label>
+                    <p class="letter-hint">After a letter or interview set is written, its notes are read once more and the facts about you that could matter again are saved here: a project, a result, a wish. Instructions for that one document and facts about only that vacancy are left out. This sends your notes to your configured model a second time, together with your memories and the wording of the deleted ones that touch your notes, private ones excepted, so that it does not propose those again. The same notes are read only once.</p>
                     <details id="memory-forgotten-box"><summary>Deleted memories (<span id="memory-forgotten-count">0</span>)</summary>
-                        <p class="letter-hint">The wording of every memory you delete is kept, so that notes you type again do not bring it back. It stays in your own database until you erase this list, and until then every automatic capture sends it to your configured model, private ones excepted, to say what to leave out. Erasing the list stops that, and lets new notes bring those facts back. Adding a fact again by hand, or from a text, always works.</p>
+                        <p class="letter-hint">The wording of every memory you delete is kept, so that notes you type again do not bring it back in the same or similar words. It stays in your own database until you erase it, and until then an automatic capture of notes on the same subject sends it to your configured model to say what to leave out. A private one is never sent: it is compared in code only, so a fact written quite differently can come back, and then comes back marked private. Erase one deleted memory, or the whole list, to stop that and let new notes bring those facts back. Adding a fact again by hand, or from a text, always works.</p>
                         <ul id="memory-forgotten"></ul>
                         <button id="memory-forgotten-clear" class="btn btn-secondary" type="button">Erase this list</button>
                     </details>

@@ -17,7 +17,7 @@ looks at your memories and uses the ones that fit that vacancy.
 | Kind | project, achievement, skill, experience, education, preference, constraint, personal or other. |
 | Tags | Up to 8 lower-case keywords that a vacancy it matters for would contain, such as `cro`, `retail` or `python`. |
 | Hint | One short sentence on when it applies, such as "Use for CRO or experimentation roles". |
-| Where used | Any of CV, letter and interview. All three by default. Something you want off your CV simply leaves out CV. |
+| Where used | Any of CV, letter and interview. All three by default. Something you want off your CV simply leaves out CV, and a wish or a condition (kind preference or constraint) never has it, however it was added. |
 | Private | For health, family, religion, politics, finances and similar matters. A private memory is stored and shown to you, and never sent to a model until you clear the flag. |
 | Origin | Added by hand, taken from a text, or taken from the notes of a letter or an interview, with the vacancy it came from and when. |
 
@@ -50,7 +50,14 @@ uv run job-scout memory import --text "Ik heb in 2022 veertig winkels ..." --use
 
 One run reads at most 20,000 characters and proposes at most 20 memories. When a text
 may hold more, the tab and the command say so; run it again after saving and the model,
-which then sees the saved ones, proposes the rest.
+which then sees the saved ones, proposes the rest. A file may hold up to 80,000
+characters, read one part after the other; a TXT file may be UTF-8, UTF-16 or
+Windows-1252 (what Notepad saves as ANSI).
+
+Time relative to the day you write it is turned into a month and year: with today in
+September 2026, "I can start in two months" becomes "I can start from November 2026", so
+a later letter does not repeat an availability that has passed. Something that holds now,
+such as a course in progress, says when it was noted.
 
 **Automatically, from your notes.** The notes you type for a letter or an interview in
 the dashboard are read once more after the letter or interview set is written. Facts about you that could
@@ -69,30 +76,39 @@ of one or two words are not read at all. Switch automatic capture off per user w
 switch at the bottom of the Memories tab, with `job-scout memory auto-capture off`, or
 with the `memory_auto_capture` setting in [CONFIGURATION.md](CONFIGURATION.md).
 
-**Deleting holds.** A memory you delete is not captured again, also not when you type the
-notes again with a change and generate once more. job-scout keeps the wording of every
-deleted memory in your own database for that, tells the model not to propose those facts
-again (private ones excepted, which never reach a model) and drops any proposal that
-repeats one. *Deleted memories* at the bottom of the Memories tab, or `job-scout memory
-forgotten`, shows the list; **Erase this list**, or `--clear`, erases it, and after that
-new notes may bring those facts back. Adding a fact again by hand, or through a text
-import you review, always works.
+**Deleting holds, within limits.** Notes you type again, also with a change, do not
+bring a deleted memory back in the same or similar words. job-scout keeps the wording of
+every deleted memory in your own database for that. Code drops any proposal that repeats
+one or only leaves a detail such as the year out. For a memory that is not private, the
+model is also told not to propose it again in any wording, whenever your notes touch its
+subject. A private one never reaches a model, so it is compared in code only, and more
+loosely: a proposal that shares most of its words and numbers is dropped. A fact written
+quite differently can still come back; it then comes back marked private, and you can
+delete it again. *Deleted memories* at the bottom of the Memories tab, or `job-scout
+memory forgotten`, shows the list; **Erase** next to one, or `--remove N`, erases that
+one, and **Erase this list**, or `--clear`, erases them all. After that new notes may
+bring those facts back. Adding a fact again by hand, or through a text import you review,
+always works.
 
 In both automatic and text import, the model sees the memories you already have and
 leaves out what they say, in any wording. Code adds a floor that only catches the plainly
 identical: a proposal is dropped when it has the same words (case, accents, punctuation
 and word order aside), or when it is a shorter wording that adds nothing. A different
 number is a different fact ("since 2019" does not repeat "since 2020", "one month" does
-not repeat "three months"), and so is another employer or tool, or a wish turned around
-("I do not want to travel").
+not repeat "three months"), and so is another employer or tool, a wish turned around ("I
+do not want to travel"), or a comparison or direction turned around ("rather Utrecht than
+Amsterdam" does not repeat "rather Amsterdam than Utrecht").
 
 Wishes and conditions (kinds preference and constraint) are never put on a CV. A proposal
 whose text, hint or tags plainly say that you have a private matter ("ik ben zwanger",
-"my divorce", "ik zit in de schuldsanering", "recovered from a burn-out") is marked
-private even when the model did not mark it. A subject alone is not enough: "bijstand",
-"vakbond" or "sick leave" also describe the work of a klantmanager, an HR adviser or an
-analyst, and work marked private would be kept out of every document. For those the
-model decides, and you can always set or clear the flag yourself.
+"my divorce", "ik zit in de schuldsanering", "recovered from a burn-out", "ik heb in 2022
+een burn-out gehad", "na een burn-out werk ik liever 32 uur") is marked private even when
+the model did not mark it. A subject alone is not enough: "bijstand", "vakbond" or "sick
+leave" also describe the work of a klantmanager, an HR adviser or an analyst, and work
+marked private would be kept out of every document. For those the model decides, and you
+can always set or clear the flag yourself. The model never sees your private memories,
+so it cannot know that your notes touch one: a proposal that says what one of them says
+in other words is marked private in code.
 
 ## How memories are used
 
@@ -103,22 +119,42 @@ never included, for any purpose.
 The memories are ranked by how well they fit the vacancy: a tag that occurs in the
 vacancy counts three points, each other significant word the memory's text and hint
 share with the vacancy one point, and among equals the most recently changed memory comes
-first. At most 25 are sent. With fewer eligible memories all of them are sent and the
-model decides from the hints and tags which fit.
+first. Words are compared without their common endings, so a field meets its role: the
+tag `data engineering` fits "Data Engineer", `project manager` fits "project management".
+At most 25 are sent. With fewer eligible memories all of them are sent and the model
+decides from their text, hints and tags which fit.
 
 A tag of one or two letters, or a very common word, counts only where the vacancy writes
 it in capitals: the tag `it` fits "IT-servicedesk", not "It is a great place".
 
 In the prompt each memory is one more labelled source of facts next to your CV, with a
-label such as `memory 3`, its kind, text, hint, tags and the date it was last changed.
-Where it came from is not sent: it can name another employer. The model is told to use a
-memory only where its hint or tags fit the vacancy, to treat a preference or constraint
-as a wish and never as experience, never to stretch a memory beyond what it says, and to
-follow the more recent of two memories that disagree ("32 uur" noted in May, "40 uur"
-noted in September). On
-a CV a memory may reword or add a bullet or description under the role, study or project
-it belongs to, or add to the profile text; it never adds a role, an employer, a date, a
-school or a skill item.
+label such as `memory 3`, its kind, text, hint, tags and the date it was last changed
+with how long ago that was ("19 March 2026 (6 months ago)"). A memory you add by hand may
+have no hint or tags; its text is enough. Where it came from is not sent: it can name
+another employer. The model is told to use a memory only where its text, hint or tags fit
+the vacancy, to treat a preference or constraint as a wish and never as experience, never
+to stretch a memory beyond what it says, to follow the more recent of two memories that
+disagree ("32 uur" noted in May, "40 uur" noted in September), to read relative time in
+a memory against the date it was noted, and never to state as current an availability or
+a plan that has passed or is months old.
+
+On a CV built in CV Builder a memory may add a bullet after the own bullets of the role it
+belongs to, or add to the profile text; education entries are only reordered, and a wish
+or a condition goes nowhere on the CV. A memory never adds a role, an employer, a date, a
+school or a skill item. Each new bullet is checked in code against the memory behind it,
+whether the model named that memory or not: the memory must belong to that role (it may
+not describe work for another organisation, such as a freelance job or a client, or be
+dated only outside the role's period), and the bullet may hold no number (in digits or in
+words), name or year that the memory does not. When the words alone cannot show that a
+bullet states its memory, as for a Dutch memory on an English CV, the model is asked once
+more, as a judge, and only its explicit yes lets the bullet in. A refused bullet is left
+out, that role keeps its own bullets, and `cv tailor` and the tailor endpoint say which
+memory was not used where. While memories are in the prompt, reworded descriptions,
+bullets and the profile text are checked too: one that takes up a memory about other
+work, or brings in a number or name that neither the CV nor a fitting memory holds, is put
+back as it was. The checks read words, not meaning: they do not catch a claim made in
+ordinary words, such as "led a team". For a plain text CV (`profile tailor-resume`) the
+rule is the same, and a study line may also take what a memory adds.
 
 ## The Memories tab
 
@@ -147,7 +183,8 @@ Choose a single user first; everything in it belongs to that user.
   **Delete** asks first. **Refresh** picks up memories that a capture added while the tab
   was open; opening the tab again does the same.
 - **From your notes.** The automatic capture switch, and *Deleted memories*: the wording
-  of every memory you deleted, with **Erase this list**.
+  of every memory you deleted, with **Erase** next to each and **Erase this list**. The
+  delete confirmation says what is kept and what is sent before you decide.
 
 The Cover Letter Writer and Interview Questions tabs say, next to the notes box, that
 facts in your notes are kept as memories, and say so again after a generation that
@@ -164,13 +201,17 @@ the configured model provider in two ways:
   the text you gave, and automatic capture sends the notes you typed a second time,
   after the letter or interview set was written from them. Both send along up to 40 of
   your memories, the ones closest to that text, so that the model leaves out what you
-  already have. Automatic capture also sends the wording of up to 40 deleted memories,
-  so that it does not propose those facts again.
+  already have. Automatic capture also sends the wording of up to 40 deleted memories
+  that share a word with your notes, so that it does not propose those facts again; a
+  deleted memory is not sent with notes about something else.
 
 Private memories never reach a model: not in the applicant facts, not as existing
 memories and not as deleted ones. The wording of a deleted memory stays in
-`forgotten_memories`, and goes along with every automatic capture, until you erase the
-list in the tab or run `job-scout memory forgotten --clear`.
+`forgotten_memories`, and goes along with automatic captures of notes on its subject,
+until you erase it in the tab or run `job-scout memory forgotten --remove N` or
+`--clear`. Deleted rows are overwritten in the database file, not only unlinked, and
+erasing the list also compacts the file, so an erased wording does not linger in a
+synced or backed up copy of it.
 
 The dashboard's memory routes sit under `/api/memories`, behind the same token as every
 other route, and each reads and writes only the user named in the request.
@@ -182,9 +223,9 @@ other route, and each reads and writes only the user named in the request.
 | `memory list [--search WORDS]` | Show your memories, newest first |
 | `memory add TEXT` | Remember a statement, with `--kind`, `--tags`, `--hint`, `--use` and `--private` |
 | `memory edit ID` | Change a memory; `--not-private` clears the private flag |
-| `memory delete ID...` / `--all` | Delete memories; automatic capture will not bring them back |
+| `memory delete ID...` / `--all` | Delete memories; notes will not bring them back in the same or similar words |
 | `memory import FILE` / `--text TEXT` | Turn a text into proposed memories and save them after asking |
-| `memory forgotten [--clear]` | Show the memories you deleted, or erase that list |
+| `memory forgotten [--remove N] [--clear]` | Show the memories you deleted, or erase one or all of them |
 | `memory auto-capture [on\|off]` | Show or switch automatic capture from notes |
 
 Every command takes `--user`. See [USAGE.md](USAGE.md#memories) for all options.
@@ -203,8 +244,14 @@ if payload:
     facts.sources[MEMORIES_SOURCE_KEY] = payload
 ```
 
-`MEMORY_GUIDE` is the sentence for the source guide and `MEMORY_CV_RULE` the rule for CV
-tailoring. `memory_labels(payload)` returns the labels a model may cite, for validating
+`MEMORY_GUIDE` is the entry for the source guide, where memories are a key of the
+applicant's facts; `MEMORY_USE_GUIDE` is the same guidance without the description, for a
+prompt that quotes memories as a section of its own and describes them itself.
+`MEMORY_CV_RULE` is the rule for tailoring a text CV; CV Builder tailoring has its own
+`CV_MEMORY_RULE` in `cv/tailor.py`, and `tailor_cv(...)` returns the tailored document
+with `memories_not_used`. The payload's `noted_on` reads like "19 March 2026 (6 months
+ago)"; pass `today=` to `select_memories_payload` or `memories_payload` in tests.
+`memory_labels(payload)` returns the labels a model may cite, for validating
 citations the way STAR story citations are validated. After a generation with notes,
 `capture_from_notes(user, notes, source="letter_notes", source_detail=..., job_id=...)`
 runs the capture; it never raises, so it can run as a background task, and
@@ -234,9 +281,10 @@ cached.
 | `DELETE /api/memories/{id}` | Delete a memory and record its wording as forgotten. 404 when it is gone |
 | `POST /api/memories/extract` | `{text, source_detail}` to proposed drafts and `truncated`, with one model call; stores nothing |
 | `POST /api/memories/batch` | Store the drafts the applicant kept, as edited, in one transaction (1 to 20) |
-| `POST /api/memories/read-file` | The text of an uploaded TXT, MD, PDF, DOCX or ODT file, to check before proposing; stores nothing |
+| `POST /api/memories/read-file` | The text of an uploaded TXT, MD, PDF, DOCX or ODT file (up to 8 MB and 80,000 characters), to check before proposing; stores nothing. A file that cannot be read gets one plain message |
 | `GET` / `PUT /api/memories/auto-capture` | Read or set `{enabled}` for automatic capture |
-| `GET` / `DELETE /api/memories/forgotten` | List the deleted memories, or erase that list |
+| `GET` / `DELETE /api/memories/forgotten` | List the deleted memories (each with its `id`), or erase that list |
+| `DELETE /api/memories/forgotten/{id}` | Erase one deleted memory. 404 when it is gone |
 
 `start_capture(tasks, response, user, notes, source=..., job_id=..., client=...)` is what
 `POST /api/letters/generate`, `POST /api/interview/questions` and

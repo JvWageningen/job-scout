@@ -43,6 +43,7 @@ from job_scout.memories import (
     delete_memory,
     describe_origin,
     find_duplicate,
+    forget_completely,
     list_forgotten,
     list_memories,
     require_memory_user,
@@ -67,6 +68,7 @@ PASTED_DETAIL = "text pasted in the Memories tab"
 # lower limit gives the message the applicant sees.
 _MAX_BODY_CHARS = 5 * MAX_INPUT_CHARS
 _NOT_FOUND = "No memory with that number. It may have been deleted already."
+_NOT_FORGOTTEN = "No deleted memory with that number. It may have been erased already."
 _VAGUE = "The model could not complete the request. Check LLM settings and retry."
 # What checking or naming a capture can raise. None of it may cost the
 # applicant the letter or interview set that was just generated.
@@ -346,7 +348,8 @@ def _add_text_routes(router: APIRouter) -> None:
         finally:
             await file.close()
         name = file.filename or ""
-        return ReadFile(name=name, text=extract_text(name, data, kind="document"))
+        text = extract_text(name, data, kind="document", min_chars=1)
+        return ReadFile(name=name, text=text)
 
 
 def _add_setting_routes(router: APIRouter) -> None:
@@ -369,13 +372,24 @@ def _add_setting_routes(router: APIRouter) -> None:
 
     @router.get("/forgotten")
     def forgotten(user: MemoryUser) -> ForgottenList:
-        """List the deleted memories that notes will not bring back."""
+        """List the deleted memories, which notes do not bring back in similar words.
+
+        A private one never reaches a model, so it is compared in code only,
+        and a fact written quite differently can come back, marked private.
+        """
         return ForgottenList(forgotten=list_forgotten(user))
 
     @router.delete("/forgotten")
     def erase_forgotten(user: MemoryUser) -> Erased:
         """Erase the wording of deleted memories from the user's database."""
         return Erased(erased=clear_forgotten(user))
+
+    @router.delete("/forgotten/{forgotten_id}", status_code=204)
+    def erase_one_forgotten(forgotten_id: MemoryId, user: MemoryUser) -> Response:
+        """Erase the wording of one deleted memory; notes may bring it back."""
+        if not forget_completely(user, forgotten_id):
+            raise HTTPException(404, _NOT_FORGOTTEN)
+        return Response(status_code=204)
 
 
 def _add_memory_routes(router: APIRouter) -> None:
@@ -397,7 +411,12 @@ def _add_memory_routes(router: APIRouter) -> None:
 
     @router.delete("/{memory_id}", status_code=204)
     def delete(memory_id: MemoryId, user: MemoryUser) -> Response:
-        """Delete one memory; automatic capture will not bring it back."""
+        """Delete one memory; notes do not bring it back in similar words.
+
+        Its wording is kept under the deleted memories. A private one is
+        compared in code only, so a fact written quite differently can come
+        back, marked private.
+        """
         if not delete_memory(user, memory_id):
             raise HTTPException(404, _NOT_FOUND)
         return Response(status_code=204)

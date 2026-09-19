@@ -14,7 +14,8 @@ Every memory carries what later generators need to decide whether it fits:
 * ``tags``: a few lower-case keywords a vacancy it matters for would contain.
 * ``hint``: one short sentence on when it applies.
 * ``use_in``: which documents may draw on it (CV, letter, interview). Something
-  the applicant wants off their CV simply lacks ``cv``.
+  the applicant wants off their CV simply lacks ``cv``, and a wish or a
+  condition never has it.
 * ``sensitive``: private matters (health, family, religion, politics, finances
   and the like). A sensitive memory is stored and shown, and never sent to any
   model, not even to the extractor, until the applicant clears the flag.
@@ -38,12 +39,20 @@ import re
 import unicodedata
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from enum import StrEnum
-from typing import Any
+from math import ceil
+from typing import Any, Self
+from zoneinfo import ZoneInfo
 
 from loguru import logger
-from pydantic import BaseModel, Field, ValidationError, field_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 from job_scout.config import list_users, user_db_path
 from job_scout.database import Database
@@ -54,31 +63,43 @@ MAX_TAGS = 8
 MAX_TAG_CHARS = 40
 MAX_SOURCE_DETAIL_CHARS = 200
 # More memories than this in one prompt crowd out the CV they supplement. With
-# fewer eligible memories all of them go, and the model decides with the hints.
+# fewer eligible memories all of them go, and the model decides with the text,
+# hints and tags.
 SELECT_LIMIT = 25
 # A matching tag says more about fit than one shared word in the text.
 _TAG_WEIGHT = 3
 
 # The key the memories are added under in the applicant's facts.
 MEMORIES_SOURCE_KEY = "memories"
-# One sentence for the source guide of every prompt that receives memories.
+# How to use memories, for a prompt that describes its memories itself, such
+# as one that quotes them as a section of their own.
+MEMORY_USE_GUIDE = (
+    "Each memory has a label, a kind and a text, and often a hint on when it "
+    "applies and tags; one added by hand may have neither. Use a memory only "
+    "where its text, hint or tags fit this vacancy and leave the others out. A "
+    "memory is the applicant's own statement and counts as evidence like the "
+    "CV, except that a memory of kind preference or constraint is a wish or a "
+    "condition, never experience. Never stretch a memory beyond what it says. "
+    "Each memory has noted_on, the date it was last changed and how long ago "
+    "that was: when two memories disagree, the more recent one holds. Read any "
+    "relative time in a memory against its noted_on. Never state as current an "
+    "availability, a start date, a plan or a course in progress that has passed "
+    "or is several months old; leave it out, or say it as the memory dates it."
+)
+# One entry for the source guide of every prompt that receives memories as a
+# key of the applicant's facts.
 MEMORY_GUIDE = (
     "memories holds facts the applicant asked job-scout to remember about "
     "themselves: projects, results, skills, circumstances and wishes, often ones "
-    "they left off their CV on purpose. Each has a label, a kind, a hint on when "
-    "it applies and tags. Use a memory only where its hint or tags fit this "
-    "vacancy and leave the others out. A memory is the applicant's own statement "
-    "and counts as evidence like the CV, except that a memory of kind preference "
-    "or constraint is a wish or a condition, never experience. Never stretch a "
-    "memory beyond what it says. Each memory has noted_on, the date it was last "
-    "changed: when two memories disagree, the more recent one holds."
+    "they left off their CV on purpose. " + MEMORY_USE_GUIDE
 )
 # The rule for CV tailoring, where the structure of the CV must stay intact.
 MEMORY_CV_RULE = (
     "A memory may reword or add a bullet or a description under the existing "
     "role, study or project it belongs to, or add to the profile text. It never "
     "adds a role, an employer, a date, a school or a skill item that the CV does "
-    "not already have."
+    "not already have. A wish or a condition (kind preference or constraint) "
+    "goes nowhere on the CV, also not in the profile text."
 )
 
 
@@ -105,6 +126,12 @@ class MemoryUse(StrEnum):
 
 
 ALL_USES: tuple[MemoryUse, ...] = (MemoryUse.CV, MemoryUse.LETTER, MemoryUse.INTERVIEW)
+# Kinds that describe a wish or a condition: useful for a letter or an
+# interview, never a line on a CV. Every memory of these kinds loses the CV use,
+# however it was made (see MemoryContent).
+OFF_CV_KINDS: frozenset[MemoryKind] = frozenset(
+    {MemoryKind.PREFERENCE, MemoryKind.CONSTRAINT}
+)
 
 
 class MemorySource(StrEnum):
@@ -164,7 +191,8 @@ class MemoryContent(BaseModel):
         tags: Lower-case keywords a vacancy it matters for would contain.
         hint: One short sentence on when it applies.
         use_in: The documents that may draw on it, in the order cv, letter,
-            interview. Empty keeps the memory without using it anywhere.
+            interview. Empty keeps the memory without using it anywhere. A
+            wish or a condition (see :data:`OFF_CV_KINDS`) never has cv.
         sensitive: A private matter that is never sent to a model.
     """
 
@@ -200,6 +228,13 @@ class MemoryContent(BaseModel):
     def _order_uses(cls, value: list[MemoryUse]) -> list[MemoryUse]:
         """Drop repeats and keep the uses in one fixed order."""
         return [use for use in ALL_USES if use in value]
+
+    @model_validator(mode="after")
+    def _wishes_stay_off_the_cv(self) -> Self:
+        """A wish or a condition is not experience and never goes on a CV."""
+        if self.kind in OFF_CV_KINDS and MemoryUse.CV in self.use_in:
+            self.use_in = [use for use in self.use_in if use is not MemoryUse.CV]
+        return self
 
 
 class MemoryDraft(MemoryContent):
@@ -314,12 +349,14 @@ class ForgottenMemory(BaseModel):
     deleted memory would come straight back from them.
 
     Attributes:
+        id: The record's number, to erase this one record alone.
         text: The deleted memory's text.
         sensitive: Whether it was private; a private one is never shown to a
             model, not even as something to leave out.
         forgotten_at: When it was deleted.
     """
 
+    id: int = 0
     text: str
     sensitive: bool = False
     forgotten_at: datetime
@@ -512,9 +549,13 @@ def update_memory(user: str, memory_id: int, content: MemoryContent) -> Memory |
 def delete_memory(user: str, memory_id: int) -> bool:
     """Delete one memory, and record it as forgotten.
 
-    Automatic capture does not bring a forgotten memory back, also not from
-    notes typed again with a change (see :func:`list_forgotten`). Adding it
-    by hand or through a reviewed import still works.
+    Automatic capture does not bring a forgotten memory back in the same or
+    similar words (see :func:`list_forgotten` and
+    :func:`repeats_forgotten`). For one that is not private the model is also
+    asked to leave out other wordings of it; a private one never reaches a
+    model, so it is compared in code only, and a fact written quite
+    differently can come back, marked private. Adding it by hand or through a
+    reviewed import still works.
 
     Args:
         user: Name of an existing user.
@@ -566,8 +607,10 @@ def list_forgotten(user: str) -> list[ForgottenMemory]:
 def clear_forgotten(user: str) -> int:
     """Erase the record of deleted memories.
 
-    Afterwards nothing of a deleted memory is left in the database, and
-    automatic capture may find those facts again in new notes.
+    The texts are overwritten on disk and the database file is compacted,
+    so their wording does not linger in it (see
+    :meth:`Database.clear_forgotten_memories`). Automatic capture may find
+    those facts again in new notes.
 
     Args:
         user: Name of an existing user.
@@ -581,11 +624,32 @@ def clear_forgotten(user: str) -> int:
     return _database(user).clear_forgotten_memories()
 
 
+def forget_completely(user: str, forgotten_id: int) -> bool:
+    """Erase the record of one deleted memory, leaving the others.
+
+    Its wording is then no longer sent along with automatic capture, and new
+    notes may bring the fact back.
+
+    Args:
+        user: Name of an existing user.
+        forgotten_id: The record's number, from :func:`list_forgotten`.
+
+    Returns:
+        True when the record was erased, False when there was none.
+
+    Raises:
+        MemoryStoreError: If the user does not exist.
+    """
+    return _database(user).remove_forgotten_memory(forgotten_id)
+
+
 # -- Comparing text --------------------------------------------------------------
 
 # Endings stripped before words are compared, longest first, so "projects" and
-# "projecten" meet "project", and "testing" and "tested" meet "test".
-_SUFFIXES = ("ingen", "ing", "ers", "er", "en", "es", "ed", "e", "s")
+# "projecten" meet "project", "testing" and "tested" meet "test", and a field
+# meets its role: "engineering" and "engineer", "management" and "manager",
+# "ontwikkeling" and "ontwikkelaar".
+_SUFFIXES = ("ingen", "ment", "aar", "ing", "ers", "er", "en", "es", "ed", "e", "s")
 # Words that say nothing about fit: function words of both languages and the
 # words nearly every vacancy uses.
 _STOPWORD_TEXT = (
@@ -619,18 +683,24 @@ def normalise_text(text: str) -> str:
 
 
 def _stem(word: str) -> str:
-    """Strip one common English or Dutch ending, keeping at least four letters.
+    """Strip common English or Dutch endings, keeping at least four letters.
+
+    Endings are stripped again until none applies, so "engineering",
+    "engineer" and "engineers" all meet at "engin".
 
     Args:
         word: A normalised word.
 
     Returns:
-        The word without its ending.
+        The word without its endings.
     """
-    for suffix in _SUFFIXES:
-        if word.endswith(suffix) and len(word) - len(suffix) >= 4:
-            return word[: -len(suffix)]
-    return word
+    while True:
+        for suffix in _SUFFIXES:
+            if word.endswith(suffix) and len(word) - len(suffix) >= 4:
+                word = word[: -len(suffix)]
+                break
+        else:
+            return word
 
 
 def _stems(normalised: str) -> set[str]:
@@ -705,10 +775,17 @@ _FUNCTION_WORD_TEXT = (
     "gedaan te van in op aan bij met uit naar om door en of maar dus ook er "
     "daar hier dan"
 )
+# Words that relate two things in a set order: a comparison, a direction or a
+# replacement. The word after one is part of the claim: "rather in Utrecht
+# than in Amsterdam" is not "rather in Amsterdam than in Utrecht".
+_RELATION_TEXT = (
+    "than over from to into instead versus vs before after dan boven van naar tot na"
+)
 _NEGATIONS = frozenset(_NEGATION_TEXT.split())
 _MODALS = frozenset(_MODAL_TEXT.split())
 _NUMBER_WORDS = frozenset(_NUMBER_WORD_TEXT.split())
 _FUNCTION_WORDS = frozenset(_FUNCTION_WORD_TEXT.split())
+_RELATIONS = frozenset(_RELATION_TEXT.split())
 # English contractions, spelt out before comparing so "don't" meets "do not".
 _CONTRACTIONS = (
     (re.compile(r"\b(?:can['\u2019]t|cannot)\b"), "can not"),
@@ -749,6 +826,32 @@ def _marker(word: str) -> str:
     return ""
 
 
+def _relations(words: tuple[str, ...]) -> frozenset[tuple[str, str]]:
+    """Pair each relation word with the stem of the first content word after it.
+
+    Args:
+        words: The normalised words of a text, in order.
+
+    Returns:
+        Pairs such as ("than", "amsterdam") for "than in Amsterdam".
+    """
+    pairs: set[tuple[str, str]] = set()
+    for index, word in enumerate(words):
+        if word not in _RELATIONS:
+            continue
+        following = (
+            later
+            for later in words[index + 1 :]
+            if later not in _RELATIONS
+            and later not in _FUNCTION_WORDS
+            and not _marker(later)
+        )
+        target = next(following, None)
+        if target is not None:
+            pairs.add((word, _stem(target)))
+    return frozenset(pairs)
+
+
 @dataclass(frozen=True)
 class _Claim:
     """What a memory text claims, reduced for comparing it with another.
@@ -757,11 +860,13 @@ class _Claim:
         words: Its normalised words, in order.
         markers: Its negations, numbers and modal verbs, sorted, with repeats.
         content: The stems of its other words that carry meaning.
+        relations: Each comparison or direction word with the word after it.
     """
 
     words: tuple[str, ...]
     markers: tuple[str, ...]
     content: frozenset[str]
+    relations: frozenset[tuple[str, str]]
 
     @classmethod
     def of(cls, text: str) -> _Claim:
@@ -780,7 +885,39 @@ class _Claim:
             for word in words
             if not _marker(word) and word not in _FUNCTION_WORDS
         )
-        return cls(words=words, markers=markers, content=content)
+        return cls(
+            words=words,
+            markers=markers,
+            content=content,
+            relations=_relations(words),
+        )
+
+    def negated(self) -> bool:
+        """Tell whether the text holds a negation.
+
+        Returns:
+            True when one of its markers is a negation.
+        """
+        return "not" in self.markers
+
+    def adds_nothing_to(self, known: _Claim) -> bool:
+        """Tell whether this claim says nothing the known one does not.
+
+        A number or a modal verb may be left out, never added or changed.
+
+        Args:
+            known: The claim to compare with.
+
+        Returns:
+            True when the negation is the same, every marker, content word
+            and relation of this claim is in the known one.
+        """
+        return (
+            self.negated() == known.negated()
+            and set(self.markers) <= set(known.markers)
+            and self.content <= known.content
+            and self.relations <= known.relations
+        )
 
 
 def same_fact(first: str, second: str) -> bool:
@@ -798,7 +935,10 @@ def same_fact(first: str, second: str) -> bool:
       occurs in the first. Another employer, another tool or any added
       detail makes a new fact; a shorter wording of the same fact does not.
 
-    Word order is not compared.
+    Word order is not compared, except for the word after a comparison or
+    direction word (than, over, from, to, dan, van, naar and the like): "I
+    would rather work in Utrecht than in Amsterdam" is not repeated by the
+    same sentence turned around.
 
     Args:
         first: The known memory text.
@@ -813,7 +953,73 @@ def same_fact(first: str, second: str) -> bool:
         return True
     if not known.words or not new.words or known.markers != new.markers:
         return False
-    return new.content <= known.content
+    return new.content <= known.content and new.relations <= known.relations
+
+
+# Of the meaning words a draft shares with a deleted private memory, this part
+# of the shorter text makes it the same matter for code. Such a memory never
+# reaches the model, so code is the only check and is loose on purpose.
+_PRIVATE_OVERLAP = 0.6
+
+
+def repeats_forgotten(item: ForgottenMemory, text: str) -> bool:
+    """Tell whether a proposed memory brings a deleted one back.
+
+    Looser than :func:`same_fact`, because leaving a real fact out of
+    automatic capture costs little (the applicant can add it by hand) while
+    bringing a deleted one back breaks a promise. The text repeats the
+    deleted memory when:
+
+    * :func:`same_fact` says so, or
+    * it adds nothing to it, even when it leaves a number out ("Ik heb een
+      burn-out gehad" after "Ik heb in 2022 een burn-out gehad"), or
+    * the deleted memory was private and the text has the same negation, no
+      number or modal verb the deleted one lacks, and shares most of the
+      meaning words of the shorter of the two ("doorgemaakt" for "gehad").
+
+    Args:
+        item: A memory the applicant deleted.
+        text: A proposed memory text.
+
+    Returns:
+        True when the text should not be captured.
+    """
+    if same_fact(item.text, text):
+        return True
+    old, new = _Claim.of(item.text), _Claim.of(text)
+    if not old.words or not new.words:
+        return False
+    if new.adds_nothing_to(old):
+        return True
+    if not item.sensitive or new.negated() != old.negated():
+        return False
+    if not set(new.markers) <= set(old.markers):
+        return False
+    smaller = min(len(old.content), len(new.content))
+    needed = max(1, ceil(_PRIVATE_OVERLAP * smaller))
+    return len(old.content & new.content) >= needed
+
+
+def private_overlap(private_text: str, text: str) -> tuple[int, float]:
+    """Measure how much a text shares with a private memory.
+
+    Numbers count as shared words too: "2021" and "operatie" in both is
+    already a strong sign that the text speaks of the same private matter.
+
+    Args:
+        private_text: The text of a private memory, stored or deleted.
+        text: A proposed memory text.
+
+    Returns:
+        How many meaning words and markers the two share, and what part of
+        the shorter text that is (0.0 when either is empty).
+    """
+    old, new = _Claim.of(private_text), _Claim.of(text)
+    old_terms = old.content | set(old.markers)
+    new_terms = new.content | set(new.markers)
+    shared = len(old_terms & new_terms)
+    base = min(len(old_terms), len(new_terms))
+    return shared, (shared / base if base else 0.0)
 
 
 def find_duplicate[M: MemoryContent](text: str, memories: Sequence[M]) -> M | None:
@@ -944,13 +1150,20 @@ def eligible_memories(
 
     Returns:
         The memories allowed for that purpose that are not sensitive, in the
-        order given.
+        order given. A wish or a condition is never eligible for a CV, even
+        one built without validation.
 
     Raises:
         ValueError: If the purpose is not one of the three.
     """
     use = MemoryUse(purpose)
-    return [m for m in memories if use in m.use_in and not m.sensitive]
+    return [
+        m
+        for m in memories
+        if use in m.use_in
+        and not m.sensitive
+        and not (use is MemoryUse.CV and m.kind in OFF_CV_KINDS)
+    ]
 
 
 def rank_memories(
@@ -1031,8 +1244,87 @@ def select_memories(
 
 # -- Prompt material -------------------------------------------------------------
 
+_MONTH_NAMES = (
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
+)
+# The zone the applicant lives in; "today" is their day, not the server's.
+_HOME = ZoneInfo("Europe/Amsterdam")
 
-def memories_payload(memories: Sequence[Memory]) -> list[dict[str, Any]]:
+
+def today_here() -> date:
+    """Return the applicant's current date.
+
+    Returns:
+        Today in the Netherlands.
+    """
+    return datetime.now(_HOME).date()
+
+
+def spoken_date(day: date) -> str:
+    """Write a date the way the prompts and pages do.
+
+    Args:
+        day: A date.
+
+    Returns:
+        Such as "19 September 2026": the month as a word, never a number,
+        so no date with hyphens ends up in a memory or a prompt.
+    """
+    return f"{day.day} {_MONTH_NAMES[day.month - 1]} {day.year}"
+
+
+def _age(then: date, today: date) -> str:
+    """Say how long ago a date was.
+
+    Args:
+        then: The earlier date.
+        today: The current date.
+
+    Returns:
+        Such as "today", "5 days ago", "6 months ago" or "2 years ago".
+    """
+    days = (today - then).days
+    months = (today.year - then.year) * 12 + today.month - then.month
+    if today.day < then.day:
+        months -= 1
+    if days <= 0:
+        return "today"
+    if months < 1:
+        return "1 day ago" if days == 1 else f"{days} days ago"
+    if months < 12:
+        return "1 month ago" if months == 1 else f"{months} months ago"
+    years = months // 12
+    return "1 year ago" if years == 1 else f"{years} years ago"
+
+
+def noted_on(memory: Memory, today: date | None = None) -> str:
+    """Say when a memory was last changed and how long ago that was.
+
+    Args:
+        memory: A stored memory.
+        today: The current date; the applicant's today when None.
+
+    Returns:
+        Such as "19 March 2026 (6 months ago)".
+    """
+    changed = memory.updated_at.astimezone(_HOME).date()
+    return f"{spoken_date(changed)} ({_age(changed, today or today_here())})"
+
+
+def memories_payload(
+    memories: Sequence[Memory], *, today: date | None = None
+) -> list[dict[str, Any]]:
     """Turn memories into the labelled prompt material for applicant facts.
 
     Where a memory came from is left out on purpose: it can name another
@@ -1041,11 +1333,14 @@ def memories_payload(memories: Sequence[Memory]) -> list[dict[str, Any]]:
 
     Args:
         memories: Memories chosen by :func:`select_memories`.
+        today: The current date, for how long ago each memory was noted; the
+            applicant's today when None.
 
     Returns:
         One entry per memory: ``label`` ("memory 3", what an answer cites),
-        ``kind``, ``text``, ``noted_on`` (the date it was last changed, for
-        weighing it against older sources) and, when set, ``hint`` and ``tags``.
+        ``kind``, ``text``, ``noted_on`` (the date it was last changed and
+        how long ago that was, for weighing it against older sources and for
+        reading relative time in it) and, when set, ``hint`` and ``tags``.
     """
     entries: list[dict[str, Any]] = []
     for memory in memories:
@@ -1056,7 +1351,7 @@ def memories_payload(memories: Sequence[Memory]) -> list[dict[str, Any]]:
             "label": memory.label,
             "kind": memory.kind.value,
             "text": memory.text,
-            "noted_on": memory.updated_at.date().isoformat(),
+            "noted_on": noted_on(memory, today),
         }
         if memory.hint:
             entry["hint"] = memory.hint
@@ -1072,6 +1367,7 @@ def select_memories_payload(
     vacancy_text: str,
     *,
     limit: int = SELECT_LIMIT,
+    today: date | None = None,
 ) -> list[dict[str, Any]]:
     """Select a user's memories for a vacancy and return them as prompt material.
 
@@ -1080,6 +1376,7 @@ def select_memories_payload(
         purpose: "cv", "letter" or "interview".
         vacancy_text: The vacancy's title and description.
         limit: The most memories to include.
+        today: The current date; the applicant's today when None.
 
     Returns:
         See :func:`memories_payload`; empty when nothing is eligible.
@@ -1088,7 +1385,8 @@ def select_memories_payload(
         MemoryStoreError: If the user does not exist.
         ValueError: If the purpose is not one of the three.
     """
-    return memories_payload(select_memories(user, purpose, vacancy_text, limit=limit))
+    chosen = select_memories(user, purpose, vacancy_text, limit=limit)
+    return memories_payload(chosen, today=today)
 
 
 def memory_labels(payload: Sequence[dict[str, Any]]) -> set[str]:

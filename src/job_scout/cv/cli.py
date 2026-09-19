@@ -22,7 +22,7 @@ from job_scout.config import build_effective_config, user_cv_dir, user_db_path
 from job_scout.cv.models import CVDocument
 from job_scout.cv.render import render_pdf
 from job_scout.cv.storage import DEFAULT_PROFILE, ProfileStore, StorageError
-from job_scout.cv.tailor import TailorError, tailor_cv_document, tailored_slug
+from job_scout.cv.tailor import TailoredCV, TailorError, tailor_cv, tailored_slug
 from job_scout.database import Database
 from job_scout.llm.base import LLMClient, LLMError
 from job_scout.llm.factory import get_llm_client
@@ -280,7 +280,7 @@ def _tailor_or_exit(
     job: JobListing,
     client: LLMClient,
     memories: Sequence[Mapping[str, Any]] = (),
-) -> CVDocument:
+) -> TailoredCV:
     """Tailor a document, turning a model failure into a one-line message.
 
     Args:
@@ -290,10 +290,10 @@ def _tailor_or_exit(
         memories: The applicant's memories allowed on a CV, possibly none.
 
     Returns:
-        The tailored copy.
+        The tailored copy, and the memories it left out.
     """
     try:
-        return tailor_cv_document(doc, job, client, memories=memories)
+        return tailor_cv(doc, job, client, memories=memories)
     except (LLMError, TailorError) as exc:
         click.echo(f"Tailoring failed: {exc}", err=True)
         sys.exit(1)
@@ -367,10 +367,14 @@ def tailor(job_id: int, user_name: str | None, slug: str, output: Path | None) -
     client = _client_for_user(target)
     memories = memories_for_vacancy(target, MemoryUse.CV, job)
     click.echo(f"Tailoring {slug!r} to {job.title} at {job.company}...")
-    if memories:
-        noun = "memory" if len(memories) == 1 else "memories"
-        click.echo(f"Offering {len(memories)} {noun} to use where they fit.")
-    tailored = _tailor_or_exit(doc, job, client, memories)
+    if len(memories) == 1:
+        click.echo("Offering 1 memory to use where it fits.")
+    elif memories:
+        click.echo(f"Offering {len(memories)} memories to use where they fit.")
+    result = _tailor_or_exit(doc, job, client, memories)
+    for unused in result.memories_not_used:
+        click.echo(unused.describe(), err=True)
+    tailored = result.document
 
     new_slug = tailored_slug(slug, job)
     document = _save_tailored(store, slug, new_slug, tailored)

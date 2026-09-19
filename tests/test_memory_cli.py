@@ -27,6 +27,7 @@ from job_scout.memories import (
 from job_scout.memory_extract import auto_capture_enabled
 from job_scout.models import Config
 from tests.helpers import FakeLLMClient
+from tests.style_checks import assert_plain
 
 USER = "tester"
 PASTED = (
@@ -221,8 +222,53 @@ def test_delete_all_asks_first() -> None:
     assert len(list_memories(USER)) == 1
     result = _run("delete", "--all", "--yes")
     assert result.exit_code == 0
-    assert "Deleted 1 memories." in result.output
+    assert "Deleted 1 memory." in result.output
     assert list_memories(USER) == []
+
+
+def test_delete_all_says_what_is_kept_before_asking() -> None:
+    """The applicant decides knowing the wording stays and may be sent."""
+    add_memory(USER, MemoryDraft(text="Een."))
+    result = _run("delete", "--all", stdin="n\n")
+    assert "wording is kept" in result.output
+    assert "unless they are private" in result.output
+
+
+def test_delete_says_the_wording_is_kept_and_how_to_erase_it() -> None:
+    """'Memory #N deleted.' alone would suggest nothing of it is left."""
+    stored = add_memory(USER, MemoryDraft(text="Mijn partner werkt bij Voorbeeld BV."))
+    result = _run("delete", str(stored.id))
+    assert result.exit_code == 0
+    assert "Its wording is kept" in result.output
+    assert "memory forgotten --remove" in result.output
+    assert_plain(result.output)
+
+
+def test_counts_of_one_are_said_in_the_singular(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """'1 memories.' is a grammar slip on every single-memory list or delete."""
+    one = json.dumps({"memories": [{"text": "Ik spreek vloeiend Duits."}]})
+    monkeypatch.setattr(memory_cli, "get_llm_client", lambda _cfg: FakeLLMClient([one]))
+    saved = _run("import", "--text", PASTED, "--yes").output
+    assert "Saved 1 memory." in saved
+    listed = _run("list").output
+    assert "1 memory." in listed
+    assert "1 memories" not in listed
+    assert "Deleted 1 memory." in _run("delete", "--all", "--yes").output
+    forgotten = _run("forgotten").output
+    assert "1 deleted memory." in forgotten
+    assert "Erased 1 deleted memory." in _run("forgotten", "--clear", "--yes").output
+
+
+def test_a_single_proposal_is_asked_about_in_the_singular(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """'Save these 1 memories?' reads wrong."""
+    one = json.dumps({"memories": [{"text": "Ik spreek vloeiend Duits."}]})
+    monkeypatch.setattr(memory_cli, "get_llm_client", lambda _cfg: FakeLLMClient([one]))
+    result = _run("import", "--text", PASTED, stdin="n\n")
+    assert "Save this memory?" in result.output
 
 
 def test_import_text_shows_the_proposals_and_saves_them(model: FakeLLMClient) -> None:
@@ -308,12 +354,70 @@ def test_forgotten_lists_deleted_memories_and_clears_after_asking() -> None:
     _run("delete", str(stored.id))
     shown = _run("forgotten").output
     assert "(private): Ik spreek Duits." in shown
-    assert "1 deleted memories." in shown
+    assert "1 deleted memory." in shown
     assert _run("forgotten", "--clear", stdin="n\n").exit_code != 0
     assert list_forgotten(USER) != []
     result = _run("forgotten", "--clear", "--yes")
-    assert "Erased 1 deleted memories." in result.output
+    assert "Erased 1 deleted memory." in result.output
     assert list_forgotten(USER) == []
+
+
+def test_forgotten_remove_erases_one_deleted_memory_by_its_number() -> None:
+    """One wording can be withdrawn without giving up the others."""
+    for text in ("Ik spreek Duits.", "Ik ken Python."):
+        _run("delete", str(add_memory(USER, MemoryDraft(text=text)).id))
+    python = next(item for item in list_forgotten(USER) if "Python" in item.text)
+    assert f"{python.id}. " in _run("forgotten").output
+    result = _run("forgotten", "--remove", str(python.id))
+    assert result.exit_code == 0, result.output
+    assert "Erased 1 deleted memory." in result.output
+    assert [item.text for item in list_forgotten(USER)] == ["Ik spreek Duits."]
+    missing = _run("forgotten", "--remove", "999")
+    assert missing.exit_code != 0
+    assert "Not on the list: 999." in missing.output
+
+
+def test_a_wish_added_without_uses_stays_off_the_cv() -> None:
+    """The default uses include CV, which a wish never gets."""
+    result = _run(
+        "add", "Ik wil niet reizen voor werk.", "--kind", "constraint", "--user", USER
+    )
+    assert result.exit_code == 0, result.output
+    assert list_memories(USER)[0].use_in == [MemoryUse.LETTER, MemoryUse.INTERVIEW]
+    assert "never goes on a CV" not in result.output
+
+
+def test_a_wish_given_only_the_cv_use_is_said_to_be_used_nowhere() -> None:
+    """Storing it silently would leave a memory that is never used."""
+    result = _run(
+        "add", "Ik wil maximaal 32 uur werken.", "--kind", "preference", "--use", "cv"
+    )
+    assert result.exit_code == 0, result.output
+    assert list_memories(USER)[0].use_in == []
+    assert "not used anywhere" in result.output
+    assert "--use letter" in result.output
+
+
+def test_editing_a_memory_into_a_condition_drops_the_cv() -> None:
+    """The kind decides, however the memory got its uses."""
+    stored = add_memory(USER, MemoryDraft(text="Ik reis niet voor werk."))
+    result = _run("edit", str(stored.id), "--kind", "constraint")
+    assert result.exit_code == 0, result.output
+    changed = get_memory(USER, stored.id)
+    assert changed is not None
+    assert changed.use_in == [MemoryUse.LETTER, MemoryUse.INTERVIEW]
+    assert "kept off yours" in result.output
+
+
+def test_import_reads_a_file_of_one_short_line(
+    model: FakeLLMClient, tmp_path: Path
+) -> None:
+    """A one-line note is a valid source of memories, as in the text box."""
+    path = tmp_path / "kort.txt"
+    path.write_bytes("Ik spreek Duits.".encode("cp1252"))
+    result = _run("import", str(path), "--dry-run")
+    assert result.exit_code == 0, result.output
+    assert "Ik spreek Duits." in model.calls[0][0]
 
 
 def test_auto_capture_shows_and_switches_the_setting() -> None:

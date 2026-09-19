@@ -25,17 +25,19 @@ from job_scout.cv.models import (
 )
 from job_scout.cv.storage import StorageError, normalise_slug
 from job_scout.cv.tailor import (
+    CV_MEMORY_RULE,
     SLUG_LIMIT,
     TailorError,
     TailorPlan,
+    UnusedMemory,
     _verify_integrity,
+    tailor_cv,
     tailor_cv_document,
     tailored_slug,
 )
-from job_scout.memories import MEMORY_CV_RULE
 from job_scout.models import JobListing
 from tests.helpers import FakeLLMClient
-from tests.style_checks import GENERATED, PLAIN, assert_styled_prompt
+from tests.style_checks import GENERATED, PLAIN, assert_plain, assert_styled_prompt
 
 KEYWORDS = '{"keywords": ["Python", "SQL", "pipelines"]}'
 
@@ -702,11 +704,31 @@ def test_memories_reach_the_prompt_with_their_rules() -> None:
     prompt = client.calls[1][0]
     assert MEMORIES[0]["text"] in prompt
     assert "memory 3" in prompt
-    assert MEMORY_CV_RULE in prompt
-    assert "only where its hint or tags fit" in prompt
+    assert CV_MEMORY_RULE in prompt
+    assert "only where its text, hint or tags fit" in prompt
     assert "one exception to rule 5" in prompt
     assert "after the entry's own bullets" in prompt
+    assert "memories holds" not in prompt
     assert_styled_prompt(prompt)
+
+
+def test_the_structured_rule_offers_no_study_and_keeps_wishes_off_the_profile() -> None:
+    """Education entries can only be reordered, and a wish is never on the CV."""
+    assert "study" not in CV_MEMORY_RULE
+    assert "education entries are only reordered" in CV_MEMORY_RULE
+    assert "also not in the profile text" in CV_MEMORY_RULE
+
+
+def test_the_reply_shape_names_the_memories_only_when_there_are_some() -> None:
+    """A model that copies the exact shape must be able to name a memory."""
+    with_memories = client_for(HAPPY_PLAN)
+    tailor_cv_document(make_doc(), make_job(), with_memories, memories=MEMORIES)
+    shape = with_memories.calls[1][0].split("Reply with exactly this shape")[1]
+    assert '"memories": ["memory 3"]' in shape
+
+    without = client_for(HAPPY_PLAN)
+    tailor_cv_document(make_doc(), make_job(), without)
+    assert '"memories"' not in without.calls[1][0].split("Reply with exactly")[1]
 
 
 def test_without_memories_the_prompt_says_nothing_about_them() -> None:
@@ -762,12 +784,42 @@ def test_a_strange_memories_value_never_fails_the_plan(cited: object) -> None:
     assert experience_of(result).entries[1].description == "Reworded only."
 
 
-def test_a_bullet_that_grows_without_naming_a_memory_is_refused() -> None:
-    """Growing without a memory named breaks rule 5, as before memories."""
+@pytest.mark.parametrize("cited", [[], None])
+def test_a_bullet_that_states_a_memory_without_naming_it_is_kept(
+    cited: list[str] | None,
+) -> None:
+    """The schema may omit "memories"; the bullet's words show which it states."""
+    patch: dict[str, Any] = {"bullets": [*E2_BULLETS, MEMORY_BULLET]}
+    if cited is not None:
+        patch["memories"] = cited
+    response = plan(sections={"xp": {"entries": {"e2": patch}}})
+
+    assert tailored_bullets(response)["e2"] == [*E2_BULLETS, MEMORY_BULLET]
+
+
+def test_an_invented_bullet_naming_no_memory_keeps_the_entry_as_it_was() -> None:
+    """Refused like a bullet with a wrong label, not by failing the whole CV."""
+    response = bullets_plan([], [*E2_BULLETS, "Led 40 engineers at NASA"])
+
+    result = tailor_cv(make_doc(), make_job(), client_for(response), memories=MEMORIES)
+
+    assert experience_of(result.document).entries[1].bullets == E2_BULLETS
+    [unused] = result.memories_not_used
+    assert unused.labels == ()
+    assert "states none of your memories" in unused.describe()
+
+
+def test_an_uncited_memory_about_another_employer_adds_no_bullet() -> None:
+    """Matching every memory must not let the Globex one in under Beta NV."""
+    response = bullets_plan([], [*E2_BULLETS, "Head of Data in 2025"])
+
+    assert tailored_bullets(response)["e2"] == E2_BULLETS
+
+
+def test_a_bullet_that_grows_without_memories_in_the_prompt_is_refused() -> None:
+    """Without memories, growing still breaks rule 5, as before memories."""
     with pytest.raises(TailorError, match="never invented"):
-        tailor_cv_document(
-            make_doc(), make_job(), client_for(bullets_plan([])), memories=MEMORIES
-        )
+        tailor_cv_document(make_doc(), make_job(), client_for(bullets_plan([])))
 
 
 def test_a_memory_cited_without_memories_in_the_prompt_adds_nothing() -> None:
@@ -948,6 +1000,176 @@ def test_the_integrity_check_still_runs_with_memories(
         tailor_cv_document(
             make_doc(), make_job(), client_for(HAPPY_PLAN), memories=MEMORIES
         )
+
+
+# --------------------------------------------------------------------------
+# Memories: reworded prose is held to them too
+# --------------------------------------------------------------------------
+
+
+def tailored(response: str) -> CVDocument:
+    """Tailor with the memories and return the document."""
+    return tailor_cv_document(
+        make_doc(), make_job(), client_for(response), memories=MEMORIES
+    )
+
+
+def test_a_memory_bullet_put_in_place_of_an_own_bullet_is_checked_too() -> None:
+    """Replacing "Repaired optics" with a Beta NV memory is no way around it."""
+    patch = {"bullets": ["Trained customers", MEMORY_BULLET], "memories": ["memory 3"]}
+    response = plan(sections={"xp": {"entries": {"e1": patch}}})
+
+    assert experience_of(tailored(response)).entries[0].bullets == E1_BULLETS
+
+
+def test_a_description_that_takes_up_another_roles_memory_is_put_back() -> None:
+    """The Beta NV dbt move, with its year changed, in the Acme BV description."""
+    description = (
+        "At Acme BV I moved the reporting to dbt in 2021, halving its run time."
+    )
+    response = plan(sections={"xp": {"entries": {"e1": {"description": description}}}})
+
+    entry = experience_of(tailored(response)).entries[0]
+    assert entry.description == "Installed lasers across the Benelux."
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "Engineer who was Head of Data at Globex Industries.",
+        "Engineer who cut churn by 40 percent.",
+        "Engineer who wants to work four days a week, since 2026.",
+    ],
+)
+def test_a_profile_that_adds_what_the_cv_does_not_hold_is_put_back(body: str) -> None:
+    """An employer off the CV, an inflated number, a wish: the profile stays."""
+    response = plan(sections={"pf": {"body": body}})
+
+    profile = next(s for s in tailored(response).main if s.id == "pf")
+    assert isinstance(profile, TextSection)
+    assert profile.body == "Engineer with a soldering iron and a terminal."
+
+
+@pytest.mark.parametrize(
+    ("entry_id", "description"),
+    [
+        (
+            "e2",
+            "Built reporting pipelines and moved them to dbt in 2023, halving their "
+            "run time.",
+        ),
+        ("e2", "Built Python and SQL reporting pipelines."),
+    ],
+)
+def test_a_fair_rewording_with_memories_in_the_prompt_stays(
+    entry_id: str, description: str
+) -> None:
+    """A memory that belongs to the role may shape its description."""
+    response = plan(
+        sections={"xp": {"entries": {entry_id: {"description": description}}}}
+    )
+
+    assert experience_of(tailored(response)).entries[1].description == description
+
+
+def test_a_fair_profile_with_memories_in_the_prompt_stays() -> None:
+    """Skills from the CV and a fitting memory's number are fair."""
+    body = "Data engineer who builds Python pipelines and cut churn by 12 percent."
+    profile = next(
+        s for s in tailored(plan(sections={"pf": {"body": body}})).main if s.id == "pf"
+    )
+    assert isinstance(profile, TextSection)
+    assert profile.body == body
+
+
+# --------------------------------------------------------------------------
+# Memories: a judge for what the words alone cannot show
+# --------------------------------------------------------------------------
+
+DUTCH_MEMORY = {
+    "label": "memory 11",
+    "kind": "project",
+    "text": "Ik heb bij Beta NV het onboardingproces voor nieuwe analisten opgezet "
+    "en begeleid.",
+    "noted_on": "1 September 2026 (18 days ago)",
+}
+ONBOARDING = "Set up and ran the onboarding process for new analysts"
+YES = json.dumps({"answers": [{"pair": 1, "states": True}]})
+
+
+def judged(*judge_replies: str, bullet: str = ONBOARDING) -> tuple[CVDocument, Any]:
+    """Tailor with the Dutch memory cited for an English bullet under Beta NV."""
+    response = bullets_plan(["memory 11"], [*E2_BULLETS, bullet])
+    client = client_for(response, *judge_replies)
+    result = tailor_cv(make_doc(), make_job(), client, memories=[DUTCH_MEMORY])
+    return result.document, (result, client)
+
+
+def test_a_translated_memory_bullet_is_added_when_the_judge_says_yes() -> None:
+    """A Dutch memory on an English CV shares no words with its bullet."""
+    document, (result, client) = judged(YES)
+
+    assert experience_of(document).entries[1].bullets == [*E2_BULLETS, ONBOARDING]
+    assert result.memories_not_used == ()
+    judge_prompt = client.calls[-1][0]
+    assert DUTCH_MEMORY["text"] in judge_prompt
+    assert ONBOARDING in judge_prompt
+    assert_plain(tailor.JUDGE_PROMPT)
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        json.dumps({"answers": [{"pair": 1, "states": False}]}),
+        json.dumps({"answers": [{"pair": 1, "states": "yes"}]}),
+        json.dumps({"answers": []}),
+        "I think so.",
+    ],
+)
+def test_a_translated_memory_bullet_is_left_out_without_a_clear_yes(
+    reply: str,
+) -> None:
+    """Only an explicit true counts; anything else keeps the entry as it was."""
+    document, (result, _) = judged(reply)
+
+    assert experience_of(document).entries[1].bullets == E2_BULLETS
+    [unused] = result.memories_not_used
+    assert unused.labels == ("memory 11",)
+    assert unused.organisation == "Beta NV"
+
+
+def test_a_failed_judge_call_leaves_the_bullet_out_but_tailors_the_cv() -> None:
+    """The judge is extra: its failure never costs the tailored CV."""
+    document, _ = judged()
+
+    assert experience_of(document).entries[1].bullets == E2_BULLETS
+
+
+def test_an_invented_bullet_under_a_dutch_memory_is_refused_by_the_judge() -> None:
+    """Relaxing the words would let any bullet in; the judge says no to it."""
+    no = json.dumps({"answers": [{"pair": 1, "states": False}]})
+    document, _ = judged(no, bullet="Led the migration to a cloud platform")
+
+    assert experience_of(document).entries[1].bullets == E2_BULLETS
+
+
+def test_a_bullet_with_a_number_its_memory_lacks_never_reaches_the_judge() -> None:
+    """The floor holds whatever a judge would say."""
+    document, (_, client) = judged(YES, bullet="Onboarded 12 new analysts")
+
+    assert experience_of(document).entries[1].bullets == E2_BULLETS
+    assert len(client.calls) == 2
+
+
+def test_what_was_left_out_is_said_in_plain_words() -> None:
+    """The CLI prints it and the endpoint returns it."""
+    message = UnusedMemory(("memory 3",), "Data Engineer", "Beta NV").describe()
+
+    assert message == (
+        "Memory 3 was not used under Data Engineer at Beta NV, so that entry kept "
+        "its own bullets, reworded ones included."
+    )
+    assert_plain(message)
 
 
 # --------------------------------------------------------------------------
