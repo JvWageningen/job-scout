@@ -586,3 +586,35 @@ def test_endpoint_reports_an_unreachable_model(
 
     assert response.status_code == 502
     assert profiles.list_profiles() == [SOURCE_SLUG]
+
+
+def test_endpoint_hands_the_cv_memories_to_the_tailor(
+    dashboard: TestClient,
+    profiles: ProfileStore,
+    job_id: int,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tailoring in the dashboard uses the memories allowed on a CV, like the CLI."""
+    from job_scout.memories import MemoryDraft, MemoryUse, add_memory
+
+    add_memory(
+        USER,
+        MemoryDraft(
+            text="Built the SQL data pipeline for the monthly sales report.",
+            tags=["sql", "pipelines"],
+            use_in=[MemoryUse.CV],
+        ),
+    )
+    add_memory(
+        USER,
+        MemoryDraft(text="Prefers a four-day week.", use_in=[MemoryUse.LETTER]),
+    )
+    client = fake_client(PLAN)
+    use_web_client(monkeypatch, client)
+
+    response = dashboard.post(tailor_url(user=USER, job_id=job_id))
+
+    assert response.status_code == 200, response.text
+    prompt = client.calls[-1][0]
+    assert "monthly sales report" in prompt
+    assert "four-day week" not in prompt

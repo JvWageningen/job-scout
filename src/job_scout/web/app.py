@@ -30,7 +30,11 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import FileResponse, HTMLResponse, JSONResponse, Response
 
 from job_scout import feedback, ntfy_topic, progress
-from job_scout.applicant import describe_sources, profile_choices
+from job_scout.applicant import (
+    describe_sources,
+    memories_for_vacancy,
+    profile_choices,
+)
 from job_scout.config import (
     GLOBAL_FIELDS,
     SECRET_FIELDS,
@@ -83,7 +87,7 @@ from job_scout.letters.models import LetterLanguage
 from job_scout.letters.writer import LetterError, require_user
 from job_scout.llm.base import LLMError
 from job_scout.llm.factory import build_raw_client_for_test, get_llm_client
-from job_scout.memories import MemorySource
+from job_scout.memories import MemorySource, MemoryUse
 from job_scout.models import (
     Config,
     CvProfile,
@@ -958,8 +962,11 @@ def create_app() -> FastAPI:
         except LLMError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+        # The applicant's memories allowed on a CV may reword or add a bullet
+        # under an existing role; the tailor's integrity check still holds.
+        memories = memories_for_vacancy(name, MemoryUse.CV, job)
         try:
-            tailored = tailor_cv_document(doc, job, client)
+            tailored = tailor_cv_document(doc, job, client, memories=memories)
         except (LLMError, TailorError) as exc:
             # 502, not 500: the request was fine, the model upstream was not.
             raise HTTPException(

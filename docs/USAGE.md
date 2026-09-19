@@ -1052,7 +1052,8 @@ tailored again for the next vacancy.
 
 The model may only reorder sections, entries and items and reword prose. Employers, job
 titles, schools, degrees, dates and skill names are frozen, and the finished document is
-re-checked against the original: a CV that gained an employer, grew a bullet list or changed
+re-checked against the original: a CV that gained an employer, grew a bullet list beyond the
+memories it cites (see [Memories](MEMORIES.md)) or changed
 its theme is refused with a message, and nothing is written. Unlike
 [`profile tailor-resume`](#profile-tailor-resume) there is no job-status requirement — any
 job id in the database will do.

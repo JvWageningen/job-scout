@@ -240,7 +240,7 @@ mandate: **reorder what is there, and reword prose.** That is all.
 | Reorder entries within a section | Add, remove or duplicate anything |
 | Reword a `text` section's body | Touch `details` or `contact` sections — they hold personal data and are sent to the model as a heading only, marked frozen |
 | Reword an experience entry's description | Change a job title, employer, school, degree or date range |
-| Reword existing bullets | Return more bullets than the entry already had |
+| Reword existing bullets, and add one bullet per [memory](MEMORIES.md) it cites that you allowed on your CV | Return more bullets than the entry had plus the memories it cites |
 | — | Change the identity block, the portrait or the theme |
 
 Only `text` and `experience` sections have prose the model may rewrite at all. `education`,
@@ -248,7 +248,8 @@ Only `text` and `experience` sections have prose the model may rewrite at all. `
 list item comes back exactly as it went in, or the document is refused.
 
 This is enforced three times over, not just asked for. The prompt states the rules; the
-patch layer rejects an edit that rewrites a frozen field or grows a bullet list; and
+patch layer rejects an edit that rewrites a frozen field or grows a bullet list beyond the
+memories it cites; and
 `_verify_integrity` re-checks the finished document against the original, refusing it
 outright if the set of organisations, titles, periods or skill names it claims is not a
 subset of what went in. **A CV that gained an employer is rejected, not handed back.** So is
