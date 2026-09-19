@@ -4,6 +4,19 @@ Format: [Keep a Changelog](https://keepachangelog.com)
 
 <!-- version list -->
 
+## v2.8.1 (2026-09-19)
+
+### Bug Fixes
+
+- **scraper**: Keep the LinkedIn vacancies that name an area instead of a city
+  ([`8fc1f66`](https://github.com/JvWageningen/job-scout/commit/8fc1f666c9cffeec364b6b03a90ecbf72ad3a6b2))
+
+### Chores
+
+- Sync uv.lock to 2.8.0 [skip ci]
+  ([`82d2ef9`](https://github.com/JvWageningen/job-scout/commit/82d2ef9611cb1b0b1e52515f4f48f5bdb0877629))
+
+
 ## v2.8.0 (2026-09-19)
 
 ### Bug Fixes
