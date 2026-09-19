@@ -135,7 +135,7 @@ renders the body it is sent, the way the letter PDF route does. The older
 | `wol.py` | Sends a Wake-on-LAN magic packet to the machine hosting the model server and polls a health URL until it answers, so a scheduled run does not fail against a sleeping GPU box. |
 | `exporter.py` | `JobExporter.to_csv` / `to_json`, shared by `jobs export` and the dashboard export endpoint. |
 | `mcp_server.py` | MCP server exposing the pipeline to MCP-capable AI clients. |
-| `web/` | `app.py` (the FastAPI application factory and every route) and `static/` (the single-page dashboard: `index.html`, `app.js`, `style.css`, icons). |
+| `web/` | `app.py` (the FastAPI application factory and every route), `memories_api.py` (the `/api/memories` router and the background capture of memories after a letter or interview set), and `static/` (the single-page dashboard: `index.html`, `app.js`, one script per larger tab such as `letters.js`, `interview.js` and `memories.js`, `style.css`, icons). |
 | `llm/` | The provider abstraction — see below. |
 
 ### The CV subpackage
@@ -378,11 +378,12 @@ optional-`--user` on a single-user install and refuse to guess on a multi-user o
 ## Web and API layer
 
 `web/app.py` is a FastAPI application factory and the single-page dashboard in
-`web/static/`. Thirteen tabs — Dashboard, Profile & Filters, Document Review,
-CV Builder, Cover Letter Writer, Interview Questions, Keywords, Custom Sites,
-Notifications, LLM Settings, Secrets, Schedule, Analytics — over a JSON API grouped by
+`web/static/`. Fourteen tabs (Dashboard, Profile & Filters, Document Review,
+CV Builder, Memories, Cover Letter Writer, Interview Questions, Keywords, Custom Sites,
+Notifications, LLM Settings, Secrets, Schedule, Analytics) over a JSON API grouped by
 resource (`/api/jobs/*`, `/api/config`, `/api/profile/*`, `/api/coach/*`, `/api/llm/*`,
-`/api/cv/*`, `/api/interview/*`, `/api/schedule`, `/api/run*`).
+`/api/cv/*`, `/api/letters/*`, `/api/interview/*`, `/api/memories/*`, `/api/schedule`,
+`/api/run*`).
 
 **The CV Builder tab** is the one tab that is not built from `web/static/app.js`. It is an
 iframe pointed at `/cv/?user=<name>`, which serves the vendored editor's own page with its
@@ -467,3 +468,18 @@ separate `web/static/letters.js` editor discards stale responses after a user sw
 Drafts and examples live in `user_letters_dir(name)`; the last saved draft is also
 mirrored into the legacy database cover-letter field. No examples or personal
 style guide are shipped with the package.
+
+### Memories in the dashboard
+
+`web/memories_api.py` is the `/api/memories` router behind the Memories tab
+(`web/static/memories.js`, the same token helper, staleness guard and disabled-fieldset
+pattern as the letter editor). It is a thin layer over `memories.py` and
+`memory_extract.py`: list, add, change and delete, `/extract` (proposals for a pasted
+text, nothing stored) and `/batch` (the proposals the applicant kept), `/read-file`,
+the per-user capture switch and the list of deleted memories. It also holds
+`start_capture`, which the letter route and both interview routes call after a
+generation: when `capture_pending` says a capture will run, it adds
+`capture_from_notes` to the request's FastAPI `BackgroundTasks` with the model the
+generation used and an origin naming the vacancy, and sets `X-Memory-Capture: started`
+so the page can say new memories may appear. The task runs after the response is sent,
+so a capture never delays or fails a letter or interview set.

@@ -528,11 +528,16 @@
         if (!answers) throw new Error('Generate their questions first.');
         return editedAnswers();
     };
+    // The server says when the notes are being turned into memories; only then
+    // does the page say so, so a switched-off capture is never claimed.
+    const captureNote = response => response.headers.get('X-Memory-Capture') === 'started'
+        ? ' Facts about you from your notes are being kept as memories. They appear in the Memories tab within a few minutes, where you can change or delete them.'
+        : '';
     // Whether the server kept what it just generated; if not, say so plainly.
     function ready(response, what, advice) {
-        return response.headers.get('X-Interview-Saved') === 'false'
+        return (response.headers.get('X-Interview-Saved') === 'false'
             ? `Your ${what} are ready, but they could not be saved. Download them to keep them. ${advice}`
-            : `Your ${what} are ready and saved with this vacancy. ${advice}`;
+            : `Your ${what} are ready and saved with this vacancy. ${advice}`) + captureNote(response);
     }
     async function copy(button, text) {
         const original = button.textContent;

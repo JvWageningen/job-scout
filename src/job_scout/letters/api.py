@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFile
 from loguru import logger
 from pydantic import BaseModel, Field
 from starlette.responses import Response
@@ -43,6 +43,8 @@ from job_scout.letters.writer import (
 )
 from job_scout.llm.base import LLMError
 from job_scout.llm.factory import get_llm_client
+from job_scout.memories import MemorySource
+from job_scout.web.memories_api import start_capture
 from job_scout.web.vacancies import open_vacancy_choices
 
 
@@ -142,9 +144,26 @@ def build_api_router() -> APIRouter:
         return StyleBody(markdown=guide)
 
     @router.post("/generate")
-    def generate(body: LetterRequest, user: User) -> Letter:
-        """Draft using the current CV; leave saved letters untouched."""
-        return write_letter(user, body, get_llm_client(build_effective_config(user)))
+    def generate(
+        body: LetterRequest, user: User, response: Response, tasks: BackgroundTasks
+    ) -> Letter:
+        """Draft using the current CV; leave saved letters untouched.
+
+        With notes, the facts about the applicant in them are turned into
+        memories after the letter is sent back (see ``start_capture``).
+        """
+        client = get_llm_client(build_effective_config(user))
+        letter = write_letter(user, body, client)
+        start_capture(
+            tasks,
+            response,
+            user,
+            body.notes,
+            source=MemorySource.LETTER_NOTES,
+            job_id=body.job_id,
+            client=client,
+        )
+        return letter
 
     @router.get("/draft/{job_id}")
     def draft(job_id: int, language: LetterLanguage, user: User) -> Letter:

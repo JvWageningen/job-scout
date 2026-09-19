@@ -47,6 +47,7 @@
                 </div></div>
                 <div class="tab-group"><span class="tab-group-label">Prepare applications</span><div class="tab-group-buttons">
                     <button class="tab-btn" data-tab="cv">CV Builder</button>
+                    <button class="tab-btn" data-tab="memories">Memories</button>
                     <button class="tab-btn" data-tab="letters">Cover Letter Writer</button>
                     <button class="tab-btn" data-tab="feedback">Document Review</button>
                     <button class="tab-btn" data-tab="interview">Interview Questions</button>
@@ -76,6 +77,58 @@
                 </div>
             </section>
 
+            <section id="memories-section" class="section hidden tab-content" data-tab="memories">
+                <div class="letter-heading"><div><h2>Memories</h2>
+                <p>Things about you that job-scout keeps for later: a project that only matters for some roles, a result you would rather leave off your CV, a wish about hours or travel, a course you are still taking. When it writes a letter, prepares an interview or tailors your CV, it uses the memories whose hint or tags fit that vacancy and leaves the others out.</p>
+                <p>Add a memory by hand, paste any text about yourself and pick from what it proposes, or simply write notes for a letter or an interview: the facts about you in those notes are kept here too. Everything stays in your own data. A memory reaches your configured language model only as part of your facts for a letter, interview or CV, like your CV does. A private memory never does.</p></div>
+                <span class="letter-badge">Used where it fits</span></div>
+                <p id="memory-status" role="status" aria-live="polite">Select a single user to see their memories.</p>
+                <fieldset id="memory-workspace" disabled>
+                <div class="letter-grid">
+                    <div class="letter-setup">
+                        <h3>Add a memory</h3>
+                        <p class="letter-hint">One statement about you, in Dutch or English. Keep names, numbers, dates and tools exact. Nothing is sent to a model when you save it.</p>
+                        <div id="memory-new"></div>
+                        <div class="letter-actions"><button id="memory-add" class="btn btn-primary" type="button">Save memory</button></div>
+                        <h3 class="memory-subhead">Turn a text into memories</h3>
+                        <p class="letter-hint">Paste anything about yourself: a list of projects, an old self-assessment, a paragraph you wrote for an application. Your configured model proposes memories from it; you choose which to keep and can change them first. Nothing is saved until you do.</p>
+                        <label for="memory-text">Text about you</label>
+                        <textarea id="memory-text" rows="8" maxlength="20000" placeholder="In 2022 I moved forty shops to a new till system for Voorbeeld Retail, and I speak German fluently."></textarea>
+                        <label for="memory-file">Or read a file <span class="letter-hint">(optional)</span></label>
+                        <input type="file" id="memory-file" accept=".pdf,.docx,.odt,.txt,.md">
+                        <p class="letter-hint">Text-based PDF, DOCX, ODT, TXT or Markdown, up to 8 MB. Its text appears above, so you can check or shorten it. At most 20,000 characters are read at a time.</p>
+                        <div class="letter-actions"><button id="memory-propose" class="btn btn-primary" type="button">Propose memories</button></div>
+                    </div>
+                    <div class="letter-paper">
+                        <div id="memory-proposals" class="memory-proposals" hidden>
+                            <h3>Proposed memories</h3>
+                            <p class="letter-hint">Tick the ones to keep and change anything that is not right. Facts you already have are left out.</p>
+                            <p id="memory-truncated" class="letter-warnings" hidden>The text may hold more than this. Save these, then press Propose memories again for the rest.</p>
+                            <div id="memory-proposal-list"></div>
+                            <div class="letter-actions"><button id="memory-save-proposals" class="btn btn-primary" type="button">Save ticked memories</button><button id="memory-discard" class="btn btn-secondary" type="button">Discard proposals</button></div>
+                        </div>
+                        <h3>Your memories</h3>
+                        <div class="memory-toolbar">
+                            <div><label for="memory-search">Search</label><input id="memory-search" type="search" maxlength="200" placeholder="Words in the text, tags, hint or kind"></div>
+                            <button id="memory-refresh" class="btn btn-small" type="button">Refresh</button>
+                        </div>
+                        <p id="memory-count" class="letter-hint"></p>
+                        <p id="memory-empty">Your memories will appear here, newest first, with where each may be used and where it came from.</p>
+                        <div id="memory-list"></div>
+                    </div>
+                </div>
+                <div class="letter-style memory-settings">
+                    <h3>From your notes</h3>
+                    <label class="memory-check" for="memory-auto"><input type="checkbox" id="memory-auto"> <span>Keep facts about me from my letter and interview notes</span></label>
+                    <p class="letter-hint">After a letter or interview set is written, its notes are read once more and the facts about you that could matter again are saved here: a project, a result, a wish. Instructions for that one document and facts about only that vacancy are left out. This sends your notes to your configured model a second time. The same notes are read only once.</p>
+                    <details id="memory-forgotten-box"><summary>Deleted memories (<span id="memory-forgotten-count">0</span>)</summary>
+                        <p class="letter-hint">The wording of every memory you delete is kept, so that notes you type again do not bring it back. It stays in your own database until you erase this list. Adding a fact again by hand, or from a text, always works.</p>
+                        <ul id="memory-forgotten"></ul>
+                        <button id="memory-forgotten-clear" class="btn btn-secondary" type="button">Erase this list</button>
+                    </details>
+                </div>
+                </fieldset>
+            </section>
 
             <section id="letters-section" class="section hidden tab-content" data-tab="letters">
                 <div class="letter-heading"><div><h2>Cover letter writer</h2>
@@ -96,7 +149,7 @@
                         <input id="letter-recipient" maxlength="120" placeholder="Name or hiring team">
                         <label for="letter-notes">What matters to you?</label>
                         <textarea id="letter-notes" maxlength="2000" rows="5" placeholder="Why this role? A conversation you have had, relevant experience, or something you want to ask about."></textarea>
-                        <p class="letter-hint">Your CV, vacancy, notes and style examples go to your configured language model.</p>
+                        <p class="letter-hint">Your CV, vacancy, notes and style examples go to your configured language model. Facts about you in your notes are also kept as memories for later letters, interviews and CVs, unless you switch that off in the Memories tab.</p>
                         <div class="letter-actions"><button id="letter-generate" class="btn btn-primary" type="button">Generate full letter</button><button id="letter-load" class="btn btn-secondary" type="button">Load saved</button></div>
                     </div>
                     <div class="letter-paper">
@@ -155,7 +208,7 @@
                         <p class="letter-hint">Your own CV file, LinkedIn import and profile are always used. A CV Builder profile is optional: Automatic uses every source you have. Save any CV Builder changes first.</p>
                         <label for="interview-notes">Anything the model should know? <span class="letter-hint">(optional)</span></label>
                         <textarea id="interview-notes" maxlength="2000" rows="5" placeholder="A doubt you want answered, something from an earlier call, why you are leaving your current role, or a subject you want on the table."></textarea>
-                        <p class="letter-hint">Your facts, the vacancy, what web search found about the company and your notes go to your configured language model. If the company has not been looked up yet, that happens first and adds some time. Company facts come only from web search results; the model is told not to add any of its own.</p>
+                        <p class="letter-hint">Your facts, the vacancy, what web search found about the company and your notes go to your configured language model. If the company has not been looked up yet, that happens first and adds some time. Company facts come only from web search results; the model is told not to add any of its own. Facts about you in your notes are also kept as memories for later letters, interviews and CVs, unless you switch that off in the Memories tab.</p>
                         <div class="letter-actions">
                             <button id="interview-generate" class="btn btn-primary" type="button">Generate questions to ask</button>
                             <button id="interview-answers-generate" class="btn btn-primary" type="button" hidden>Generate questions &amp; draft answers</button>
@@ -984,6 +1037,7 @@
     <script src="/app.js"></script>
     <script src="/letters.js"></script>
     <script src="/interview.js"></script>
+    <script src="/memories.js"></script>
     <script src="/vacancies.js"></script>
 </body>
 </html>
