@@ -141,6 +141,8 @@ class TestTailorResumeText:
         assert MEMORY_CV_RULE in prompt
         assert "only where its hint or tags fit" in prompt
         assert "never becomes a line on the CV" in prompt
+        assert "keeping its names and numbers and adding none" in prompt
+        assert "never under a role at another employer" in prompt
         assert_styled_prompt(prompt)
 
     def test_without_memories_the_prompt_has_no_memory_section(self) -> None:

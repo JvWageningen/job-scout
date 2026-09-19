@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -505,6 +506,30 @@ def memories_for_vacancy(
     return _memory_payload(user, purpose, job) or []
 
 
+def memories_block(memories: Sequence[Mapping[str, Any]]) -> str:
+    """Quote memories for a prompt that has no applicant sources of its own.
+
+    The letter writer and the interview generators get memories inside the
+    applicant's facts, explained by :data:`SOURCE_GUIDE`. The older cover
+    letter and screening answer prompts only have a profile summary, so
+    they get the memories as a section of their own with the same rules.
+
+    Args:
+        memories: As :func:`memories_for_vacancy` returns them.
+
+    Returns:
+        The labelled section and how to use it, ending in a blank line;
+        empty when there are no memories.
+    """
+    if not memories:
+        return ""
+    listed = json.dumps([dict(memory) for memory in memories], ensure_ascii=False)
+    return (
+        "MEMORIES (JSON, facts the applicant asked job-scout to remember about "
+        f"themselves):\n{listed}\n{MEMORY_GUIDE} {MEMORY_DATA_RULE}\n\n"
+    )
+
+
 def _add_memories(
     facts: ApplicantFacts,
     user: str,
@@ -784,7 +809,9 @@ def _text_contacts(text: str) -> list[str]:
     return contacts
 
 
-def describe_sources(user: str) -> dict[str, list[str]]:
+def describe_sources(
+    user: str, purpose: MemoryUse | str | None = None
+) -> dict[str, list[str]]:
     """Summarise which sources the applicant has, for display before generating.
 
     CV Builder is listed as a whole rather than as the one profile a particular
@@ -792,10 +819,16 @@ def describe_sources(user: str) -> dict[str, list[str]]:
 
     Args:
         user: Name of an existing user.
+        purpose: What the summary is shown for ("letter" or "interview"), so
+            only the memories that document may use are counted; None counts
+            those allowed in letters or interviews.
 
     Returns:
         ``used``: sources that will contribute; ``missing``: notes on absent or
         skipped sources, including why nothing can be generated yet.
+
+    Raises:
+        ValueError: If ``purpose`` is not one of "cv", "letter", "interview".
     """
     try:
         facts = gather_applicant_facts(user)
@@ -809,35 +842,43 @@ def describe_sources(user: str) -> dict[str, list[str]]:
     used = [u for u in facts.used if not u.startswith("CV Builder profile")]
     if real:
         used.insert(0, "CV Builder (" + ", ".join(real) + ")")
-    remembered = _memory_summary(user)
+    remembered = _memory_summary(user, purpose)
     if remembered:
         used.append(remembered)
     return {"used": used, "missing": facts.missing}
 
 
-def _memory_summary(user: str) -> str:
+def _memory_summary(user: str, purpose: MemoryUse | str | None = None) -> str:
     """Say how many memories a letter or interview may draw on.
 
     Which of them are used depends on the vacancy, so only the ones that may
-    be used at all are counted: private ones and ones kept out of letters and
-    interviews are not.
+    be used at all are counted: private ones and ones kept out of the
+    document are not.
 
     Args:
         user: Name of an existing user.
+        purpose: The document the summary is for; None for letters and
+            interviews together.
 
     Returns:
         Such as "4 memories, where they fit the vacancy"; empty when there
         are none or they could not be read.
+
+    Raises:
+        ValueError: If ``purpose`` is not one of the three.
     """
+    purposes = (
+        (MemoryUse.LETTER, MemoryUse.INTERVIEW)
+        if purpose is None
+        else (MemoryUse(purpose),)
+    )
     try:
         stored = list_memories(user)
     except sqlite3.Error as exc:
         logger.warning(f"Memories of {user} could not be counted: {exc}")
         return ""
     usable = {
-        memory.id
-        for purpose in (MemoryUse.LETTER, MemoryUse.INTERVIEW)
-        for memory in eligible_memories(stored, purpose)
+        memory.id for use in purposes for memory in eligible_memories(stored, use)
     }
     if not usable:
         return ""

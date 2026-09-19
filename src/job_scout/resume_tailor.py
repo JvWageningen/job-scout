@@ -37,8 +37,13 @@ _MEMORY_RULES = (
     + MEMORY_GUIDE
     + " "
     + MEMORY_CV_RULE
-    + " Write what a memory adds in the language of the CV. A wish or a "
-    "condition (kind preference or constraint) never becomes a line on the CV."
+    + " Write what a memory adds in the language of the CV. A line a memory "
+    "adds states that memory and nothing more, keeping its names and numbers "
+    "and adding none. It goes under the role the memory belongs to, never "
+    "under a role at another employer than the one the memory names, and a "
+    "memory about work at an organisation this CV does not list adds no line. "
+    "A wish or a condition (kind preference or constraint) never becomes a "
+    "line on the CV."
 )
 
 

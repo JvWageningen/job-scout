@@ -653,6 +653,12 @@ MEMORIES = [
         "tags": ["dbt", "pipelines"],
     },
     {
+        "label": "memory 5",
+        "kind": "achievement",
+        "text": "I built a churn model in Python that cut churn by 12 percent.",
+        "noted_on": "2026-09-01",
+    },
+    {
         "label": "memory 7",
         "kind": "preference",
         "text": "I want to work four days a week.",
@@ -666,15 +672,26 @@ MEMORIES = [
     },
 ]
 MEMORY_BULLET = "Moved the reporting to dbt in 2023, halving its run time"
+CHURN_BULLET = "Built a churn model in Python that cut churn by 12 percent"
+E1_BULLETS = ["Trained customers", "Repaired optics"]
+E2_BULLETS = ["Shipped an ETL stack"]
 
 
 def bullets_plan(cited: object, bullets: list[str] | None = None) -> str:
     """A plan that gives entry e2 a new bullet, citing ``cited`` for it."""
     patch: dict[str, Any] = {
-        "bullets": bullets or ["Shipped an ETL stack", MEMORY_BULLET],
+        "bullets": bullets or [*E2_BULLETS, MEMORY_BULLET],
         "memories": cited,
     }
     return plan(sections={"xp": {"entries": {"e2": patch}}})
+
+
+def tailored_bullets(response: str) -> dict[str, list[str]]:
+    """Tailor with the memories and return each entry's bullets by id."""
+    result = tailor_cv_document(
+        make_doc(), make_job(), client_for(response), memories=MEMORIES
+    )
+    return {entry.id: entry.bullets for entry in experience_of(result).entries}
 
 
 def test_memories_reach_the_prompt_with_their_rules() -> None:
@@ -688,6 +705,7 @@ def test_memories_reach_the_prompt_with_their_rules() -> None:
     assert MEMORY_CV_RULE in prompt
     assert "only where its hint or tags fit" in prompt
     assert "one exception to rule 5" in prompt
+    assert "after the entry's own bullets" in prompt
     assert_styled_prompt(prompt)
 
 
@@ -708,7 +726,7 @@ def test_a_cited_memory_can_add_a_bullet_under_an_existing_role() -> None:
 
     entry = experience_of(result).entries[1]
     assert entry.organisation == "Beta NV"
-    assert entry.bullets == ["Shipped an ETL stack", MEMORY_BULLET]
+    assert entry.bullets == [*E2_BULLETS, MEMORY_BULLET]
 
 
 def test_a_single_label_is_accepted_as_well_as_a_list() -> None:
@@ -721,16 +739,34 @@ def test_a_single_label_is_accepted_as_well_as_a_list() -> None:
 
 @pytest.mark.parametrize(
     "cited",
-    [
-        [],  # no memory named
-        ["memory 42"],  # a memory the prompt did not hold
-        ["memory 7"],  # a wish, which never becomes a bullet
-    ],
+    ["Memory #3", "memory3", "herinnering 3", "herinnering nr. 3", 3, "3", [3]]
+    + [[{"label": "memory 3"}]],
 )
-def test_a_new_bullet_without_a_memory_behind_it_is_refused(cited: list[str]) -> None:
+def test_a_label_is_read_in_any_spelling_the_interview_side_accepts(
+    cited: object,
+) -> None:
+    """A citation spelt differently still backs its bullet."""
+    assert tailored_bullets(bullets_plan(cited))["e2"] == [*E2_BULLETS, MEMORY_BULLET]
+
+
+@pytest.mark.parametrize("cited", [3, [3], {"label": "memory 3"}, "rubbish", [None]])
+def test_a_strange_memories_value_never_fails_the_plan(cited: object) -> None:
+    """The field is advisory: a patch that only rewords still applies."""
+    patch = {"description": "Reworded only.", "memories": cited}
+    response = plan(sections={"xp": {"entries": {"e2": patch}}})
+
+    result = tailor_cv_document(
+        make_doc(), make_job(), client_for(response), memories=MEMORIES
+    )
+
+    assert experience_of(result).entries[1].description == "Reworded only."
+
+
+def test_a_bullet_that_grows_without_naming_a_memory_is_refused() -> None:
+    """Growing without a memory named breaks rule 5, as before memories."""
     with pytest.raises(TailorError, match="never invented"):
         tailor_cv_document(
-            make_doc(), make_job(), client_for(bullets_plan(cited)), memories=MEMORIES
+            make_doc(), make_job(), client_for(bullets_plan([])), memories=MEMORIES
         )
 
 
@@ -741,14 +777,88 @@ def test_a_memory_cited_without_memories_in_the_prompt_adds_nothing() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    "cited",
+    [
+        ["memory 42"],  # a memory the prompt did not hold
+        ["memory 7"],  # a wish, which never becomes a bullet
+    ],
+)
+def test_a_label_without_a_usable_memory_adds_no_bullet(cited: list[str]) -> None:
+    """The entry keeps its own bullets; the rest of the CV is still tailored."""
+    assert tailored_bullets(bullets_plan(cited))["e2"] == E2_BULLETS
+
+
+@pytest.mark.parametrize(
+    "bullet",
+    [
+        # Nothing of the memory in it, an invented number and invented names.
+        "Led a team of 40 engineers at NASA and won the Turing Award",
+        # Some of the memory, plus a number it does not hold.
+        "Moved the reporting to dbt in 2023, cutting its run time by 70 percent",
+        # Some of the memory, plus a name it does not hold.
+        "Moved the reporting to dbt in 2023 with Snowflake",
+        # Only one word of it.
+        "Mentored junior colleagues on dbt",
+        # Its words, but the work put at another employer.
+        "Moved the reporting to dbt in 2023 at Globex Industries",
+    ],
+)
+def test_a_bullet_that_does_not_say_what_its_memory_says_is_not_added(
+    bullet: str,
+) -> None:
+    """Naming a real memory is not enough: the bullet must state it."""
+    response = bullets_plan(["memory 3"], [*E2_BULLETS, bullet])
+
+    assert tailored_bullets(response)["e2"] == E2_BULLETS
+
+
+def test_a_memory_about_another_employer_adds_no_bullet() -> None:
+    """The Globex memory is the applicant's, but not a line under Beta NV."""
+    bullet = "Head of Data at Globex Industries in 2025"
+    response = bullets_plan(["memory 9"], [*E2_BULLETS, bullet])
+
+    assert tailored_bullets(response)["e2"] == E2_BULLETS
+
+
+def test_a_memory_that_names_one_employer_adds_no_bullet_under_another() -> None:
+    """The dbt memory names Beta NV, so it has no place under Acme BV."""
+    patch = {"bullets": [*E1_BULLETS, MEMORY_BULLET], "memories": ["memory 3"]}
+    response = plan(sections={"xp": {"entries": {"e1": patch}}})
+
+    assert tailored_bullets(response)["e1"] == E1_BULLETS
+
+
+def test_a_memory_that_names_no_employer_may_go_under_any_role() -> None:
+    patch = {"bullets": [*E1_BULLETS, CHURN_BULLET], "memories": ["memory 5"]}
+    response = plan(sections={"xp": {"entries": {"e1": patch}}})
+
+    assert tailored_bullets(response)["e1"] == [*E1_BULLETS, CHURN_BULLET]
+
+
+def test_a_rejected_memory_bullet_leaves_the_rest_of_the_entry_tailored() -> None:
+    """Only the bullets fall back; the reworded description stays."""
+    patch = {
+        "description": "Built Python and SQL reporting pipelines.",
+        "bullets": [*E2_BULLETS, "Won the Turing Award"],
+        "memories": ["memory 3"],
+    }
+    response = plan(sections={"xp": {"entries": {"e2": patch}}})
+
+    result = tailor_cv_document(
+        make_doc(), make_job(), client_for(response), memories=MEMORIES
+    )
+
+    entry = experience_of(result).entries[1]
+    assert entry.bullets == E2_BULLETS
+    assert entry.description == "Built Python and SQL reporting pipelines."
+
+
 def test_one_memory_backs_one_new_bullet_only() -> None:
-    three = ["Shipped an ETL stack", MEMORY_BULLET, "Also halved the cloud bill"]
+    three = [*E2_BULLETS, MEMORY_BULLET, "Moved reporting to dbt, halving run time"]
     response = bullets_plan(["memory 3", "memory 3"], three)
 
-    with pytest.raises(TailorError, match="never invented"):
-        tailor_cv_document(
-            make_doc(), make_job(), client_for(response), memories=MEMORIES
-        )
+    assert tailored_bullets(response)["e2"] == E2_BULLETS
 
 
 def test_one_memory_cannot_add_a_bullet_under_two_roles() -> None:
@@ -757,11 +867,32 @@ def test_one_memory_cannot_add_a_bullet_under_two_roles() -> None:
             "xp": {
                 "entries": {
                     "e1": {
-                        "bullets": ["Trained customers", "Repaired optics", "dbt"],
-                        "memories": ["memory 3"],
+                        "bullets": [*E1_BULLETS, CHURN_BULLET],
+                        "memories": ["memory 5"],
                     },
                     "e2": {
-                        "bullets": ["Shipped an ETL stack", MEMORY_BULLET],
+                        "bullets": [*E2_BULLETS, CHURN_BULLET],
+                        "memories": ["memory 5"],
+                    },
+                }
+            }
+        }
+    )
+
+    bullets = tailored_bullets(response)
+
+    assert bullets == {"e1": [*E1_BULLETS, CHURN_BULLET], "e2": E2_BULLETS}
+
+
+def test_a_memory_named_by_an_entry_that_did_not_grow_is_still_free() -> None:
+    """Only a new bullet uses a memory up, not a citation beside a reword."""
+    response = plan(
+        sections={
+            "xp": {
+                "entries": {
+                    "e1": {"description": "Reworded.", "memories": ["memory 3"]},
+                    "e2": {
+                        "bullets": [*E2_BULLETS, MEMORY_BULLET],
                         "memories": ["memory 3"],
                     },
                 }
@@ -769,10 +900,14 @@ def test_one_memory_cannot_add_a_bullet_under_two_roles() -> None:
         }
     )
 
-    with pytest.raises(TailorError, match="never invented"):
-        tailor_cv_document(
-            make_doc(), make_job(), client_for(response), memories=MEMORIES
-        )
+    assert tailored_bullets(response)["e2"] == [*E2_BULLETS, MEMORY_BULLET]
+
+
+def test_two_memories_add_two_bullets_whatever_order_they_are_named_in() -> None:
+    bullets = [*E2_BULLETS, MEMORY_BULLET, CHURN_BULLET]
+    response = bullets_plan(["memory 5", "memory 3"], bullets)
+
+    assert tailored_bullets(response)["e2"] == bullets
 
 
 def test_a_memory_claiming_another_employer_cannot_rewrite_an_entry() -> None:

@@ -53,9 +53,10 @@ from job_scout.memories import (
     MemoryUse,
     add_memories,
     list_memories,
+    parse_memory_label,
 )
 from job_scout.memory_extract import set_auto_capture
-from job_scout.models import JobListing
+from job_scout.models import CvProfile, JobListing, JobStatus
 from tests.helpers import FakeLLMClient
 from tests.style_checks import assert_plain, assert_styled_prompt
 
@@ -285,6 +286,46 @@ def test_the_summary_counts_the_memories_letters_and_interviews_may_use(
     assert "3 memories, where they fit the vacancy" in summary["used"]
 
 
+@pytest.mark.parametrize("purpose", [MemoryUse.LETTER, "interview"])
+def test_the_summary_for_one_document_counts_only_the_memories_it_may_use(
+    stored: dict[str, Memory], purpose: MemoryUse | str
+) -> None:
+    """The letter tab leaves out interview-only memories, and the other way."""
+    used = describe_sources(USER, purpose)["used"]
+
+    assert "2 memories, where they fit the vacancy" in used
+    assert not any(line.startswith("3 memories") for line in used)
+
+
+@pytest.mark.parametrize(
+    ("value", "label"),
+    [
+        ("memory 3", "memory 3"),
+        ("Memory #3", "memory 3"),
+        ("memory3", "memory 3"),
+        ("herinnering nr. 3", "memory 3"),
+        ("your memory 3", "memory 3"),
+        ("memory 3 (the dbt move)", "memory 3"),
+        (3, "memory 3"),
+        ("3", None),
+        (0, None),
+        (True, None),
+        (None, None),
+        ("memory", None),
+        ("in-memory 3", None),
+        ("High Bandwidth Memory 3", None),
+    ],
+)
+def test_parse_memory_label(value: object, label: str | None) -> None:
+    """Every citation check reads a label the same way."""
+    assert parse_memory_label(value) == label
+
+
+def test_a_bare_number_is_a_label_only_where_nothing_else_can_be_meant() -> None:
+    assert parse_memory_label("3", bare_number=True) == "memory 3"
+    assert parse_memory_label(" 12 ", bare_number=True) == "memory 12"
+
+
 def test_a_user_without_memories_sees_no_memory_line(job_id: int) -> None:
     """Nothing stored, nothing said."""
     summary = describe_sources(USER)
@@ -309,6 +350,85 @@ def test_the_letter_prompt_carries_only_the_letter_memories(
     assert "only where its hint or tags fit" in prompt
     assert "2 memories" in letter.sources_used
     assert_styled_prompt(prompt)
+
+
+def _approve(job_id: int) -> None:
+    """Move the vacancy to approved, which the older profile commands require."""
+    db = Database(config.user_db_path(USER))
+    for status in (JobStatus.VIEWED, JobStatus.APPROVED):
+        assert db.update_job_status(job_id, status)
+
+
+def _older_command(
+    tmp_path: Path, job_id: int, monkeypatch: pytest.MonkeyPatch, answers: list[str]
+) -> FakeLLMClient:
+    """Set up an older 'profile' command: a CV file, an approved vacancy, a model.
+
+    Args:
+        tmp_path: Where the CV file goes.
+        job_id: The vacancy, approved here.
+        monkeypatch: To put the fake model and CV parser in place.
+        answers: What the model answers, in order.
+
+    Returns:
+        The fake model, to read its prompts afterwards.
+    """
+    cv_file = tmp_path / "cv.txt"
+    cv_file.write_text("Online marketeer bij Tuinhuis Noord", encoding="utf-8")
+    config.save_user_config(USER, {"cv_path": str(cv_file)})
+    _approve(job_id)
+    client = FakeLLMClient(answers)
+    monkeypatch.setattr("job_scout.llm.factory.get_llm_client", lambda _: client)
+    monkeypatch.setattr("job_scout.cv_parser.parse_cv", lambda _: "Online marketeer")
+    monkeypatch.setattr(
+        "job_scout.cv_profile.get_or_parse_cv_profile", lambda *_: CvProfile()
+    )
+    return client
+
+
+def test_the_older_cover_letter_command_uses_the_letter_memories(
+    tmp_path: Path,
+    job_id: int,
+    stored: dict[str, Memory],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """'profile generate-cover-letter' writes a letter too, so it gets them."""
+    client = _older_command(
+        tmp_path, job_id, monkeypatch, ["Beste lezer, ik solliciteer graag."]
+    )
+
+    result = CliRunner().invoke(
+        cli, ["profile", "generate-cover-letter", str(job_id), "--user", USER]
+    )
+
+    assert result.exit_code == 0, result.output
+    prompt = client.calls[0][0]
+    _assert_only(prompt, [SHARED, LETTER_ONLY])
+    assert "only where its hint or tags fit" in prompt
+    assert_styled_prompt(prompt)
+
+
+def test_screening_answers_use_the_letter_memories(
+    tmp_path: Path,
+    job_id: int,
+    stored: dict[str, Memory],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Screening answers go out with the application, like a letter."""
+    question = "Wanneer kun je beginnen?"
+    answers = [
+        json.dumps({"questions": [question]}),
+        json.dumps({"answers": {question: "Na mijn opzegtermijn."}}),
+    ]
+    client = _older_command(tmp_path, job_id, monkeypatch, answers)
+
+    result = CliRunner().invoke(
+        cli, ["profile", "answer-screening", str(job_id), "--user", USER]
+    )
+
+    assert result.exit_code == 0, result.output
+    _assert_only(client.calls[0][0], [])
+    _assert_only(client.calls[1][0], [SHARED, LETTER_ONLY])
 
 
 # -- Interview questions and answers ---------------------------------------------------
@@ -418,11 +538,50 @@ def test_a_story_citation_is_still_checked_next_to_memories() -> None:
         ("memory 4", True),
         ("your CV and memory 3", False),
         ("memories", False),
+        ("memory 3 (the dbt move)", False),
+        ("Memory #4", True),
+        ("your CV, memory 4", True),
     ],
 )
 def test_unknown_memory_citation(cited: str, unknown: bool) -> None:
     """Only a memory the prompt did not hold makes a citation false."""
     assert unknown_memory_citation(cited, {"memory 3"}) is unknown
+
+
+TECHNICAL_MEMORY = [
+    "vacancy: in-memory databases",
+    "CV: Werkervaring (memory management in embedded C)",
+    "your CV: memory controller design",
+    "vacancy: High Bandwidth Memory 3",
+    "CV: 16 GB memory tuning at Beta NV",
+]
+
+
+@pytest.mark.parametrize("cited", TECHNICAL_MEMORY)
+def test_a_source_that_only_uses_the_word_memory_names_no_memory(cited: str) -> None:
+    """Without memories in the prompt, a technical 'memory' is still a source."""
+    assert unknown_memory_citation(cited, set()) is False
+
+
+def test_an_answer_citing_technical_memory_keeps_its_citation_and_footing() -> None:
+    """A user without memories keeps a CV citation that happens to say memory."""
+    item = _answer(["CV: Data Engineer at Beta NV (memory profiling)"])
+
+    _check_citations([item], [])
+
+    assert item.based_on == ["CV: Data Engineer at Beta NV (memory profiling)"]
+    assert item.footing is AnswerFooting.STRONG
+
+
+def test_a_question_about_in_memory_software_is_kept_without_memories() -> None:
+    question = InterviewQuestion(
+        question="Welke in-memory database gebruiken jullie?",
+        theme=QuestionTheme.ROLE,
+        why="...",
+        grounded_in="vacancy: in-memory data grid",
+    )
+
+    assert _drop_unsupported([question], [], set()) == [question]
 
 
 def test_drop_unsupported_keeps_questions_citing_known_memories() -> None:

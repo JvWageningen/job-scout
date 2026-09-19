@@ -78,8 +78,8 @@ from job_scout.llm.base import LLMClient, LLMError
 from job_scout.memories import (
     MEMORIES_SOURCE_KEY,
     MemoryUse,
-    memory_label,
     memory_labels,
+    parse_memory_label,
 )
 from job_scout.models import CompanyResearch, CompanyReview, JobListing
 from job_scout.prose import clean_items
@@ -1091,13 +1091,33 @@ _SOURCE_WORDS = {
 }
 
 
-# A memory named in a citation: "memory 3", "Memory #3" or, in a Dutch set,
-# "herinnering 3". The labels in the prompt are always "memory <id>".
-_MEMORY_WORD = r"(?:memor(?:y|ies)|herinnering(?:en)?)"
-_MEMORY_MENTION = re.compile(rf"\b{_MEMORY_WORD}\b", re.IGNORECASE)
-_MEMORY_NUMBER = re.compile(
-    rf"\b{_MEMORY_WORD}\s*(?:#|nr\.?|no\.?)?\s*(\d+)\b", re.IGNORECASE
+# Where one citation names several sources: "your CV, memory 3 (the dbt move)".
+_CLAUSE_BREAK = re.compile(r"[,;:|()\[\]/]|\s(?:and|en|&)\s", re.IGNORECASE)
+# A clause that names the memories as a whole, without a number.
+_ALL_MEMORIES = re.compile(
+    r"(?:(?:your|my|the|je|jouw|mijn|de)\s+)?(?:memor(?:y|ies)|herinnering(?:en)?)",
+    re.IGNORECASE,
 )
+
+
+def _memory_citations(cited: str) -> tuple[list[str], bool]:
+    """Find the memories a citation names.
+
+    Only a clause that is a memory's label, or the memories as a whole, is
+    read as one: "vacancy: in-memory data grid" and "CV: memory controller
+    design" name no memory, whatever words they share with one.
+
+    Args:
+        cited: One citation as the model wrote it.
+
+    Returns:
+        The labels named, as prompts write them, and whether a clause names
+        the memories as a whole ("your memories").
+    """
+    clauses = [clause.strip() for clause in _CLAUSE_BREAK.split(cited)]
+    named = [label for clause in clauses if (label := parse_memory_label(clause))]
+    whole = any(_ALL_MEMORIES.fullmatch(clause) for clause in clauses)
+    return named, whole
 
 
 def unknown_memory_citation(cited: str, labels: Collection[str]) -> bool:
@@ -1114,15 +1134,14 @@ def unknown_memory_citation(cited: str, labels: Collection[str]) -> bool:
 
     Returns:
         True when the citation names a memory by a label not in ``labels``,
-        or mentions memories while there were none. False for a citation that
-        does not mention a memory at all.
+        or names the memories as a whole while there were none. False for a
+        citation that names no memory, even one using the word, such as
+        "vacancy: in-memory databases".
     """
-    if not _MEMORY_MENTION.search(cited):
-        return False
-    numbers = _MEMORY_NUMBER.findall(cited)
-    if not numbers:
-        return not labels
-    return any(memory_label(int(number)) not in labels for number in numbers)
+    named, whole = _memory_citations(cited)
+    if named:
+        return any(label not in labels for label in named)
+    return whole and not labels
 
 
 def _unsupported(

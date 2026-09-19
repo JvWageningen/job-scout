@@ -209,11 +209,12 @@ def test_each_draft_answer_is_a_paragraph_of_its_own() -> None:
         "Jouw antwoord:",
         "Bij Bureau Kalibra draaide ik de jaarlijkse audit.",
         "Dat ging goed.",
-        "Onderbouwing: Sterk. Je cv of een STAR-verhaal onderbouwt dit.",
+        "Onderbouwing: Sterk. Je cv, een STAR-verhaal of een herinnering "
+        "onderbouwt dit.",
         "Gebaseerd op: STAR-verhaal 3; CV: Ervaring",
     ]
     assert GAP_DRAFT in text
-    assert "Gebaseerd op: niets uit je cv, verhalen of notities" in text
+    assert "Gebaseerd op: niets uit je cv, verhalen, herinneringen of notities" in text
 
 
 def test_the_missing_context_and_sources_close_the_document() -> None:
@@ -489,6 +490,24 @@ def test_story_citations_are_translated_only_for_display() -> None:
     assert dutch.questions[1].based_on[1] == "STAR story 3"
 
 
+def test_memory_citations_are_translated_only_for_display() -> None:
+    """A memory is cited by its English label, and a Dutch file names it in Dutch."""
+    cited = ["memory 4", "Memory #5", "CV: Ervaring (memory 4 GB)"]
+    dutch = answer_set()
+    dutch.questions[1].based_on = list(cited)
+    english = answer_set(LetterLanguage.EN)
+    english.questions[1].based_on = list(cited)
+
+    nl = render_text(interview_blocks(dutch, TITLE))
+    en = render_text(interview_blocks(english, TITLE))
+
+    assert (
+        "Gebaseerd op: herinnering 4; herinnering 5; CV: Ervaring (memory 4 GB)" in nl
+    )
+    assert "Based on: memory 4; memory 5; CV: Ervaring (memory 4 GB)" in en
+    assert dutch.questions[1].based_on == cited
+
+
 @pytest.mark.parametrize(
     ("grounded", "shown"),
     [
@@ -500,6 +519,10 @@ def test_story_citations_are_translated_only_for_display() -> None:
             "bedrijfsbeoordeling: voordelen of the team",
         ),
         ("consultancy", "consultancy"),
+        ("memory 4", "herinnering 4"),
+        ("your CV and memory 4", "je cv and herinnering 4"),
+        ("vacancy: High Bandwidth Memory 3", "vacature: High Bandwidth Memory 3"),
+        ("vacancy: in-memory data grid", "vacature: in-memory data grid"),
     ],
 )
 def test_a_question_source_is_shown_in_dutch_in_a_dutch_file(
@@ -532,6 +555,10 @@ def test_an_english_question_source_is_left_as_written() -> None:
          ["1 loopbaanrichting", "3 loopbaanrichtingen"]),
         (LetterLanguage.NL, ["1 career track(s)", "3 career track(s)"],
          ["1 loopbaanrichting", "3 loopbaanrichtingen"]),
+        (LetterLanguage.NL, ["1 memory", "3 memories"],
+         ["1 herinnering", "3 herinneringen"]),
+        (LetterLanguage.EN, ["1 memory", "3 memories"],
+         ["1 memory", "3 memories"]),
     ],
 )  # fmt: skip
 def test_career_tracks_are_counted_in_words(

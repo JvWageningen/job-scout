@@ -186,6 +186,7 @@ class _Labels(BaseModel):
     answer_file: str
     vacancy: str
     story: str
+    memory: str
     months: tuple[str, ...]
     themes: dict[QuestionTheme, str]
     kinds: dict[QuestionKind, str]
@@ -223,7 +224,7 @@ _LABELS = {
         answer="Your answer",
         footing="Footing",
         based_on="Based on",
-        based_on_nothing="nothing in your CV, stories or notes",
+        based_on_nothing="nothing in your CV, stories, memories or notes",
         missing="What was missing",
         checked_on="checked",
         tried_on="tried",
@@ -239,6 +240,7 @@ _LABELS = {
         answer_file="Interview answers",
         vacancy="vacancy",
         story="STAR story",
+        memory="memory",
         months=_ENGLISH_MONTHS,
         themes={
             QuestionTheme.ROLE: "The role",
@@ -257,7 +259,9 @@ _LABELS = {
             QuestionKind.PRACTICAL: "Practical matters",
         },
         footings={
-            AnswerFooting.STRONG: "Strong. Your CV or a STAR story carries this.",
+            AnswerFooting.STRONG: (
+                "Strong. Your CV, a STAR story or a memory carries this."
+            ),
             AnswerFooting.PARTIAL: (
                 "Partial. Only related experience, so choose the framing with care."
             ),
@@ -278,7 +282,7 @@ _LABELS = {
         answer="Jouw antwoord",
         footing="Onderbouwing",
         based_on="Gebaseerd op",
-        based_on_nothing="niets uit je cv, verhalen of notities",
+        based_on_nothing="niets uit je cv, verhalen, herinneringen of notities",
         missing="Wat ontbrak",
         checked_on="gecontroleerd op",
         tried_on="geprobeerd op",
@@ -294,6 +298,7 @@ _LABELS = {
         answer_file="Interviewantwoorden",
         vacancy="vacature",
         story="STAR-verhaal",
+        memory="herinnering",
         months=(
             "januari",
             "februari",
@@ -325,7 +330,9 @@ _LABELS = {
             QuestionKind.PRACTICAL: "Praktische zaken",
         },
         footings={
-            AnswerFooting.STRONG: "Sterk. Je cv of een STAR-verhaal onderbouwt dit.",
+            AnswerFooting.STRONG: (
+                "Sterk. Je cv, een STAR-verhaal of een herinnering onderbouwt dit."
+            ),
             AnswerFooting.PARTIAL: (
                 "Deels. Alleen verwante ervaring, dus kies je woorden met zorg."
             ),
@@ -359,6 +366,14 @@ _OLD_TRACKS = re.compile(r"^(\d+) career track\(s\)$")
 # A story citation is built in code as "STAR story <id>" and checked against
 # that label, so the stored set always has it in English, in any casing.
 _STORY_CITATION = re.compile(r"^STAR story (\d+)$", re.IGNORECASE)
+# A memory is cited by the label the prompt gives it, "memory <id>", which the
+# citation checks also accept as "Memory #3". Only a label that opens a clause
+# is one: "High Bandwidth Memory 3" is not.
+_MEMORY_NUMBER = r"memory\s*(?:#|nr\.?|no\.?)?\s*(\d+)\b"
+_MEMORY_CITATION = re.compile(rf"^{_MEMORY_NUMBER}$", re.IGNORECASE)
+_MEMORY_IN_GROUNDING = re.compile(
+    rf"(^|[,;:|(\[/]\s*|\s(?:and|en|&)\s){_MEMORY_NUMBER}", re.IGNORECASE
+)
 # The date a remembered lookup puts after its missing_context constant.
 _DATED_GAP = re.compile(r"^ \((checked|tried) (\d{1,2}) ([A-Za-z]+) (\d{4})\)$")
 
@@ -377,6 +392,8 @@ _SOURCE_NAMES_NL = (
     (re.compile(r"^(\d+) career tracks$"), r"\1 loopbaanrichtingen"),
     (re.compile(r"^1 STAR story$"), "1 STAR-verhaal"),
     (re.compile(r"^(\d+) STAR stories$"), r"\1 STAR-verhalen"),
+    (re.compile(r"^1 memory$"), "1 herinnering"),
+    (re.compile(r"^(\d+) memories$"), r"\1 herinneringen"),
 )
 
 # Dates are the applicant's, not the server's: a set written late in the
@@ -464,21 +481,26 @@ def _grounding_name(text: str, labels: _Labels) -> str:
     for english, translated in labels.grounding_words:
         pattern = rf"(?<![\w-]){re.escape(english)}(?![\w-])"
         text = re.sub(pattern, translated, text, flags=re.IGNORECASE)
-    return text
+    return _MEMORY_IN_GROUNDING.sub(rf"\1{labels.memory} \2", text)
 
 
 def _citation_name(source: str, labels: _Labels) -> str:
     """Name one source of a draft answer in the set's language.
 
     Args:
-        source: One ``based_on`` entry as stored, e.g. "STAR story 3".
+        source: One ``based_on`` entry as stored, e.g. "STAR story 3" or
+            "memory 4".
         labels: Fixed words in the set's language.
 
     Returns:
-        A story citation in the set's language; any other entry as it is.
+        A story or memory citation in the set's language; any other entry
+        as it is.
     """
-    match = _STORY_CITATION.match(source)
-    return f"{labels.story} {match.group(1)}" if match else source
+    story = _STORY_CITATION.match(source)
+    if story:
+        return f"{labels.story} {story.group(1)}"
+    memory = _MEMORY_CITATION.match(source)
+    return f"{labels.memory} {memory.group(1)}" if memory else source
 
 
 def _question_blocks(item: InterviewQuestion, labels: _Labels) -> list[Block]:

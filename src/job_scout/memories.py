@@ -264,6 +264,48 @@ def memory_label(memory_id: int) -> str:
     return f"memory {memory_id}"
 
 
+# A memory's label as a model may write it back: "memory 3", "Memory #3",
+# "memory3", "memories 3", or in Dutch "herinnering 3" and "herinnering nr. 3",
+# possibly after "your" or "je". The prompts always say "memory <id>".
+_LABEL_WORD = r"(?:memor(?:y|ies)|herinnering(?:en)?)"
+_WRITTEN_LABEL = re.compile(
+    rf"(?:(?:your|my|the|je|jouw|mijn|de)\s+)?{_LABEL_WORD}\s*"
+    r"(?:#|nr\.?|no\.?)?\s*(\d+)\b",
+    re.IGNORECASE,
+)
+
+
+def parse_memory_label(value: object, *, bare_number: bool = False) -> str | None:
+    """Read one memory citation the way a model wrote it.
+
+    Letters, interview sets and CV tailoring all cite memories by label, and a
+    model does not always copy the label exactly. Every place that checks a
+    citation reads it here, so they accept the same spellings.
+
+    Args:
+        value: Text that starts with a label ("Memory #3", "herinnering 3
+            (dbt)"), or a memory id as a whole number.
+        bare_number: Also read text that is only a number, such as "3". Only
+            for a field that holds nothing but memory citations: elsewhere a
+            number names something else.
+
+    Returns:
+        The label as prompts write it, such as "memory 3"; None when the value
+        names no memory.
+    """
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return memory_label(value) if value > 0 else None
+    if not isinstance(value, str):
+        return None
+    text = " ".join(value.split())
+    if bare_number and text.isascii() and text.isdigit():
+        return parse_memory_label(int(text))
+    match = _WRITTEN_LABEL.match(text)
+    return parse_memory_label(int(match.group(1))) if match else None
+
+
 class ForgottenMemory(BaseModel):
     """A memory the applicant deleted, kept so it is not captured again.
 

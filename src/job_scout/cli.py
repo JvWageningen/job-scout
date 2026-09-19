@@ -2972,11 +2972,13 @@ def profile_generate_cover_letter(
 
     The job must be in APPROVED status or later to generate a cover letter.
     """
+    from job_scout.applicant import memories_for_vacancy
     from job_scout.config import build_effective_config, user_db_path
     from job_scout.cover_letter_generator import generate_cover_letter
     from job_scout.cv_profile import get_or_parse_cv_profile
     from job_scout.database import Database
     from job_scout.llm.factory import get_llm_client
+    from job_scout.memories import MemoryUse
     from job_scout.models import JobStatus
 
     target = _require_single_user(user_name)
@@ -3056,6 +3058,7 @@ def profile_generate_cover_letter(
         sys.exit(1)
 
     cv_profile = get_or_parse_cv_profile(raw_cv_text, client, db)
+    memories = memories_for_vacancy(target, MemoryUse.LETTER, job)
 
     click.echo(f"Generating cover letter for: {job.title} @ {job.company}...")
     cover_letter = generate_cover_letter(
@@ -3064,6 +3067,7 @@ def profile_generate_cover_letter(
         job.title,
         job.company,
         client=client,
+        memories=memories,
     )
 
     if not cover_letter:
@@ -3117,6 +3121,7 @@ def profile_answer_screening(job_id: int, user_name: str | None, force: bool) ->
     Automatically extracts likely screening questions from the job description
     and generates thoughtful answers based on the CV profile.
     """
+    from job_scout.applicant import memories_for_vacancy
     from job_scout.config import build_effective_config, user_db_path
     from job_scout.cover_letter_generator import (
         answer_screening_questions,
@@ -3125,6 +3130,7 @@ def profile_answer_screening(job_id: int, user_name: str | None, force: bool) ->
     from job_scout.cv_profile import get_or_parse_cv_profile
     from job_scout.database import Database
     from job_scout.llm.factory import get_llm_client
+    from job_scout.memories import MemoryUse
     from job_scout.models import JobStatus
 
     target = _require_single_user(user_name)
@@ -3220,6 +3226,7 @@ def profile_answer_screening(job_id: int, user_name: str | None, force: bool) ->
         cv_profile,
         job.description,
         client=client,
+        memories=memories_for_vacancy(target, MemoryUse.LETTER, job),
     )
 
     # Save to database

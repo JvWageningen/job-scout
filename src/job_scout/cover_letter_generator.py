@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from loguru import logger
 
+from job_scout.applicant import memories_block
 from job_scout.llm.base import LLMClient
 from job_scout.models import CvProfile
 from job_scout.prose import clean_prose
@@ -73,6 +75,7 @@ def generate_cover_letter(
     company_name: str,
     *,
     client: LLMClient | None = None,
+    memories: Sequence[Mapping[str, Any]] = (),
 ) -> str:
     """Generate a tailored cover letter for a specific job.
 
@@ -85,6 +88,9 @@ def generate_cover_letter(
         job_title: The target job title.
         company_name: The target company name.
         client: LLM client to use; if None, one is built from config.
+        memories: The applicant's memories allowed in letters, as
+            :func:`job_scout.applicant.memories_for_vacancy` returns them;
+            used only where they fit the vacancy.
 
     Returns:
         Generated cover letter text.
@@ -107,6 +113,7 @@ def generate_cover_letter(
         "direct, professional tone of Dutch business culture.\n"
         f"The whole letter follows the house style below.\n{HOUSE_STYLE}\n"
         f"APPLICANT PROFILE:\n{profile_summary}\n\n"
+        f"{memories_block(memories)}"
         f"TARGET POSITION: {job_title} at {company_name}\n\n"
         f"JOB DESCRIPTION:\n{job_description[:1500]}\n\n"
         "Write the cover letter as plain text, starting with a greeting and "
@@ -131,6 +138,7 @@ def answer_screening_questions(
     job_description: str,
     *,
     client: LLMClient | None = None,
+    memories: Sequence[Mapping[str, Any]] = (),
 ) -> dict[str, str]:
     """Generate answers to screening questions.
 
@@ -142,6 +150,11 @@ def answer_screening_questions(
         cv_profile: Structured CV profile extracted from CV.
         job_description: The target job description.
         client: LLM client to use; if None, one is built from config.
+        memories: The applicant's memories allowed in letters (screening
+            answers go out with the application), as
+            :func:`job_scout.applicant.memories_for_vacancy` returns them.
+            Their wishes and conditions answer questions about hours, start
+            date or salary.
 
     Returns:
         Dictionary mapping questions to answers.
@@ -170,6 +183,7 @@ def answer_screening_questions(
         "The applicant sends these answers: write each one in the house style "
         f"below.\n{HOUSE_STYLE}\n"
         f"APPLICANT PROFILE:\n{profile_summary}\n\n"
+        f"{memories_block(memories)}"
         f"JOB DESCRIPTION:\n{job_description[:1000]}\n\n"
         f"SCREENING QUESTIONS:\n{questions_str}\n\n"
         'Return valid JSON with format: {"answers": {"question1": "answer1", '
