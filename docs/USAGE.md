@@ -80,6 +80,7 @@ logs directory regardless of this setting; `-v` only affects what reaches your t
 | [`memory edit`](#memory-edit) | Change a memory, or clear its private flag |
 | [`memory delete`](#memory-delete) | Delete memories |
 | [`memory import`](#memory-import) | Turn a text about yourself into memories |
+| [`memory forgotten`](#memory-forgotten) | Show the memories you deleted, or erase that list |
 | [`memory auto-capture`](#memory-auto-capture) | Show or switch capture from letter and interview notes |
 | [`cv list`](#cv-list) | List the stored CV profiles |
 | [`cv serve`](#cv-serve) | Run the CV editor on its own |
@@ -912,9 +913,10 @@ uv run job-scout memory delete --all --user alex
 ```
 
 Deletes the memories with these ids and exits 1 when one of them does not exist.
-`--all` deletes every memory after asking; `--yes` skips the question. Notes that were
-already turned into memories stay recorded, so a deleted memory does not come back when
-you generate a letter again with the same notes.
+`--all` deletes every memory after asking; `--yes` skips the question. Automatic capture
+does not bring a deleted memory back, also not when you generate again with notes you
+changed: its wording is kept in your own database until you run
+[`memory forgotten --clear`](#memory-forgotten).
 
 ### `memory import`
 
@@ -925,8 +927,11 @@ uv run job-scout memory import --text "Bij Voorbeeld Retail heb ik ..." --dry-ru
 
 Sends the text to the model once (purpose `cv_parsing`, up to five minutes), prints the
 proposed memories and saves them after asking. Proposals that repeat a memory you
-already have are left out. Reads TXT, MD, PDF, DOCX and ODT files of at most 20,000
-characters of text. Exits 1 when the model's answer cannot be read.
+already have are left out; a memory you deleted may be proposed again, since you review
+what is saved. At most 20 proposals per run: when the text may hold more, the command
+says so, and running it again after saving gets the rest. Reads TXT, MD, PDF, DOCX and
+ODT files of at most 20,000 characters of text. Exits 1 when the model's answer cannot
+be read.
 
 | Argument / option | Default | Description |
 |---|---|---|
@@ -934,6 +939,23 @@ characters of text. Exits 1 when the model's answer cannot be read.
 | `--text TEXT` | none | The text itself |
 | `--yes` | off | Save every proposal without asking |
 | `--dry-run` | off | Show the proposals and save nothing |
+
+### `memory forgotten`
+
+```bash
+uv run job-scout memory forgotten --user alex
+uv run job-scout memory forgotten --clear --user alex
+```
+
+Lists the memories you deleted, most recently deleted first, with the day and whether
+they were private. Automatic capture leaves these facts out. `--clear` erases the list
+after asking (`--yes` skips the question); after that nothing of a deleted memory is
+left, and new notes may bring those facts back.
+
+| Option | Default | Description |
+|---|---|---|
+| `--clear` | off | Erase the list |
+| `--yes` | off | Do not ask before erasing |
 
 ### `memory auto-capture`
 

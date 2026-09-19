@@ -21,6 +21,7 @@ from job_scout.memories import (
     MemoryUse,
     add_memory,
     get_memory,
+    list_forgotten,
     list_memories,
 )
 from job_scout.memory_extract import auto_capture_enabled
@@ -81,7 +82,15 @@ def test_the_group_hangs_off_the_root_cli() -> None:
     """Reachable as 'job-scout memory', with every command listed."""
     result = _run("--help")
     assert result.exit_code == 0
-    for command in ("list", "add", "edit", "delete", "import", "auto-capture"):
+    for command in (
+        "list",
+        "add",
+        "edit",
+        "delete",
+        "import",
+        "forgotten",
+        "auto-capture",
+    ):
         assert command in result.output
 
 
@@ -271,6 +280,40 @@ def test_import_with_nothing_new_says_so(monkeypatch: pytest.MonkeyPatch) -> Non
     result = _run("import", "--text", PASTED)
     assert result.exit_code == 0
     assert "Nothing new to remember in that text." in result.output
+
+
+def test_import_says_when_the_text_may_hold_more(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The applicant must not assume a long text was captured in full."""
+    items = [{"text": f"Ik heb project nummer {i} geleid."} for i in range(25)]
+    client = FakeLLMClient([json.dumps({"memories": items})])
+    monkeypatch.setattr(memory_cli, "get_llm_client", lambda _cfg: client)
+    result = _run("import", "--text", PASTED, "--yes")
+    assert result.exit_code == 0, result.output
+    assert "Saved 20 memories." in result.output
+    assert "There may be more in this text; run it again" in result.output
+
+
+def test_import_of_a_short_text_does_not_mention_more(model: FakeLLMClient) -> None:
+    """Only a cut answer gets the note."""
+    result = _run("import", "--text", PASTED, "--yes")
+    assert "There may be more" not in result.output
+
+
+def test_forgotten_lists_deleted_memories_and_clears_after_asking() -> None:
+    """What notes will not bring back is visible, and can be erased."""
+    assert "No deleted memories." in _run("forgotten").output
+    stored = add_memory(USER, MemoryDraft(text="Ik spreek Duits.", sensitive=True))
+    _run("delete", str(stored.id))
+    shown = _run("forgotten").output
+    assert "(private): Ik spreek Duits." in shown
+    assert "1 deleted memories." in shown
+    assert _run("forgotten", "--clear", stdin="n\n").exit_code != 0
+    assert list_forgotten(USER) != []
+    result = _run("forgotten", "--clear", "--yes")
+    assert "Erased 1 deleted memories." in result.output
+    assert list_forgotten(USER) == []
 
 
 def test_auto_capture_shows_and_switches_the_setting() -> None:

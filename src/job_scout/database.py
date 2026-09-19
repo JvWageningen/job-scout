@@ -576,9 +576,9 @@ class Database:
 
     @staticmethod
     def _create_memories(conn: sqlite3.Connection) -> None:
-        """Create the applicant's memories and the record of captured notes.
+        """Create the applicant's memories and the records that go with them.
 
-        A database from before memories existed gets both tables, and one
+        A database from before memories existed gets all three tables, and one
         whose memories table lacks a column added since gets that column with
         its default, so nothing stored is lost. See :mod:`job_scout.memories`.
 
@@ -606,6 +606,15 @@ class Database:
                 job_id INTEGER,
                 claimed_at TEXT NOT NULL,
                 memories_added INTEGER
+            )
+        """)
+        # The text of every deleted memory, so automatic capture does not
+        # bring it back from notes typed again with a change.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS forgotten_memories (
+                text TEXT PRIMARY KEY,
+                sensitive INTEGER NOT NULL DEFAULT 0,
+                forgotten_at TEXT NOT NULL
             )
         """)
 
@@ -2214,7 +2223,7 @@ class Database:
             return cursor.rowcount > 0
 
     def delete_memory(self, memory_id: int) -> bool:
-        """Delete one memory.
+        """Delete one memory and record its text as forgotten, in one step.
 
         Args:
             memory_id: The memory's id.
@@ -2222,21 +2231,65 @@ class Database:
         Returns:
             True when a memory was deleted, False when there was none.
         """
+        now = datetime.now(UTC).isoformat()
         with self._conn() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO forgotten_memories "
+                "(text, sensitive, forgotten_at) "
+                "SELECT text, sensitive, ? FROM memories WHERE id = ?",
+                (now, memory_id),
+            )
             cursor = conn.execute("DELETE FROM memories WHERE id = ?", (memory_id,))
             return cursor.rowcount > 0
 
     def delete_all_memories(self) -> int:
-        """Delete every memory.
+        """Delete every memory and record each text as forgotten, in one step.
 
         The record of captured notes is kept, so notes that were already
-        turned into memories do not bring deleted memories back.
+        turned into memories are not read again.
 
         Returns:
             How many memories were deleted.
         """
+        now = datetime.now(UTC).isoformat()
         with self._conn() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO forgotten_memories "
+                "(text, sensitive, forgotten_at) "
+                "SELECT text, sensitive, ? FROM memories",
+                (now,),
+            )
             return conn.execute("DELETE FROM memories").rowcount
+
+    def get_forgotten_memories(self) -> list[dict[str, Any]]:
+        """Return the texts of deleted memories, most recently deleted first.
+
+        Returns:
+            One dict per text with ``text``, ``sensitive`` (a bool) and
+            ``forgotten_at`` (ISO text).
+        """
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT text, sensitive, forgotten_at FROM forgotten_memories "
+                "ORDER BY forgotten_at DESC, rowid DESC"
+            ).fetchall()
+        return [
+            {
+                "text": row["text"],
+                "sensitive": bool(row["sensitive"]),
+                "forgotten_at": row["forgotten_at"],
+            }
+            for row in rows
+        ]
+
+    def clear_forgotten_memories(self) -> int:
+        """Erase the texts of deleted memories.
+
+        Returns:
+            How many were erased.
+        """
+        with self._conn() as conn:
+            return conn.execute("DELETE FROM forgotten_memories").rowcount
 
     def claim_notes_capture(
         self,

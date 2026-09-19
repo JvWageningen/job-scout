@@ -56,9 +56,6 @@ MAX_SOURCE_DETAIL_CHARS = 200
 # More memories than this in one prompt crowd out the CV they supplement. With
 # fewer eligible memories all of them go, and the model decides with the hints.
 SELECT_LIMIT = 25
-# Two texts sharing this share of their words (after light stemming) state the
-# same fact, provided they hold the same numbers.
-DUPLICATE_OVERLAP = 0.8
 # A matching tag says more about fit than one shared word in the text.
 _TAG_WEIGHT = 3
 
@@ -73,7 +70,8 @@ MEMORY_GUIDE = (
     "vacancy and leave the others out. A memory is the applicant's own statement "
     "and counts as evidence like the CV, except that a memory of kind preference "
     "or constraint is a wish or a condition, never experience. Never stretch a "
-    "memory beyond what it says."
+    "memory beyond what it says. Each memory has noted_on, the date it was last "
+    "changed: when two memories disagree, the more recent one holds."
 )
 # The rule for CV tailoring, where the structure of the CV must stay intact.
 MEMORY_CV_RULE = (
@@ -266,6 +264,25 @@ def memory_label(memory_id: int) -> str:
     return f"memory {memory_id}"
 
 
+class ForgottenMemory(BaseModel):
+    """A memory the applicant deleted, kept so it is not captured again.
+
+    Automatic capture reads the notes of every new letter or interview, and
+    notes are often typed again with a small change. Without this record a
+    deleted memory would come straight back from them.
+
+    Attributes:
+        text: The deleted memory's text.
+        sensitive: Whether it was private; a private one is never shown to a
+            model, not even as something to leave out.
+        forgotten_at: When it was deleted.
+    """
+
+    text: str
+    sensitive: bool = False
+    forgotten_at: datetime
+
+
 # -- Store ---------------------------------------------------------------------
 
 
@@ -451,7 +468,11 @@ def update_memory(user: str, memory_id: int, content: MemoryContent) -> Memory |
 
 
 def delete_memory(user: str, memory_id: int) -> bool:
-    """Delete one memory.
+    """Delete one memory, and record it as forgotten.
+
+    Automatic capture does not bring a forgotten memory back, also not from
+    notes typed again with a change (see :func:`list_forgotten`). Adding it
+    by hand or through a reviewed import still works.
 
     Args:
         user: Name of an existing user.
@@ -467,10 +488,10 @@ def delete_memory(user: str, memory_id: int) -> bool:
 
 
 def delete_all_memories(user: str) -> int:
-    """Delete all of a user's memories.
+    """Delete all of a user's memories, and record each as forgotten.
 
-    Notes already captured stay recorded, so regenerating a letter with the
-    same notes does not bring deleted memories back.
+    Notes already captured stay recorded too, so regenerating a letter with
+    the same notes costs no model call and brings nothing back.
 
     Args:
         user: Name of an existing user.
@@ -482,6 +503,40 @@ def delete_all_memories(user: str) -> int:
         MemoryStoreError: If the user does not exist.
     """
     return _database(user).delete_all_memories()
+
+
+def list_forgotten(user: str) -> list[ForgottenMemory]:
+    """Return the memories a user deleted, most recently deleted first.
+
+    Args:
+        user: Name of an existing user.
+
+    Returns:
+        The forgotten memories, private ones included.
+
+    Raises:
+        MemoryStoreError: If the user does not exist.
+    """
+    rows = _database(user).get_forgotten_memories()
+    return [ForgottenMemory.model_validate(row) for row in rows]
+
+
+def clear_forgotten(user: str) -> int:
+    """Erase the record of deleted memories.
+
+    Afterwards nothing of a deleted memory is left in the database, and
+    automatic capture may find those facts again in new notes.
+
+    Args:
+        user: Name of an existing user.
+
+    Returns:
+        How many records were erased.
+
+    Raises:
+        MemoryStoreError: If the user does not exist.
+    """
+    return _database(user).clear_forgotten_memories()
 
 
 # -- Comparing text --------------------------------------------------------------
@@ -566,41 +621,157 @@ def significant_words(text: str) -> set[str]:
     return stems - _STOPWORDS
 
 
-def _numbers(normalised: str) -> set[str]:
-    """Return the words of normalised text that hold a digit.
+# Comparing two memory texts. Words that turn a claim around when they are
+# added, dropped or swapped must match exactly: a negation, a number and a
+# modal verb ("I will finish" is not "I finished"). Negations all count as one.
+_NEGATION_TEXT = (
+    "not no never none nothing nobody neither nor cannot "
+    "niet geen nooit niets niemand noch nergens"
+)
+_MODAL_TEXT = (
+    "will ll would shall should can could may might must want wants wanted wish "
+    "hope prefer rather zal zult zullen zou zouden kan kun kunt kunnen kon konden "
+    "mag mogen mocht moet moeten moest wil wilt willen wilde wens hoop liever"
+)
+# Numbers written as words, compared like digits. The Dutch "een" is left out:
+# it is also the article, and a different number on the other side differs.
+_NUMBER_WORD_TEXT = (
+    "one two three four five six seven eight nine ten eleven twelve thirteen "
+    "fourteen fifteen sixteen seventeen eighteen nineteen twenty thirty forty "
+    "fifty sixty seventy eighty ninety hundred hundreds thousand thousands "
+    "million millions billion dozen half third thirds quarter quarters twice "
+    "double triple doubled tripled halved first second fourth fifth "
+    "twee drie vier vijf zes zeven acht negen tien elf twaalf dertien veertien "
+    "vijftien zestien zeventien achttien negentien twintig dertig veertig "
+    "vijftig zestig zeventig tachtig negentig honderd honderden duizend "
+    "duizenden miljoen miljoenen miljard dozijn halve helft derde kwart "
+    "tweemaal dubbel verdubbeld verdrievoudigd gehalveerd eerste tweede vierde "
+    "vijfde"
+)
+# Words that carry no claim of their own: articles, pronouns, forms of "be",
+# "have" and "do", and prepositions that only link. Words such as "since",
+# "until", "voor" or "only" are not here: they change what is claimed.
+_FUNCTION_WORD_TEXT = (
+    "a an the i me my mine we us our you your he him his she her it its they "
+    "them their this that these those who whom whose which what am is are was "
+    "were be been being have has had having do does did done to of in on at by "
+    "for with from into onto as and or but so also too very just there here "
+    "then than m ve s d "
+    "de het een ik mij me mijn wij we ons onze jij je jou jouw u uw hij hem "
+    "zijn zij ze haar hun hen dit dat deze die wie wat welke ben bent is was "
+    "waren geweest heb hebt heeft hebben had hadden gehad doe doet deed deden "
+    "gedaan te van in op aan bij met uit naar om door en of maar dus ook er "
+    "daar hier dan"
+)
+_NEGATIONS = frozenset(_NEGATION_TEXT.split())
+_MODALS = frozenset(_MODAL_TEXT.split())
+_NUMBER_WORDS = frozenset(_NUMBER_WORD_TEXT.split())
+_FUNCTION_WORDS = frozenset(_FUNCTION_WORD_TEXT.split())
+# English contractions, spelt out before comparing so "don't" meets "do not".
+_CONTRACTIONS = (
+    (re.compile(r"\b(?:can['\u2019]t|cannot)\b"), "can not"),
+    (re.compile(r"\bwon['\u2019]t\b"), "will not"),
+    (re.compile(r"n['\u2019]t\b"), " not"),
+)
+
+
+def _claim_words(text: str) -> tuple[str, ...]:
+    """Return the normalised words of a text, with contractions spelt out.
 
     Args:
-        normalised: Text from :func:`normalise_text`.
+        text: A memory text.
 
     Returns:
-        Those words, such as "2019" or "40".
+        The words, in order.
     """
-    return {word for word in normalised.split() if any(c.isdigit() for c in word)}
+    folded = text.casefold()
+    for pattern, replacement in _CONTRACTIONS:
+        folded = pattern.sub(replacement, folded)
+    return tuple(normalise_text(folded).split())
+
+
+def _marker(word: str) -> str:
+    """Return what a word must match exactly in another text, if anything.
+
+    Args:
+        word: A normalised word.
+
+    Returns:
+        "not" for any negation, the word itself for a number or a modal verb,
+        and "" for any other word.
+    """
+    if word in _NEGATIONS:
+        return "not"
+    if word in _NUMBER_WORDS or word in _MODALS or any(c.isdigit() for c in word):
+        return word
+    return ""
+
+
+@dataclass(frozen=True)
+class _Claim:
+    """What a memory text claims, reduced for comparing it with another.
+
+    Attributes:
+        words: Its normalised words, in order.
+        markers: Its negations, numbers and modal verbs, sorted, with repeats.
+        content: The stems of its other words that carry meaning.
+    """
+
+    words: tuple[str, ...]
+    markers: tuple[str, ...]
+    content: frozenset[str]
+
+    @classmethod
+    def of(cls, text: str) -> _Claim:
+        """Reduce a memory text.
+
+        Args:
+            text: A memory text.
+
+        Returns:
+            Its claim.
+        """
+        words = _claim_words(text)
+        markers = tuple(sorted(filter(None, (_marker(word) for word in words))))
+        content = frozenset(
+            _stem(word)
+            for word in words
+            if not _marker(word) and word not in _FUNCTION_WORDS
+        )
+        return cls(words=words, markers=markers, content=content)
 
 
 def same_fact(first: str, second: str) -> bool:
-    """Tell whether two memory texts state the same fact.
+    """Tell whether a new memory text adds nothing to a known one.
 
-    The texts are equal once case, accents and punctuation are ignored, or
-    they hold the same numbers and share at least :data:`DUPLICATE_OVERLAP`
-    of their word stems. A different number is a different fact: "since
-    2019" and "since 2020" are not the same claim.
+    Code only catches what is plainly the same; telling two wordings of one
+    fact apart is left to the model, which sees the existing memories. So
+    the second text repeats the first only when they are equal once case,
+    accents, punctuation and contractions are ignored, or when both hold:
+
+    * the same negations, numbers (in digits or words) and modal verbs. A
+      different number is a different fact ("since 2019" is not "since
+      2020"), and so is a flipped wish ("I do not want to travel").
+    * every word of the second that carries meaning (after light stemming)
+      occurs in the first. Another employer, another tool or any added
+      detail makes a new fact; a shorter wording of the same fact does not.
+
+    Word order is not compared.
 
     Args:
-        first: One memory text.
-        second: Another.
+        first: The known memory text.
+        second: The new text.
 
     Returns:
-        True when the second adds nothing the first does not say.
+        True when the second adds nothing the first does not say. Not
+        symmetric: a longer second text that adds a detail is new.
     """
-    one, other = normalise_text(first), normalise_text(second)
-    if one == other:
+    known, new = _Claim.of(first), _Claim.of(second)
+    if known.words == new.words:
         return True
-    if not one or not other or _numbers(one) != _numbers(other):
+    if not known.words or not new.words or known.markers != new.markers:
         return False
-    stems, other_stems = _stems(one), _stems(other)
-    overlap = len(stems & other_stems) / len(stems | other_stems)
-    return overlap >= DUPLICATE_OVERLAP
+    return new.content <= known.content
 
 
 def find_duplicate[M: MemoryContent](text: str, memories: Sequence[M]) -> M | None:
@@ -627,11 +798,13 @@ class _VacancyTerms:
     """A vacancy's words, prepared once for scoring many memories against it.
 
     Attributes:
+        raw: The text as written, for words that only count in capitals.
         padded: The normalised text with a space on either side.
         stems: The stems of every word.
         significant: The stems of the words that say something about fit.
     """
 
+    raw: str
     padded: str
     stems: set[str]
     significant: set[str]
@@ -648,10 +821,29 @@ class _VacancyTerms:
         """
         normalised = normalise_text(vacancy_text)
         return cls(
+            raw=vacancy_text,
             padded=f" {normalised} ",
             stems=_stems(normalised),
             significant=significant_words(vacancy_text),
         )
+
+    def _word_fits(self, word: str) -> bool:
+        """Tell whether one word of a tag occurs in the vacancy.
+
+        A word of one or two letters, or a stopword, is also an everyday word
+        ("it", "go", "team"), so it counts only where the vacancy writes it
+        in capitals, as in "IT" or "HR".
+
+        Args:
+            word: A normalised word of a tag.
+
+        Returns:
+            True when it occurs.
+        """
+        if len(word) < 3 or word in _STOPWORDS:
+            capitals = rf"(?<!\w){re.escape(word.upper())}(?!\w)"
+            return re.search(capitals, self.raw) is not None
+        return _stem(word) in self.stems
 
     def tag_fits(self, tag: str) -> bool:
         """Tell whether a tag occurs in the vacancy.
@@ -660,12 +852,15 @@ class _VacancyTerms:
             tag: A memory tag.
 
         Returns:
-            True when the tag occurs as a phrase, or every word of it occurs.
+            True when a tag of several words occurs as a phrase, or when every
+            word of the tag occurs (see :meth:`_word_fits`).
         """
-        words = normalise_text(tag)
+        words = normalise_text(tag).split()
         if not words:
             return False
-        return f" {words} " in self.padded or _stems(words) <= self.stems
+        if len(words) > 1 and f" {' '.join(words)} " in self.padded:
+            return True
+        return all(self._word_fits(word) for word in words)
 
     def score(self, memory: MemoryContent) -> int:
         """Score how well a memory fits the vacancy; see :func:`relevance`.
@@ -689,8 +884,9 @@ def relevance(memory: MemoryContent, vacancy_text: str) -> int:
         vacancy_text: The vacancy's title and description.
 
     Returns:
-        Three points per tag found in the vacancy plus one per significant
-        word the memory's text and hint share with it; 0 for no overlap.
+        Three points per tag found in the vacancy (see
+        :meth:`_VacancyTerms.tag_fits`) plus one per significant word the
+        memory's text and hint share with it; 0 for no overlap.
     """
     return _VacancyTerms.of(vacancy_text).score(memory)
 

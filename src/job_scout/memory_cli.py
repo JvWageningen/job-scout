@@ -22,11 +22,13 @@ from job_scout.memories import (
     MemoryUse,
     add_memories,
     add_memory,
+    clear_forgotten,
     delete_all_memories,
     delete_memory,
     describe_origin,
     find_duplicate,
     get_memory,
+    list_forgotten,
     list_memories,
     memory_matches,
     update_memory,
@@ -199,7 +201,11 @@ def edit_cmd(
 def delete_cmd(
     memory_ids: tuple[int, ...], name: str | None, everything: bool, yes: bool
 ) -> None:
-    """Delete the memories with these ids, or all of them with --all."""
+    """Delete the memories with these ids, or all of them with --all.
+
+    Automatic capture will not bring a deleted memory back; see
+    'memory forgotten'.
+    """
     user = _user(name)
     if everything:
         if not yes:
@@ -255,17 +261,32 @@ def import_cmd(
     """Turn a text about yourself into memories (TXT, MD, PDF, DOCX or ODT)."""
     user = _user(name)
     body, origin = _import_text(file, text)
-    existing = list_memories(user)
     try:
-        drafts = extract_memories(
+        found = extract_memories(
             body,
-            existing,
+            list_memories(user),
             get_llm_client(build_effective_config(user)),
             source=MemorySource.TEXT_IMPORT,
             source_detail=origin,
         )
     except (ValueError, LLMError) as exc:
         raise click.ClickException(str(exc)) from exc
+    _save_proposals(user, found.drafts, yes=yes, dry_run=dry_run)
+    if found.truncated:
+        click.echo("There may be more in this text; run it again to get the rest.")
+
+
+def _save_proposals(
+    user: str, drafts: list[MemoryDraft], *, yes: bool, dry_run: bool
+) -> None:
+    """Show proposed memories and save them when the applicant agrees.
+
+    Args:
+        user: The user the memories are for.
+        drafts: The proposals.
+        yes: Save without asking.
+        dry_run: Save nothing.
+    """
     if not drafts:
         click.echo("Nothing new to remember in that text.")
         return
@@ -275,6 +296,31 @@ def import_cmd(
         click.echo("Nothing saved.")
         return
     click.echo(f"Saved {len(add_memories(user, drafts))} memories.")
+
+
+@memory.command("forgotten")
+@click.option("--user", "name")
+@click.option("--clear", is_flag=True, help="Erase the list after asking.")
+@click.option("--yes", is_flag=True, help="Do not ask before erasing.")
+def forgotten_cmd(name: str | None, clear: bool, yes: bool) -> None:
+    """Show the memories you deleted, which notes will not bring back."""
+    user = _user(name)
+    if clear:
+        if not yes:
+            click.confirm(
+                "Erase the list? Automatic capture may then find these again.",
+                abort=True,
+            )
+        click.echo(f"Erased {clear_forgotten(user)} deleted memories.")
+        return
+    forgotten = list_forgotten(user)
+    if not forgotten:
+        click.echo("No deleted memories.")
+        return
+    for item in forgotten:
+        private = " (private)" if item.sensitive else ""
+        click.echo(f"{day(item.forgotten_at)}{private}: {item.text}")
+    click.echo(f"{len(forgotten)} deleted memories.")
 
 
 @memory.command("auto-capture")

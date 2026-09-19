@@ -29,12 +29,14 @@ from job_scout.memories import (
     MemoryUse,
     add_memories,
     add_memory,
+    clear_forgotten,
     delete_all_memories,
     delete_memory,
     describe_origin,
     eligible_memories,
     find_duplicate,
     get_memory,
+    list_forgotten,
     list_memories,
     memories_payload,
     memory_label,
@@ -252,6 +254,41 @@ class TestStore:
         assert delete_all_memories(USER) == 2
         assert list_memories(USER) == []
 
+    def test_every_deleted_memory_is_recorded_as_forgotten(self) -> None:
+        """So automatic capture can leave it out; the private flag goes along."""
+        first, second = add_memories(
+            USER, [MemoryDraft(text="One."), MemoryDraft(text="Two.", sensitive=True)]
+        )
+        delete_memory(USER, first.id)
+        assert [(f.text, f.sensitive) for f in list_forgotten(USER)] == [
+            ("One.", False)
+        ]
+        delete_all_memories(USER)
+        forgotten = list_forgotten(USER)
+        assert sorted((f.text, f.sensitive) for f in forgotten) == [
+            ("One.", False),
+            ("Two.", True),
+        ]
+        assert forgotten[0].forgotten_at.tzinfo is not None
+
+    def test_deleting_the_same_text_twice_keeps_one_record(self) -> None:
+        """The record is keyed on the text."""
+        for _ in range(2):
+            delete_memory(USER, add_memory(USER, MemoryDraft(text="Again.")).id)
+        assert [f.text for f in list_forgotten(USER)] == ["Again."]
+
+    def test_a_missing_memory_leaves_no_record(self) -> None:
+        """Nothing was deleted, so nothing is forgotten."""
+        assert delete_memory(USER, 999) is False
+        assert list_forgotten(USER) == []
+
+    def test_clearing_the_record_erases_every_deleted_text(self) -> None:
+        """After that nothing of a deleted memory is left in the database."""
+        delete_memory(USER, add_memory(USER, MemoryDraft(text="Gone.")).id)
+        assert clear_forgotten(USER) == 1
+        assert list_forgotten(USER) == []
+        assert clear_forgotten(USER) == 0
+
     @pytest.mark.parametrize("name", ["", "..", "all", "a/b", "nobody"])
     def test_an_unknown_or_unsafe_user_is_refused(self, name: str) -> None:
         """No database path is built from a name that is not a user."""
@@ -289,7 +326,7 @@ class TestStore:
 class TestDatabase:
     """The tables themselves, and databases made before they existed."""
 
-    def test_a_database_from_before_memories_gains_both_tables(
+    def test_a_database_from_before_memories_gains_every_table(
         self, tmp_path: Path
     ) -> None:
         """An existing install opens with its data intact and memories empty."""
@@ -311,7 +348,38 @@ class TestDatabase:
         db = Database(path)
         assert db.get_memories() == []
         assert db.get_notes_capture("abc") is None
+        assert db.get_forgotten_memories() == []
         assert len(db.get_star_stories()) == 1
+
+    def test_a_database_with_memories_but_no_forgotten_table_gains_it(
+        self, tmp_path: Path
+    ) -> None:
+        """A database made by the first version of memories is migrated too."""
+        path = tmp_path / "first.db"
+        Database(path).add_memories(
+            [
+                {
+                    "text": "Kept.",
+                    "kind": "other",
+                    "tags": [],
+                    "hint": "",
+                    "use_in": ["cv"],
+                    "sensitive": False,
+                    "source": "manual",
+                    "source_detail": "",
+                    "job_id": None,
+                }
+            ]
+        )
+        conn = sqlite3.connect(path)
+        conn.execute("DROP TABLE forgotten_memories")
+        conn.commit()
+        conn.close()
+
+        db = Database(path)
+        assert [row["text"] for row in db.get_memories()] == ["Kept."]
+        assert db.delete_all_memories() == 1
+        assert [row["text"] for row in db.get_forgotten_memories()] == ["Kept."]
 
     def test_a_memories_table_missing_later_columns_gains_them(
         self, tmp_path: Path
@@ -466,12 +534,20 @@ class TestSameFact:
                 "I ran 120 A/B tests in Optimizely for a webshop.",
                 "For a webshop I ran 120 A/B tests in Optimizely.",
             ),
+            ("I don't want to travel abroad.", "I do not want to travel abroad."),
+            ("I won\u2019t travel abroad.", "I will not travel abroad."),
+            (
+                "I migrated 40 stores to a new till system at Voorbeeld Retail in "
+                "2022.",
+                "At Voorbeeld Retail I migrated 40 stores in 2022.",
+            ),
         ],
     )
     def test_the_same_fact_in_other_words_or_case_is_a_duplicate(
         self, first: str, second: str
     ) -> None:
-        """Case, accents, punctuation, word order and a plural do not matter."""
+        """Case, accents, punctuation, contractions, word order, a plural and a
+        shorter wording that adds nothing do not make a new fact."""
         assert same_fact(first, second)
 
     @pytest.mark.parametrize(
@@ -484,11 +560,55 @@ class TestSameFact:
             ("I led the migration of 40 stores.", "I led the migration of 45 stores."),
             ("I speak German.", "I am studying for my PMP certificate."),
             ("", "Something."),
+            (
+                "I migrated the webshop from Magento to Shopify at Coolblue, which "
+                "cut hosting costs.",
+                "I migrated the webshop from Magento to Shopify at Wehkamp, which "
+                "cut hosting costs.",
+            ),
+            (
+                "I run every experiment in Optimizely and report in Looker for the "
+                "whole marketing department.",
+                "I run every experiment in VWO and report in Looker for the whole "
+                "marketing department.",
+            ),
+            (
+                "I want to work 32 hours a week and I do not want to travel abroad "
+                "for work.",
+                "I want to work 32 hours a week and I do want to travel abroad for "
+                "work.",
+            ),
+            ("I am willing to relocate for a job.", "I am not willing to relocate."),
+            ("Ik wil verhuizen voor een baan.", "Ik wil niet verhuizen voor een baan."),
+            ("Ik heb een rijbewijs B.", "Ik heb geen rijbewijs B."),
+            ("I can't travel for work.", "I can travel for work."),
+            (
+                "I have a notice period of one month and prefer a hybrid role.",
+                "I have a notice period of three months and prefer a hybrid role.",
+            ),
+            (
+                "Ik heb een opzegtermijn van drie maanden.",
+                "Ik heb een opzegtermijn van een maand.",
+            ),
+            (
+                "I led a project that cut hosting costs by a third.",
+                "I led a project that cut hosting costs by half.",
+            ),
+            ("I will finish my PMP in 2027.", "I finished my PMP in 2027."),
         ],
     )
-    def test_a_different_number_or_fact_is_new(self, first: str, second: str) -> None:
-        """A different number is a different claim."""
+    def test_a_different_number_name_negation_or_fact_is_new(
+        self, first: str, second: str
+    ) -> None:
+        """A swapped name, tool, number or negation is a different claim."""
         assert not same_fact(first, second)
+
+    def test_a_longer_text_that_adds_a_detail_is_new(self) -> None:
+        """Only the second text is checked for new content: it is not symmetric."""
+        short = "At Voorbeeld Retail I migrated 40 stores in 2022."
+        long = "I migrated 40 stores to a new till system at Voorbeeld Retail in 2022."
+        assert same_fact(long, short)
+        assert not same_fact(short, long)
 
     def test_find_duplicate_returns_the_memory_that_says_it(self) -> None:
         """The caller can say which memory already holds the fact."""
@@ -541,6 +661,13 @@ class TestSelection:
         """ "a/b tests" matches a vacancy asking for A/B-tests."""
         memory = _memory(1, "Fact.", tags=["a/b tests", "conversion specialist"])
         assert relevance(memory, VACANCY) == 6
+
+    def test_a_short_or_common_tag_counts_only_in_capitals(self) -> None:
+        """ "it" is the IT sector, not the pronoun every vacancy uses."""
+        memory = _memory(1, "I set up the helpdesk for 400 users.", tags=["it", "team"])
+        assert relevance(memory, "We need a chef. It is a great team to cook in.") == 0
+        assert relevance(memory, "Medewerker IT-servicedesk, TEAM Noord") == 6
+        assert relevance(_memory(2, "Fact.", tags=["it security"]), VACANCY) == 0
 
     def test_words_in_the_hint_count_and_stopwords_do_not(self) -> None:
         """The hint says when a memory applies; "ervaring" says nothing."""
@@ -646,6 +773,11 @@ class TestPayload:
         """Prompt text must not carry the dashes it forbids."""
         assert_plain(MEMORY_GUIDE)
         assert_plain(MEMORY_CV_RULE)
+
+    def test_the_guide_says_how_to_weigh_two_memories_that_disagree(self) -> None:
+        """noted_on is sent for a reason; the model must know it."""
+        assert "noted_on" in MEMORY_GUIDE
+        assert "more recent one holds" in MEMORY_GUIDE
 
 
 # -- Showing memories --------------------------------------------------------------
