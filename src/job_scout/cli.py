@@ -94,7 +94,7 @@ from job_scout.scheduler import (
     install_schedule,
     remove_schedule,
 )
-from job_scout.scraper import scrape_all_jobs
+from job_scout.scraper import recover_missing_locations, scrape_all_jobs
 from job_scout.title_filter import filter_jobs_by_title
 from job_scout.title_screener import screen_job_titles
 from job_scout.tracks import (
@@ -1204,6 +1204,10 @@ def _run_pipeline(
     progress.set_stage("scraping")
     all_jobs = scrape_all_jobs(config, llm_client)
     new_jobs = all_jobs if full else [j for j in all_jobs if not db.is_duplicate(j)]
+    # Only the listings this run will actually judge are worth an extra page
+    # read, and the lookup is capped: spending it on jobs already in the
+    # database would leave the new ones without a location again.
+    recover_missing_locations(new_jobs)
     deduped = 0 if full else (len(all_jobs) - len(new_jobs))
     stats = RunStats(scraped=len(all_jobs), deduplicated=deduped)
     logger.info(f"Scraped {stats.scraped}, new: {len(new_jobs)}")

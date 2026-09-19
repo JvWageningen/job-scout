@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import random
+import re
 import time
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, date, datetime
 from html.parser import HTMLParser
@@ -109,6 +111,130 @@ def scrape_all_jobs(
                 all_jobs.extend(jobs)
 
     return _deduplicate(all_jobs)
+
+
+# LinkedIn writes some vacancies with an area label instead of a city:
+# "Amsterdam Area", "Greater Enschede Area", "Rotterdam and The Hague",
+# "s-Hertogenbosch Area". jobspy parses "City, State, Country" and returns
+# nothing for those, so the listing arrives with no location at all and the
+# commute filter drops it before anything is scored. About 7% of the LinkedIn
+# results in a nightly run were lost this way. The label is on the job page,
+# which costs one extra request for each affected listing.
+_LINKEDIN_BULLET = re.compile(r"topcard__flavor--bullet[^>]*>\s*([^<]{2,60})")
+_APPLICANT_COUNT = re.compile(r"^\d[\d,.]*\s+(applicant|sollicitant)", re.IGNORECASE)
+_AREA_LABEL = re.compile(r"^(?:greater\s+)?(.+?)\s+area$", re.IGNORECASE)
+_LOCATION_LOOKUP_LIMIT = 30
+_LOCATION_LOOKUP_TIMEOUT = 15
+_BROWSER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/120.0 Safari/537.36"
+)
+
+
+def _fetch_job_page(url: str) -> str:
+    """Read a job page as a browser would, for the parts a search result omits.
+
+    Args:
+        url: The listing's public URL.
+
+    Returns:
+        The page's HTML, or an empty string when it could not be read.
+    """
+    try:
+        response = requests.get(
+            url,
+            headers={"User-Agent": _BROWSER_AGENT},
+            timeout=_LOCATION_LOOKUP_TIMEOUT,
+        )
+    except requests.RequestException as exc:
+        logger.debug(f"Could not read {url} for its location: {exc}")
+        return ""
+    if response.status_code != 200:
+        logger.debug(f"Location lookup for {url} answered {response.status_code}")
+        return ""
+    return response.text
+
+
+def _location_from_page(html: str) -> str:
+    """Take the place name LinkedIn shows above a vacancy.
+
+    Args:
+        html: The job page's HTML.
+
+    Returns:
+        The label as shown, such as "Amsterdam Area" or "Netherlands", or an
+        empty string when the page does not carry one.
+    """
+    for raw in _LINKEDIN_BULLET.findall(html):
+        label = " ".join(raw.split())
+        if label and not _APPLICANT_COUNT.match(label):
+            return label
+    return ""
+
+
+def normalise_area(label: str) -> str:
+    """Turn a LinkedIn area label into something a geocoder can find.
+
+    "Amsterdam Area" and "Greater Enschede Area" are the city itself, and
+    "Rotterdam and The Hague" names two: the first one is where the commute is
+    measured to. A country name is left as it is, because a vacancy for the
+    whole of the Netherlands is treated as location independent later on.
+
+    Args:
+        label: The label as the page shows it.
+
+    Returns:
+        The place to store, or an empty string for an unusable label.
+    """
+    place = " ".join(label.split()).strip(" ,")
+    area = _AREA_LABEL.match(place)
+    if area:
+        place = area.group(1).strip()
+    for separator in (" and ", " & ", "/"):
+        if separator in place:
+            place = place.split(separator)[0].strip()
+            break
+    return place
+
+
+def recover_missing_locations(
+    jobs: list[JobListing],
+    *,
+    fetch: Callable[[str], str] = _fetch_job_page,
+    limit: int = _LOCATION_LOOKUP_LIMIT,
+) -> int:
+    """Fill in the location for listings whose search result carried none.
+
+    Only LinkedIn listings are looked up, because they are the ones jobspy
+    leaves without a location. The work is bounded and failures are ignored:
+    a listing keeps its empty location and is handled as before.
+
+    Args:
+        jobs: The scraped listings, changed in place.
+        fetch: Reads a job page; injected in tests.
+        limit: Most pages to read in one run.
+
+    Returns:
+        How many listings gained a location.
+    """
+    missing = [
+        job
+        for job in jobs
+        if job.source == "linkedin" and not (job.location or "").strip() and job.url
+    ]
+    recovered = 0
+    for job in missing[:limit]:
+        place = normalise_area(_location_from_page(fetch(job.url)))
+        if place:
+            job.location = place
+            recovered += 1
+        time.sleep(random.uniform(0.5, 1.5))
+    if missing:
+        logger.info(
+            f"Location missing on {len(missing)} LinkedIn listing(s); "
+            f"recovered {recovered} from the job page"
+        )
+    return recovered
 
 
 def _scrape_jobspy_with_rate_limit(keyword: str, config: Config) -> list[JobListing]:
