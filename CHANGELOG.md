@@ -4,6 +4,47 @@ Format: [Keep a Changelog](https://keepachangelog.com)
 
 <!-- version list -->
 
+## v2.8.0 (2026-09-19)
+
+### Bug Fixes
+
+- **memories**: Check memory bullets on a CV and read citations strictly
+  ([`0a67e18`](https://github.com/JvWageningen/job-scout/commit/0a67e182f9132e7128a67369ab2485dbdd18a738))
+
+- **memories**: Hold deleted, private and CV memories to what was promised
+  ([`c6b130a`](https://github.com/JvWageningen/job-scout/commit/c6b130afab1ef1d5bb9f7f0375d70c7bfb0fbe68))
+
+- **memories**: Keep new facts, keep work open, make deletes hold
+  ([`b3f2a71`](https://github.com/JvWageningen/job-scout/commit/b3f2a71b56094430b2321280507023c0e7f004aa))
+
+- **memories**: Say what reaches the model, hedge capture notes, bound ids
+  ([`bd126b4`](https://github.com/JvWageningen/job-scout/commit/bd126b4713343e270c6628e4a5367b735e10823c))
+
+- **memories**: Use CV memories when tailoring in the dashboard too
+  ([`ab5b43b`](https://github.com/JvWageningen/job-scout/commit/ab5b43b2ab5b34a6ce6e290c88155a250b837cba))
+
+### Chores
+
+- Sync uv.lock to 2.7.1 [skip ci]
+  ([`1b0412b`](https://github.com/JvWageningen/job-scout/commit/1b0412bf697c55a88d8a3fe2eb2e28413343482e))
+
+### Features
+
+- **memories**: Add the Memories tab, its API and capture after generations
+  ([`9a42879`](https://github.com/JvWageningen/job-scout/commit/9a42879c9a77aac72ba85161a2d54c3fd151fcf5))
+
+- **memories**: Remember facts about the applicant for later documents
+  ([`d78eeca`](https://github.com/JvWageningen/job-scout/commit/d78eecaa1d057171c12902a94a7ea1a31cb01c4f))
+
+- **memories**: Use memories in letters, interviews and CV tailoring
+  ([`ad9ae38`](https://github.com/JvWageningen/job-scout/commit/ad9ae3878699587ee0dc4cf9a77c2b692142f203))
+
+### Testing
+
+- **travel**: Allow one Windows clock step in the throttle interval check
+  ([`2125b46`](https://github.com/JvWageningen/job-scout/commit/2125b46f264b5a835e7db6aaac1137a9428171ee))
+
+
 ## v2.7.1 (2026-09-18)
 
 ### Bug Fixes
